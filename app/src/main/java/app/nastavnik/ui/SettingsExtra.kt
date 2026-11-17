@@ -35,6 +35,7 @@ import app.nastavnik.ai.Pricing
 import app.nastavnik.ai.UsageLog
 import app.nastavnik.app
 import app.nastavnik.data.Backup
+import app.nastavnik.data.UpdateCheck
 import app.nastavnik.data.UpdateInfo
 import app.nastavnik.data.Updater
 import app.nastavnik.study.Streaks
@@ -164,14 +165,14 @@ fun BackupSection() {
 fun UpdateSection() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val updater = remember { Updater(context.applicationContext) }
+    val updater = remember { context.app.updater }
     var status by remember { mutableStateOf<Pair<String, Tone>?>(null) }
-    var found by remember { mutableStateOf<UpdateInfo?>(null) }
+    var found by remember { mutableStateOf<UpdateInfo?>(context.app.availableUpdate.value) }
     var checking by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(-1f) }
     SectionCard("Обновления") {
-        FieldLabel("Версия ${updater.versionName}", "Новые сборки выходят на GitHub. Обновление ставится поверх — тетради и настройки остаются.")
-        val f = found
+        FieldLabel("Версия ${updater.versionName}", "Новые сборки выходят на GitHub в репозитории ${UpdateCheck.REPO}. Обновление ставится поверх — тетради и настройки остаются.")
+        val f = found ?: context.app.availableUpdate.value
         when {
             progress >= 0f -> {
                 Box(Modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(Brand.Line)) {
@@ -179,7 +180,7 @@ fun UpdateSection() {
                 }
                 Text("Скачиваю… ${(progress * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
             }
-            f != null -> InkButton("Скачать и установить сборку ${f.build}" + (if (f.sizeBytes > 0) " (${f.sizeBytes / 1_000_000} МБ)" else ""), icon = R.drawable.ic_refresh) {
+            f != null -> InkButton("Скачать и установить: ${f.title}" + (if (f.sizeBytes > 0) " (${f.sizeBytes / 1_000_000} МБ)" else ""), icon = R.drawable.ic_refresh) {
                 if (!updater.canInstall()) {
                     status = "Разреши «Наставнику» устанавливать приложения и нажми ещё раз." to Tone.INFO
                     updater.openInstallPermission()
@@ -200,6 +201,7 @@ fun UpdateSection() {
                     runCatching { updater.check() }
                         .onSuccess { info ->
                             found = info
+                            context.app.availableUpdate.value = info
                             status = if (info == null) "Стоит последняя версия." to Tone.OK else null
                         }
                         .onFailure { status = "Не удалось проверить: ${it.message}" to Tone.ERROR }

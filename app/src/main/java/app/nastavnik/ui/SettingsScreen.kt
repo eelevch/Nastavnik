@@ -55,6 +55,8 @@ fun SettingsScreen(onBack: () -> Unit, onAppearance: () -> Unit = {}, onOnboardi
     val s by remember { repo.flow() }.collectAsStateWithLifecycle(initialValue = repo.load())
 
     ScreenScaffold(title = "Настройки", onBack = onBack) {
+        InAppUpdateBanner()
+
         // Оформление — первым: темы, акцент, фон, размер текста.
         AppearanceEntry(onAppearance)
         val tablet = remember(s) { context.app.isTablet() }

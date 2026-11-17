@@ -80,6 +80,7 @@ private fun StudentTabBar(tab: PhoneTab, onTab: (PhoneTab) -> Unit, onSettings: 
 private fun StudentSettings(onBack: () -> Unit, onAppearance: () -> Unit, onLks: () -> Unit) {
     val context = LocalContext.current
     ScreenScaffold(title = "Настройки", onBack = onBack) {
+        InAppUpdateBanner()
         SectionCard("Оформление") {
             FieldLabel("Тема, акцент и размер текста", "Светлая и тёмная, ещё восемь тем и цвета из обоев.")
             SoftButton("Открыть оформление", icon = R.drawable.ic_palette_dot, onClick = onAppearance)
