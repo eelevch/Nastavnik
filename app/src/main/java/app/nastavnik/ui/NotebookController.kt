@@ -202,6 +202,10 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         meta = m
         pages = ps
         // Чат только в рамках текущей сессии: при входе в тетрадь всегда новый чистый диалог
+        mentor.newTask()
+        answerPageId = 0L
+        ink.marks = emptyList()
+        rejectedMarks.clear()
         clearChat()
         mentor.extraSystem = PracticePrompts.variantForMentor(m.tasks)
         applyTool()
@@ -563,14 +567,16 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         autoJob?.cancel()
         if (kind != AskKind.WATCH) {
             val now = System.currentTimeMillis()
-            chatMessages.add(MentorChatMessage(id = now, isUser = true, text = question, kind = kind, timestamp = now))
+            val userMsgId = now * 10L
+            val botMsgId = userMsgId + 1L
+            chatMessages.add(MentorChatMessage(id = userMsgId, isUser = true, text = question, kind = kind, timestamp = now))
             chatMessages.add(
                 MentorChatMessage(
-                    id = now + 1,
+                    id = botMsgId,
                     isUser = false,
                     text = "",
                     kind = kind,
-                    answer = AnswerUi(seq = now + 1, kind = kind, question = question, streaming = true, status = "Смотрю на экран…"),
+                    answer = AnswerUi(seq = botMsgId, kind = kind, question = question, streaming = true, status = "Смотрю на экран…"),
                     timestamp = now,
                 )
             )

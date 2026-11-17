@@ -50,6 +50,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -219,7 +220,11 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                     onClose = { panel = false },
                     onCleanReady = onCleanReady,
                     onSettings = onSettings,
-                    modifier = Modifier.width(390.dp).fillMaxHeight().padding(12.dp),
+                    modifier = Modifier
+                        .width(390.dp)
+                        .fillMaxHeight()
+                        .padding(12.dp)
+                        .imePadding(),
                 )
             }
         }
@@ -236,8 +241,9 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                 onSettings = onSettings,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height((LocalConfiguration.current.screenHeightDp * 0.62f).dp)
-                    .padding(12.dp),
+                    .height((LocalConfiguration.current.screenHeightDp * 0.65f).dp)
+                    .padding(12.dp)
+                    .imePadding(),
             )
         }
     }
