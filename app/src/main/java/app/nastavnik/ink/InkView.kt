@@ -600,6 +600,14 @@ class InkView(context: Context) : View(context) {
     private val lassoFill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val selFrame = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val path = Path()
+    private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = 0xFF3A6FE0.toInt()
+    }
+    private val handleStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.WHITE
+    }
 
     override fun onDraw(canvas: Canvas) {
         if (page == null) {
@@ -676,15 +684,7 @@ class InkView(context: Context) : View(context) {
 
         // Маркер изменения размера (правый нижний угол)
         val handleR = 7f / k
-        val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-            color = 0xFF3A6FE0.toInt()
-        }
-        val handleStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            color = Color.WHITE
-            strokeWidth = 1.5f / k
-        }
+        handleStroke.strokeWidth = 1.5f / k
         c.drawCircle(b.right, b.bottom, handleR, handlePaint)
         c.drawCircle(b.right, b.bottom, handleR, handleStroke)
         handleStroke.strokeWidth = 1.2f / k

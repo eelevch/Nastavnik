@@ -276,6 +276,10 @@ private fun PanelSplitter(
 ) {
     var isDragging by remember { mutableStateOf(false) }
     val density = LocalDensity.current
+    val lineWidth by animateDpAsState(if (isDragging) 3.dp else 1.5.dp, label = "splitterLine")
+    val handleWidth by animateDpAsState(if (isDragging) 8.dp else 5.dp, label = "splitterHandleW")
+    val handleColor by animateColorAsState(if (isDragging) Brand.Accent else Brand.InkSoft.copy(alpha = 0.5f), label = "splitterHandleColor")
+    val lineColor by animateColorAsState(if (isDragging) Brand.Accent else Brand.Line.copy(alpha = 0.65f), label = "splitterLineColor")
 
     Box(
         modifier = modifier
@@ -298,18 +302,18 @@ private fun PanelSplitter(
         // Тонкая линия-разделитель
         Box(
             Modifier
-                .width(if (isDragging) 3.dp else 1.5.dp)
+                .width(lineWidth)
                 .fillMaxHeight()
                 .padding(vertical = 12.dp)
                 .clip(CircleShape)
-                .background(if (isDragging) Brand.Accent else Brand.Line.copy(alpha = 0.65f))
+                .background(lineColor)
         )
         // Ручка-ползунок для перетаскивания стилусом или пальцем
         Box(
             Modifier
-                .size(if (isDragging) 8.dp else 5.dp, 48.dp)
+                .size(handleWidth, 48.dp)
                 .clip(CircleShape)
-                .background(if (isDragging) Brand.Accent else Brand.InkSoft.copy(alpha = 0.5f))
+                .background(handleColor)
         )
     }
 }
