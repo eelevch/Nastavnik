@@ -47,12 +47,17 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -73,6 +78,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -209,7 +215,10 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                 exit = shrinkHorizontally(shrinkTowards = Alignment.Start, animationSpec = spring(dampingRatio = 0.88f, stiffness = 480f)) + fadeOut(tween(160)),
             ) {
                 MentorPanel(
-                    ctl, state.answer, onCleanReady = onCleanReady, onSettings = onSettings,
+                    ctl = ctl,
+                    onClose = { panel = false },
+                    onCleanReady = onCleanReady,
+                    onSettings = onSettings,
                     modifier = Modifier.width(390.dp).fillMaxHeight().padding(12.dp),
                 )
             }
@@ -221,10 +230,13 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
             exit = slideOutVertically(tween(240, easing = FastOutSlowInEasing)) { it } + fadeOut(),
         ) {
             MentorPanel(
-                ctl, state.answer, onCleanReady = onCleanReady, onSettings = onSettings,
+                ctl = ctl,
+                onClose = { panel = false },
+                onCleanReady = onCleanReady,
+                onSettings = onSettings,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height((LocalConfiguration.current.screenHeightDp * 0.5f).dp)
+                    .height((LocalConfiguration.current.screenHeightDp * 0.62f).dp)
                     .padding(12.dp),
             )
         }
@@ -454,122 +466,27 @@ private val ASKS = listOf(
 )
 
 /**
- * Панель наставника. Два состояния: «Вопросы» (что спросить) и «Ответ». Пока есть ответ, панель целиком
- * отдана ему — без кнопок и полей; стрелка «Вопросы» вверху возвращает к вопросам, а ответ остаётся
- * под рукой («Последний ответ»).
+ * Панель наставника в виде непрерывного чата.
+ * Сохраняет всю историю вопросов и ответов сессии: при скрытии и повторном открытии чат не сбрасывается.
+ * Вверху — кнопка с крестиком (закрыть окно) и очистка чата.
+ * Внизу — всегда доступна кнопка «Подсказка» (и другие быстрые действия) и строка ввода для следующего вопроса.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun MentorPanel(ctl: NotebookController, answer: AnswerUi?, onCleanReady: () -> Unit, onSettings: () -> Unit, modifier: Modifier) {
-    val context = LocalContext.current
-    var problem by remember { mutableStateOf<String?>(null) }
-    // Новый ответ — сразу открываем его; «Вопросы» — возвращаемся.
-    var showAnswer by remember { mutableStateOf(false) }
-    LaunchedEffect(answer?.seq) { showAnswer = answer != null }
-
-    fun ask(text: String, kind: AskKind) {
-        val reason = context.app.settings.notReadyReason()
-        if (reason != null) {
-            problem = "$reason. Открой настройки → «Нейросеть»."
-            return
-        }
-        problem = null
-        ctl.ask(text, kind)
-    }
-
-    Box(modifier.glass(RoundedCornerShape(28.dp), 14.dp)) {
-        AnimatedContent(
-            targetState = showAnswer && answer != null,
-            transitionSpec = {
-                if (targetState) {
-                    (slideInHorizontally(tween(340, easing = FastOutSlowInEasing)) { it / 3 } + fadeIn(tween(260)))
-                        .togetherWith(slideOutHorizontally(tween(300, easing = FastOutSlowInEasing)) { -it / 4 } + fadeOut(tween(180)))
-                } else {
-                    (slideInHorizontally(tween(340, easing = FastOutSlowInEasing)) { -it / 3 } + fadeIn(tween(260)))
-                        .togetherWith(slideOutHorizontally(tween(300, easing = FastOutSlowInEasing)) { it / 4 } + fadeOut(tween(180)))
-                }
-            },
-            label = "mentorMode",
-        ) { answerMode ->
-            if (answerMode && answer != null) {
-                AnswerView(ctl, answer, onBack = { showAnswer = false }, onSettings = onSettings, onRetry = { ask(answer.question, answer.kind) })
-            } else {
-                AskView(ctl, answer, problem, onSettings, onCleanReady, onOpenAnswer = { showAnswer = true }, ask = ::ask)
-            }
-        }
-    }
-}
-
-/** Только ответ: на всю панель, сверху — вернуться к вопросам. */
-@Composable
-private fun AnswerView(ctl: NotebookController, answer: AnswerUi, onBack: () -> Unit, onSettings: () -> Unit, onRetry: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
-            Modifier
-                .clip(CircleShape)
-                .clickable(onClick = onBack)
-                .padding(start = 4.dp, end = 12.dp, top = 6.dp, bottom = 6.dp)
-                .semantics { contentDescription = "К вопросам" },
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Icon(painterResource(R.drawable.ic_chevron_left), contentDescription = null, tint = Brand.Ink, modifier = Modifier.size(20.dp))
-            Text("Вопросы", style = MaterialTheme.typography.labelLarge)
-        }
-        if (answer.marks.any { it.box != null }) {
-            SoftButton(if (ctl.marksVisible) "Скрыть выделение" else "Показать выделение", icon = if (ctl.marksVisible) R.drawable.ic_eye_off else R.drawable.ic_eye) {
-                ctl.toggleMarks()
-            }
-        }
-        Column(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            when {
-                answer.errorText != null -> {
-                    StatusLine(answer.errorText, Tone.ERROR)
-                    if (answer.error?.needsSettings == true) LinkText("Открыть настройки", onClick = onSettings)
-                    else SoftButton("Повторить", icon = R.drawable.ic_refresh, onClick = onRetry)
-                }
-                else -> {
-                    if (answer.streaming && answer.marks.isEmpty()) ThinkingRow(answer.seq, answer.status)
-                    answer.marks.forEachIndexed { i, m ->
-                        NoteCard(
-                            i + 1,
-                            m,
-                            topic = ctl.meta?.title.orEmpty(),
-                            onLocate = { ctl.focusMark(i + 1) },
-                            onNotHere = { ctl.onMarkNotHere(i + 1) },
-                        )
-                    }
-                    if (answer.streaming && answer.marks.isNotEmpty()) ThinkingRow(answer.seq, "Дописываю…")
-                }
-            }
-        }
-    }
-}
-
-/** Вопросы наставнику: плитки с понятными подписями, свой вопрос, проверка «когда остановлюсь». */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun AskView(
+private fun MentorPanel(
     ctl: NotebookController,
-    answer: AnswerUi?,
-    problem: String?,
-    onSettings: () -> Unit,
+    onClose: () -> Unit,
     onCleanReady: () -> Unit,
-    onOpenAnswer: () -> Unit,
-    ask: (String, AskKind) -> Unit,
+    onSettings: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    var problem by remember { mutableStateOf<String?>(null) }
     var question by remember { mutableStateOf("") }
     var listening by remember { mutableStateOf(false) }
     var speechProblem by remember { mutableStateOf<String?>(null) }
     var selectPages by remember { mutableStateOf(false) }
+
     val speech = remember {
         SpeechInput(context, object : SpeechInput.Callback {
             override fun onListening(active: Boolean) { listening = active }
@@ -579,51 +496,309 @@ private fun AskView(
         })
     }
     DisposableEffect(Unit) { onDispose { speech.destroy() } }
-    val busy = answer?.streaming == true
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            IconBadge(R.drawable.ic_sparkle, 32)
-            Text("Наставник", style = MaterialTheme.typography.titleMedium)
+    val busy = ctl.mentor.isBusy
+
+    fun ask(text: String, kind: AskKind) {
+        val reason = context.app.settings.notReadyReason()
+        if (reason != null) {
+            problem = "$reason. Открой настройки → «Нейросеть»."
+            return
         }
-        if (ctl.examActive) {
-            ExamCard(ctl)
-            return@Column
-        }
-        ctl.meta?.tasks?.takeIf { it.isNotEmpty() }?.let { VariantCard(it) }
-        (problem ?: speechProblem)?.let { p ->
-            StatusLine(p, Tone.ERROR)
-            if (p.contains("настройки")) LinkText("Открыть настройки", onClick = onSettings)
-        }
-        // Последний ответ под рукой — одно касание, и он снова на всю панель.
-        if (answer != null) {
+        problem = null
+        speechProblem = null
+        ctl.ask(text, kind)
+    }
+
+    Box(modifier.glass(RoundedCornerShape(28.dp), 14.dp)) {
+        Column(Modifier.fillMaxSize()) {
+            // Верхняя шапка окна наставника: заголовок, глазик, новый чат и крестик закрытия
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Brand.Line)
-                    .clickable(onClick = onOpenAnswer)
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                IconBadge(R.drawable.ic_sparkle, 28)
                 Column(Modifier.weight(1f)) {
-                    Text(if (busy) "Наставник отвечает…" else "Последний ответ", style = MaterialTheme.typography.labelLarge)
-                    answer.marks.firstOrNull()?.text?.let {
-                        Text(it.replace(Regex("[$*_]"), ""), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Наставник", style = MaterialTheme.typography.titleMedium)
+                    if (ctl.chatMessages.isNotEmpty()) {
+                        val count = ctl.chatMessages.count { it.isUser }
+                        Text(
+                            "$count ${if (count == 1) "вопрос" else if (count in 2..4) "вопроса" else "вопросов"}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
-                Icon(painterResource(R.drawable.ic_chevron), contentDescription = null, tint = Brand.InkSoft, modifier = Modifier.size(18.dp))
+                if (ctl.ink.marks.isNotEmpty()) {
+                    Box(
+                        Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .clickable { ctl.toggleMarks() }
+                            .semantics { contentDescription = if (ctl.marksVisible) "Скрыть выделение" else "Показать выделение" },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            painterResource(if (ctl.marksVisible) R.drawable.ic_eye_off else R.drawable.ic_eye),
+                            contentDescription = null,
+                            tint = Brand.InkSoft,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+                if (ctl.chatMessages.isNotEmpty()) {
+                    Box(
+                        Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .clickable { ctl.clearChat() }
+                            .semantics { contentDescription = "Очистить чат" },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(painterResource(R.drawable.ic_plus), contentDescription = null, tint = Brand.InkSoft, modifier = Modifier.size(18.dp))
+                    }
+                }
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .clickable { selectPages = true }
+                        .semantics { contentDescription = "Страницы для контекста" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(painterResource(R.drawable.ic_note), contentDescription = null, tint = Brand.InkSoft, modifier = Modifier.size(18.dp))
+                }
+                // Крестик закрытия панели наставника
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onClose)
+                        .semantics { contentDescription = "Закрыть наставника" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(painterResource(R.drawable.ic_close), contentDescription = null, tint = Brand.Ink, modifier = Modifier.size(20.dp))
+                }
             }
-            // Решение верное — дальше чистовик или такая же задача.
-            if (answer.done && !busy) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+            HorizontalDivider(color = Brand.Line.copy(alpha = 0.4f), thickness = 0.8.dp)
+
+            if (ctl.examActive) {
+                Box(Modifier.weight(1f).padding(14.dp)) {
+                    ExamCard(ctl)
+                }
+                return@Column
+            }
+
+            (problem ?: speechProblem)?.let { p ->
+                Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp)) {
+                    Column {
+                        StatusLine(p, Tone.ERROR)
+                        if (p.contains("настройки")) LinkText("Открыть настройки", onClick = onSettings)
+                    }
+                }
+            }
+
+            // Центральная зона: если чат пуст — экран первого запуска с плитками; если есть сообщения — лента чата
+            if (ctl.chatMessages.isEmpty()) {
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    ctl.meta?.tasks?.takeIf { it.isNotEmpty() }?.let { VariantCard(it) }
+                    EmptyMentor()
+                    Text("Быстрый вопрос по странице:", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ASKS.chunked(2).forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            row.forEach { a ->
+                                AskTile(a, enabled = !busy, modifier = Modifier.weight(1f)) {
+                                    ask(a.action.prompt, AskKind.QUICK)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                val listState = rememberLazyListState()
+                LaunchedEffect(ctl.chatMessages.size, ctl.chatMessages.lastOrNull()?.answer?.marks?.size, ctl.chatMessages.lastOrNull()?.answer?.streaming) {
+                    if (ctl.chatMessages.isNotEmpty()) {
+                        listState.animateScrollToItem(ctl.chatMessages.lastIndex)
+                    }
+                }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(top = 10.dp, bottom = 10.dp),
+                ) {
+                    items(ctl.chatMessages, key = { it.id }) { msg ->
+                        if (msg.isUser) {
+                            UserChatBubble(msg)
+                        } else {
+                            AssistantChatBubble(
+                                ctl = ctl,
+                                msg = msg,
+                                onSettings = onSettings,
+                                onCleanReady = onCleanReady,
+                                onRetry = { ask(msg.answer?.question.orEmpty(), msg.kind) },
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Нижняя панель действий: прямо под чатом кнопки «Подсказка»... и строка ввода
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Brand.Glass.copy(alpha = 0.5f))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // Если чат уже ведётся, прямо под ним ряд быстрых действий
+                if (ctl.chatMessages.isNotEmpty()) {
+                    QuickAskChips(enabled = !busy, onAsk = ::ask)
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Box(Modifier.weight(1f)) {
+                        AppTextField(
+                            question,
+                            { question = it },
+                            if (listening) "Говори…" else "Свой вопрос наставнику…",
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = {
+                                if (question.isNotBlank()) {
+                                    ask(question.trim(), AskKind.USER)
+                                    question = ""
+                                }
+                            }),
+                        )
+                    }
+                    BarButton(
+                        R.drawable.ic_mic,
+                        if (listening) "Остановить запись" else "Сказать голосом",
+                        active = listening,
+                    ) { speech.toggle() }
+
+                    BarButton(
+                        R.drawable.ic_send,
+                        "Отправить",
+                        enabled = question.isNotBlank() && !busy,
+                    ) {
+                        ask(question.trim(), AskKind.USER)
+                        question = ""
+                    }
+                }
+            }
+        }
+    }
+
+    if (selectPages) {
+        SelectPagesDialog(ctl) { selectPages = false }
+    }
+}
+
+@Composable
+private fun UserChatBubble(msg: NotebookController.MentorChatMessage) {
+    Column(
+        Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.End,
+    ) {
+        val label = when (msg.text) {
+            QuickAction.NEXT_STEP.prompt -> "Подсказка"
+            QuickAction.FIND_ERROR.prompt -> "Где ошибка?"
+            QuickAction.CHECK_ANSWER.prompt -> "Проверить"
+            QuickAction.THEORY.prompt -> "Теория"
+            QuickAction.SHOW_STEP.prompt -> "Покажи шаг"
+            QuickAction.SIMILAR.prompt -> "Похожая задача"
+            else -> msg.text
+        }
+        val icon = when (msg.text) {
+            QuickAction.NEXT_STEP.prompt -> R.drawable.ic_bulb
+            QuickAction.FIND_ERROR.prompt -> R.drawable.ic_search
+            QuickAction.CHECK_ANSWER.prompt -> R.drawable.ic_check
+            QuickAction.THEORY.prompt -> R.drawable.ic_book
+            QuickAction.SHOW_STEP.prompt -> R.drawable.ic_chevron
+            QuickAction.SIMILAR.prompt -> R.drawable.ic_refresh
+            else -> null
+        }
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp))
+                .background(Brand.Accent)
+                .padding(horizontal = 14.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (icon != null) {
+                Icon(painterResource(icon), contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+            }
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyMedium.copy(color = Color.White, fontWeight = FontWeight.Medium),
+            )
+        }
+    }
+}
+
+@Composable
+private fun AssistantChatBubble(
+    ctl: NotebookController,
+    msg: NotebookController.MentorChatMessage,
+    onSettings: () -> Unit,
+    onCleanReady: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    val answer = msg.answer
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    Column(
+        Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        when {
+            answer == null -> {
+                ThinkingRow(msg.id, "Думаю…")
+            }
+            answer.errorText != null -> {
+                StatusLine(answer.errorText, Tone.ERROR)
+                if (answer.error?.needsSettings == true) {
+                    LinkText("Открыть настройки", onClick = onSettings)
+                } else {
+                    SoftButton("Повторить", icon = R.drawable.ic_refresh, onClick = onRetry)
+                }
+            }
+            else -> {
+                if (answer.streaming && answer.marks.isEmpty()) {
+                    ThinkingRow(answer.seq, answer.status ?: "Думаю…")
+                }
+                answer.marks.forEachIndexed { i, m ->
+                    NoteCard(
+                        number = i + 1,
+                        m = m,
+                        topic = ctl.meta?.title.orEmpty(),
+                        onLocate = { ctl.focusMark(i + 1) },
+                        onNotHere = { ctl.onMarkNotHere(i + 1) },
+                    )
+                }
+                if (answer.streaming && answer.marks.isNotEmpty()) {
+                    ThinkingRow(answer.seq, "Дописываю…")
+                }
+                if (answer.done && !answer.streaming) {
                     InkButton("Сделать чистовик", icon = R.drawable.ic_note) {
                         scope.launch {
                             val images = ctl.pageImages()
@@ -637,55 +812,143 @@ private fun AskView(
                 }
             }
         }
-        SoftButton("Страницы для наставника", icon = R.drawable.ic_note) { selectPages = true }
-        // Плитки вопросов: два столбца, понятные подписи.
-        ASKS.chunked(2).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                row.forEach { a -> AskTile(a, enabled = !busy, modifier = Modifier.weight(1f)) { ask(a.action.prompt, AskKind.QUICK) } }
-            }
+    }
+}
+
+@Composable
+private fun QuickAskChips(
+    enabled: Boolean,
+    onAsk: (String, AskKind) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
+    ) {
+        item {
+            QuickChip(
+                title = "Подсказка",
+                icon = R.drawable.ic_bulb,
+                highlight = true,
+                enabled = enabled,
+                onClick = { onAsk(QuickAction.NEXT_STEP.prompt, AskKind.QUICK) },
+            )
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Box(Modifier.weight(1f)) {
-                AppTextField(
-                    question, { question = it }, if (listening) "Говори…" else "Свой вопрос",
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { if (question.isNotBlank()) { ask(question.trim(), AskKind.USER); question = "" } }),
-                )
-            }
-            BarButton(R.drawable.ic_mic, if (listening) "Остановить запись" else "Сказать голосом", active = listening) { speech.toggle() }
-            BarButton(R.drawable.ic_send, "Отправить", enabled = question.isNotBlank() && !busy) {
-                ask(question.trim(), AskKind.USER)
-                question = ""
-            }
+        item {
+            QuickChip(
+                title = "Где ошибка?",
+                icon = R.drawable.ic_search,
+                highlight = false,
+                enabled = enabled,
+                onClick = { onAsk(QuickAction.FIND_ERROR.prompt, AskKind.QUICK) },
+            )
+        }
+        item {
+            QuickChip(
+                title = "Проверить",
+                icon = R.drawable.ic_check,
+                highlight = false,
+                enabled = enabled,
+                onClick = { onAsk(QuickAction.CHECK_ANSWER.prompt, AskKind.QUICK) },
+            )
+        }
+        item {
+            QuickChip(
+                title = "Теория",
+                icon = R.drawable.ic_book,
+                highlight = false,
+                enabled = enabled,
+                onClick = { onAsk(QuickAction.THEORY.prompt, AskKind.QUICK) },
+            )
+        }
+        item {
+            QuickChip(
+                title = "Покажи шаг",
+                icon = R.drawable.ic_chevron,
+                highlight = false,
+                enabled = enabled,
+                onClick = { onAsk(QuickAction.SHOW_STEP.prompt, AskKind.QUICK) },
+            )
+        }
+        item {
+            QuickChip(
+                title = "Похожая",
+                icon = R.drawable.ic_refresh,
+                highlight = false,
+                enabled = enabled,
+                onClick = { onAsk(QuickAction.SIMILAR.prompt, AskKind.QUICK) },
+            )
         }
     }
-    if (selectPages) {
-        AlertDialog(
-            onDismissRequest = { selectPages = false },
-            title = { Text("Страницы для наставника") },
-            text = {
-                Column {
-                    Text("Текущая страница отправляется всегда.")
-                    Row {
-                        LinkText("Все", onClick = { ctl.selectAllContextPages() })
-                        Spacer(Modifier.width(24.dp))
-                        LinkText("Снять все", onClick = { ctl.selectNoContextPages() })
-                    }
-                    Column(Modifier.height(240.dp).verticalScroll(rememberScrollState())) {
-                        ctl.pages.forEachIndexed { i, p ->
-                            val current = i == ctl.index
-                            val checked = current || ctl.selectedContextPages?.contains(p.id) != false
-                            Row(Modifier.fillMaxWidth().clickable(enabled = !current) { ctl.selectContextPage(p.id, !checked) }, verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(checked = checked, enabled = !current, onCheckedChange = { ctl.selectContextPage(p.id, it) })
-                                Text("Страница ${i + 1}" + if (current) " · текущая" else "")
-                            }
+}
+
+@Composable
+private fun QuickChip(
+    title: String,
+    icon: Int,
+    highlight: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) 0.95f else 1f, spring(dampingRatio = 0.6f, stiffness = 800f), label = "chipScale")
+    val bg = if (highlight) Brand.Accent.copy(alpha = 0.15f) else Brand.Glass.copy(alpha = 0.8f)
+    val borderColor = if (highlight) Brand.Accent else Brand.Line
+    val textColor = if (highlight) Brand.Accent else Brand.Ink
+
+    Row(
+        Modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale; alpha = if (enabled) 1f else 0.45f }
+            .clip(RoundedCornerShape(16.dp))
+            .background(bg)
+            .border(1.dp, borderColor, RoundedCornerShape(16.dp))
+            .clickable(interactionSource = source, indication = null, enabled = enabled, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(painterResource(icon), contentDescription = null, tint = textColor, modifier = Modifier.size(15.dp))
+        Text(
+            title,
+            style = MaterialTheme.typography.labelMedium.copy(
+                color = textColor,
+                fontWeight = if (highlight) FontWeight.SemiBold else FontWeight.Medium,
+            ),
+        )
+    }
+}
+
+@Composable
+private fun SelectPagesDialog(ctl: NotebookController, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Страницы для наставника") },
+        text = {
+            Column {
+                Text("Текущая страница отправляется всегда.")
+                Row {
+                    LinkText("Все", onClick = { ctl.selectAllContextPages() })
+                    Spacer(Modifier.width(24.dp))
+                    LinkText("Снять все", onClick = { ctl.selectNoContextPages() })
+                }
+                Column(Modifier.height(240.dp).verticalScroll(rememberScrollState())) {
+                    ctl.pages.forEachIndexed { i, p ->
+                        val current = i == ctl.index
+                        val checked = current || ctl.selectedContextPages?.contains(p.id) != false
+                        Row(
+                            Modifier.fillMaxWidth().clickable(enabled = !current) { ctl.selectContextPage(p.id, !checked) },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(checked = checked, enabled = !current, onCheckedChange = { ctl.selectContextPage(p.id, it) })
+                            Text("Страница ${i + 1}" + if (current) " · текущая" else "")
                         }
                     }
                 }
-            },
-            confirmButton = { LinkText("Готово", onClick = { selectPages = false }) },
-        )
-    }
+            }
+        },
+        confirmButton = { LinkText("Готово", onClick = onDismiss) },
+    )
 }
 
 /** Плитка вопроса: значок, название и коротко — что будет. Нажатие «проседает». */

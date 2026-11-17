@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.nastavnik.NastavnikApp
@@ -154,6 +155,41 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
 
     val mentor = MentorSession(app, scope, bindToSettings = false) { conv -> rememberConversation(conv) }
 
+    data class MentorChatMessage(
+        val id: Long = System.currentTimeMillis(),
+        val isUser: Boolean,
+        val text: String,
+        val kind: AskKind = AskKind.USER,
+        val answer: AnswerUi? = null,
+        val timestamp: Long = System.currentTimeMillis(),
+    )
+
+    /** История сообщений чата наставника в рамках текущей сессии тетради. */
+    val chatMessages = mutableStateListOf<MentorChatMessage>()
+
+    fun clearChat() {
+        chatMessages.clear()
+        mentor.newTask()
+        ink.marks = emptyList()
+        rejectedMarks.clear()
+    }
+
+    init {
+        scope.launch {
+            mentor.state.collect { ui ->
+                val ans = ui.answer ?: return@collect
+                if (ans.kind == AskKind.WATCH) return@collect
+                val idx = chatMessages.indexOfLast { !it.isUser && it.answer?.question == ans.question }
+                if (idx >= 0) {
+                    chatMessages[idx] = chatMessages[idx].copy(answer = ans)
+                } else if (ans.marks.isNotEmpty() || ans.errorText != null) {
+                    chatMessages.add(MentorChatMessage(id = ans.seq, isUser = false, text = "", kind = ans.kind, answer = ans))
+                }
+                refreshMarks(ans)
+            }
+        }
+    }
+
     /** К какой странице относится ответ наставника и во сколько раз снимок меньше страницы. */
     private var answerPageId = 0L
     private var answerScale = 1f
@@ -166,10 +202,7 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         meta = m
         pages = ps
         // Чат только в рамках текущей сессии: при входе в тетрадь всегда новый чистый диалог
-        mentor.newTask()
-        answerPageId = 0L
-        ink.marks = emptyList()
-        rejectedMarks.clear()
+        clearChat()
         mentor.extraSystem = PracticePrompts.variantForMentor(m.tasks)
         applyTool()
         // Открыли ради конкретной страницы (задача ДЗ) — сразу на ней.
@@ -528,6 +561,20 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
     fun ask(question: String, kind: AskKind) {
         if (app.settings.notReadyReason() != null) return
         autoJob?.cancel()
+        if (kind != AskKind.WATCH) {
+            val now = System.currentTimeMillis()
+            chatMessages.add(MentorChatMessage(id = now, isUser = true, text = question, kind = kind, timestamp = now))
+            chatMessages.add(
+                MentorChatMessage(
+                    id = now + 1,
+                    isUser = false,
+                    text = "",
+                    kind = kind,
+                    answer = AnswerUi(seq = now + 1, kind = kind, question = question, streaming = true, status = "Смотрю на экран…"),
+                    timestamp = now,
+                )
+            )
+        }
         val pages = this.pages.size
         mentor.ask(question, kind) { shot(pages) }
     }
