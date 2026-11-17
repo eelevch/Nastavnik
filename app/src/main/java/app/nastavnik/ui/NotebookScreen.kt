@@ -20,11 +20,13 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
@@ -558,19 +560,12 @@ private fun MentorPanel(
     val context = LocalContext.current
     var problem by remember { mutableStateOf<String?>(null) }
     var question by remember { mutableStateOf("") }
+    var showTextInput by rememberSaveable { mutableStateOf(false) }
     var listening by remember { mutableStateOf(false) }
+    var voiceRms by remember { mutableFloatStateOf(0f) }
+    var partialVoiceText by remember { mutableStateOf("") }
     var speechProblem by remember { mutableStateOf<String?>(null) }
     var selectPages by remember { mutableStateOf(false) }
-
-    val speech = remember {
-        SpeechInput(context, object : SpeechInput.Callback {
-            override fun onListening(active: Boolean) { listening = active }
-            override fun onPartial(text: String) { question = text }
-            override fun onResult(text: String) { question = text }
-            override fun onError(message: String, needsPermission: Boolean) { speechProblem = message }
-        })
-    }
-    DisposableEffect(Unit) { onDispose { speech.destroy() } }
 
     val busy = ctl.mentor.isBusy
 
@@ -584,6 +579,45 @@ private fun MentorPanel(
         speechProblem = null
         ctl.ask(text, kind)
     }
+
+    val speech = remember {
+        SpeechInput(context, object : SpeechInput.Callback {
+            override fun onListening(active: Boolean) {
+                listening = active
+                if (!active) {
+                    voiceRms = 0f
+                    partialVoiceText = ""
+                }
+            }
+            override fun onPartial(text: String) {
+                partialVoiceText = text
+                if (showTextInput) question = text
+            }
+            override fun onResult(text: String) {
+                listening = false
+                voiceRms = 0f
+                val query = text.trim()
+                partialVoiceText = ""
+                if (query.isNotBlank()) {
+                    if (showTextInput) {
+                        question = query
+                    } else {
+                        ask(query, AskKind.USER)
+                    }
+                }
+            }
+            override fun onError(message: String, needsPermission: Boolean) {
+                listening = false
+                voiceRms = 0f
+                partialVoiceText = ""
+                speechProblem = message
+            }
+            override fun onRmsChanged(rmsdB: Float) {
+                voiceRms = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
+            }
+        })
+    }
+    DisposableEffect(Unit) { onDispose { speech.destroy() } }
 
     Box(modifier.glass(RoundedCornerShape(28.dp), 14.dp)) {
         Column(Modifier.fillMaxSize()) {
@@ -730,7 +764,7 @@ private fun MentorPanel(
                 }
             }
 
-            // Нижняя панель действий: прямо под чатом кнопки «Подсказка»... и строка ввода
+            // Нижняя панель действий: быстрое меню, голос и скрываемый ввод своего вопроса
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -743,37 +777,120 @@ private fun MentorPanel(
                     QuickAskChips(enabled = !busy, onAsk = ::ask)
                 }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                // Индикатор распознавания речи на лету (если слышит голос в свёрнутом виде)
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = listening && partialVoiceText.isNotBlank() && !showTextInput,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
                 ) {
-                    Box(Modifier.weight(1f)) {
-                        AppTextField(
-                            question,
-                            { question = it },
-                            if (listening) "Говори…" else "Свой вопрос наставнику…",
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                            keyboardActions = KeyboardActions(onSend = {
-                                if (question.isNotBlank()) {
-                                    ask(question.trim(), AskKind.USER)
-                                    question = ""
-                                }
-                            }),
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Brand.Accent.copy(alpha = 0.12f))
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            "«$partialVoiceText»",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Brand.Accent,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    BarButton(
-                        R.drawable.ic_mic,
-                        if (listening) "Остановить запись" else "Сказать голосом",
-                        active = listening,
-                    ) { speech.toggle() }
+                }
 
-                    BarButton(
-                        R.drawable.ic_send,
-                        "Отправить",
-                        enabled = question.isNotBlank() && !busy,
+                // Развёрнутое поле ввода своего вопроса (когда нажали «Свой вопрос»)
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = showTextInput,
+                    enter = fadeIn(tween(180)) + expandVertically(spring(dampingRatio = 0.8f, stiffness = 500f)),
+                    exit = fadeOut(tween(140)) + shrinkVertically(spring(dampingRatio = 0.85f, stiffness = 550f)),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        ask(question.trim(), AskKind.USER)
-                        question = ""
+                        Box(Modifier.weight(1f)) {
+                            AppTextField(
+                                question,
+                                { question = it },
+                                if (listening) "Слушаю…" else "Свой вопрос наставнику…",
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                                keyboardActions = KeyboardActions(onSend = {
+                                    if (question.isNotBlank()) {
+                                        ask(question.trim(), AskKind.USER)
+                                        question = ""
+                                        showTextInput = false
+                                    }
+                                }),
+                            )
+                        }
+                        VoiceWaveButton(
+                            listening = listening,
+                            voiceRms = voiceRms,
+                            onClick = { speech.toggle() },
+                        )
+                        BarButton(
+                            R.drawable.ic_send,
+                            "Отправить",
+                            enabled = question.isNotBlank() && !busy,
+                        ) {
+                            ask(question.trim(), AskKind.USER)
+                            question = ""
+                            showTextInput = false
+                        }
+                        BarButton(
+                            R.drawable.ic_close,
+                            "Скрыть ввод",
+                        ) {
+                            showTextInput = false
+                        }
+                    }
+                }
+
+                // Свёрнутая компактная панель (по умолчанию)
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = !showTextInput,
+                    enter = fadeIn(tween(160)),
+                    exit = fadeOut(tween(120)),
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        VoiceWaveButton(
+                            listening = listening,
+                            voiceRms = voiceRms,
+                            onClick = { speech.toggle() },
+                        )
+                        Row(
+                            Modifier
+                                .weight(1f)
+                                .height(38.dp)
+                                .clip(RoundedCornerShape(19.dp))
+                                .background(Brand.Glass.copy(alpha = 0.7f))
+                                .border(0.8.dp, Brand.Line, RoundedCornerShape(19.dp))
+                                .clickable { showTextInput = true }
+                                .padding(horizontal = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_keyboard),
+                                contentDescription = null,
+                                tint = Brand.InkSoft,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(
+                                "Свой вопрос…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Brand.InkSoft,
+                                maxLines = 1,
+                            )
+                        }
                     }
                 }
             }
@@ -989,6 +1106,99 @@ private fun QuickChip(
                 fontWeight = if (highlight) FontWeight.SemiBold else FontWeight.Medium,
             ),
         )
+    }
+}
+
+/**
+ * Компактный значок голосового ввода: реагирует на голос в реальном времени,
+ * анимирует пульсирующий ореол и динамические звуковые волны в зависимости от громкости речи.
+ */
+@Composable
+private fun VoiceWaveButton(
+    listening: Boolean,
+    voiceRms: Float,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scale by animateFloatAsState(
+        targetValue = if (listening) 1f + voiceRms * 0.22f else 1f,
+        animationSpec = spring(stiffness = 700f),
+        label = "voiceScale",
+    )
+    val haloScale by animateFloatAsState(
+        targetValue = if (listening) 1f + voiceRms * 0.5f else 1f,
+        animationSpec = spring(stiffness = 500f),
+        label = "voiceHaloScale",
+    )
+    val haloAlpha by animateFloatAsState(
+        targetValue = if (listening) (0.25f + voiceRms * 0.45f).coerceIn(0f, 0.7f) else 0f,
+        animationSpec = tween(140),
+        label = "voiceHaloAlpha",
+    )
+    val bgColor by animateColorAsState(
+        targetValue = if (listening) Brand.Accent else Brand.Glass.copy(alpha = 0.8f),
+        animationSpec = tween(220),
+        label = "voiceBg",
+    )
+    val iconTint by animateColorAsState(
+        targetValue = if (listening) Brand.OnAccent else Brand.Ink,
+        animationSpec = tween(220),
+        label = "voiceTint",
+    )
+
+    Box(
+        modifier = modifier
+            .size(38.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (listening) {
+            Box(
+                Modifier
+                    .size(38.dp)
+                    .graphicsLayer {
+                        scaleX = haloScale
+                        scaleY = haloScale
+                    }
+                    .clip(CircleShape)
+                    .background(Brand.Accent.copy(alpha = haloAlpha))
+            )
+        }
+
+        Box(
+            Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(bgColor)
+                .border(0.8.dp, if (listening) Brand.Accent else Brand.Line, CircleShape)
+                .clickable(onClick = onClick)
+                .semantics { contentDescription = if (listening) "Остановить запись" else "Спросить голосом" },
+            contentAlignment = Alignment.Center,
+        ) {
+            if (listening) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(2.5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val w1 by animateDpAsState((6 + voiceRms * 14).dp, label = "v1")
+                    val w2 by animateDpAsState((10 + voiceRms * 18).dp, label = "v2")
+                    val w3 by animateDpAsState((5 + voiceRms * 12).dp, label = "v3")
+                    Box(Modifier.width(2.5.dp).height(w1).clip(CircleShape).background(Brand.OnAccent))
+                    Box(Modifier.width(2.5.dp).height(w2).clip(CircleShape).background(Brand.OnAccent))
+                    Box(Modifier.width(2.5.dp).height(w3).clip(CircleShape).background(Brand.OnAccent))
+                }
+            } else {
+                Icon(
+                    painter = painterResource(R.drawable.ic_mic),
+                    contentDescription = null,
+                    tint = iconTint,
+                    modifier = Modifier.size(19.dp),
+                )
+            }
+        }
     }
 }
 

@@ -18,6 +18,7 @@ class SpeechInput(private val context: Context, private val callback: Callback) 
         fun onPartial(text: String)
         fun onResult(text: String)
         fun onError(message: String, needsPermission: Boolean)
+        fun onRmsChanged(rmsdB: Float) {}
     }
 
     private var recognizer: SpeechRecognizer? = null
@@ -71,7 +72,9 @@ class SpeechInput(private val context: Context, private val callback: Callback) 
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) = Unit
         override fun onBeginningOfSpeech() = Unit
-        override fun onRmsChanged(rmsdB: Float) = Unit
+        override fun onRmsChanged(rmsdB: Float) {
+            callback.onRmsChanged(rmsdB)
+        }
         override fun onBufferReceived(buffer: ByteArray?) = Unit
         override fun onEndOfSpeech() = Unit
         override fun onEvent(eventType: Int, params: Bundle?) = Unit
