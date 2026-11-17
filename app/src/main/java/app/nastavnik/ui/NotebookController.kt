@@ -380,6 +380,7 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
     fun deleteSelection() = ink.deleteSelection()
     fun duplicateSelection() = ink.duplicateSelection()
     fun recolorSelection(c: Int) = ink.recolorSelection(c)
+    fun scaleSelection(factor: Float) = ink.scaleSelection(factor)
     fun clearSelection() = ink.clearSelection()
 
     fun copySelection() {

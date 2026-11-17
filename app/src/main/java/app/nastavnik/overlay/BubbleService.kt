@@ -33,6 +33,7 @@ import app.nastavnik.capture.ImageUtils
 import app.nastavnik.capture.ScreenCapturer
 import app.nastavnik.data.AppSettings
 import app.nastavnik.data.BubbleSide
+import app.nastavnik.data.DeviceProfile
 import app.nastavnik.geom.IRect
 import app.nastavnik.geom.LineMatch
 import app.nastavnik.geom.NotebookPages
@@ -862,8 +863,11 @@ class BubbleService : LifecycleService(), BubbleView.Listener, SpeechInput.Callb
      * — если включена фоновая проверка: студент писал и остановился — тихо проверяет решение.
      */
     private suspend fun watchLoop() {
+        val isWeak = DeviceProfile.isWeakDevice(this)
+        val tick = if (isWeak) 3500L else TICK_MS
+        val readingTick = if (isWeak) 1500L else READING_TICK_MS
         while (lifecycleScope.isActive) {
-            delay(if (readingMode) READING_TICK_MS else TICK_MS)
+            delay(if (readingMode) readingTick else tick)
             // Сбой одного кадра (экран повернули посреди снимка и т. п.) не должен ронять наставника.
             try {
                 watchStep()

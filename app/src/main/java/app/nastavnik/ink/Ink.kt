@@ -19,6 +19,19 @@ class TextBox(val x: Float, val y: Float, val width: Float, val text: String, va
 
     fun moved(dx: Float, dy: Float) = TextBox(x + dx, y + dy, width, text, size, color)
 
+    /** Тот же текст, смасштабированный относительно точки (cx, cy). */
+    fun scaled(sx: Float, sy: Float, cx: Float, cy: Float): TextBox {
+        val avg = ((sx + sy) / 2f).coerceAtLeast(0.05f)
+        return TextBox(
+            x = cx + (x - cx) * sx,
+            y = cy + (y - cy) * sy,
+            width = (width * sx).coerceAtLeast(10f),
+            text = text,
+            size = (size * avg).coerceIn(6f, 160f),
+            color = color,
+        )
+    }
+
     /** Примерная рамка (точная высота известна только после вёрстки на экране). */
     fun bounds(lines: Int = -1): FloatArray {
         if (lines < 0) {
@@ -54,6 +67,19 @@ class Stroke(val tool: Tool, val color: Int, val width: Float, val points: Float
     fun moved(dx: Float, dy: Float) = Stroke(tool, color, width, FloatArray(points.size) { i ->
         when (i % 3) { 0 -> points[i] + dx; 1 -> points[i] + dy; else -> points[i] }
     })
+
+    /** Тот же штрих, смасштабированный относительно точки (cx, cy). */
+    fun scaled(sx: Float, sy: Float, cx: Float, cy: Float): Stroke {
+        val avg = ((sx + sy) / 2f).coerceAtLeast(0.05f)
+        val np = FloatArray(points.size) { i ->
+            when (i % 3) {
+                0 -> cx + (points[i] - cx) * sx
+                1 -> cy + (points[i] - cy) * sy
+                else -> points[i]
+            }
+        }
+        return Stroke(tool, color, (width * avg).coerceIn(0.5f, 80f), np)
+    }
 
     fun recolored(c: Int) = Stroke(tool, c, width, points)
     fun x(i: Int) = points[i * 3]

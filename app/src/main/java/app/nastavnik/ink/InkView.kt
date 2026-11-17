@@ -7,6 +7,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.DashPathEffect
 import android.graphics.Matrix
 import android.graphics.Paint
@@ -26,6 +27,7 @@ import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /** Инструмент на листе. */
 enum class EditTool { PEN, HIGHLIGHTER, ERASER, LASSO, SHAPE, TEXT }
@@ -227,6 +229,11 @@ class InkView(context: Context) : View(context) {
     private val selExclude = HashSet<Any>()
     private var moveDx = 0f
     private var moveDy = 0f
+    private var resizeAnchorX = 0f
+    private var resizeAnchorY = 0f
+    private var resizeOrigW = 1f
+    private var resizeOrigH = 1f
+    private var resizeScale = 1f
     private val lassoPath = ArrayList<Float>()
     private var antsPhase = 0f
     private var antsAnim: ValueAnimator? = null
@@ -240,6 +247,9 @@ class InkView(context: Context) : View(context) {
         selTexts = emptyList()
         selExclude.clear()
         lassoPath.clear()
+        moveDx = 0f
+        moveDy = 0f
+        resizeScale = 1f
         antsAnim?.cancel()
         antsAnim = null
         invalidateCache()
@@ -297,7 +307,14 @@ class InkView(context: Context) : View(context) {
             listener?.onSelectionChanged(null, 0)
             return
         }
-        b.offset(moveDx, moveDy)
+        if (mode == Mode.RESIZE && resizeScale != 1f) {
+            val w = b.width() * resizeScale
+            val h = b.height() * resizeScale
+            b.right = b.left + w
+            b.bottom = b.top + h
+        } else {
+            b.offset(moveDx, moveDy)
+        }
         pageMatrix.mapRect(b)
         listener?.onSelectionChanged(b, selStrokes.size + selTexts.size)
     }
@@ -360,6 +377,49 @@ class InkView(context: Context) : View(context) {
         val b = selectionBounds() ?: return false
         b.inset(-12f, -12f)
         return b.contains(px, py)
+    }
+
+    /** Проверка попадания в угловой маркер изменения размера (правый нижний угол). */
+    private fun nearResizeHandle(px: Float, py: Float): Boolean {
+        val b = selectionBounds() ?: return false
+        val r = 28f / scale
+        return hypot(px - b.right, py - b.bottom) <= r
+    }
+
+    /** Пропорциональное изменение размера выделения (кнопки меню или жест). */
+    fun scaleSelection(factor: Float) {
+        val p = page ?: return
+        if (!hasSelection) return
+        val b = selectionBounds() ?: return
+        val cx = b.centerX()
+        val cy = b.centerY()
+        val sm = selStrokes.associateWith { it.scaled(factor, factor, cx, cy) }
+        val tm = selTexts.associateWith { it.scaled(factor, factor, cx, cy) }
+        replace(p, p.strokes.map { sm[it] ?: it }, p.texts.map { tm[it] ?: it })
+        select(sm.values.toList(), tm.values.toList())
+        reportSelection()
+        listener?.onHint("Размер: ${(factor * 100).roundToInt()}%")
+        invalidate()
+    }
+
+    private fun commitResize() {
+        val p = page ?: return
+        val factor = resizeScale
+        resizeScale = 1f
+        if (abs(factor - 1f) < 0.02f) {
+            reportSelection()
+            invalidate()
+            return
+        }
+        val ax = resizeAnchorX
+        val ay = resizeAnchorY
+        val sm = selStrokes.associateWith { it.scaled(factor, factor, ax, ay) }
+        val tm = selTexts.associateWith { it.scaled(factor, factor, ax, ay) }
+        replace(p, p.strokes.map { sm[it] ?: it }, p.texts.map { tm[it] ?: it })
+        select(sm.values.toList(), tm.values.toList())
+        reportSelection()
+        listener?.onHint("Размер: ${(factor * 100).roundToInt()}%")
+        invalidate()
     }
 
     // ---------------- масштаб ----------------
@@ -502,8 +562,10 @@ class InkView(context: Context) : View(context) {
         var b = cache
         if (b == null || b.isRecycled || b.width != width || b.height != height) {
             if (b != null && !b.isRecycled) b.recycle()
+            val isWeak = app.nastavnik.data.DeviceProfile.isWeakDevice(context)
+            val cfg = if (isWeak) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888
             b = try {
-                Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                Bitmap.createBitmap(width, height, cfg)
             } catch (_: OutOfMemoryError) {
                 return null
             }
@@ -583,7 +645,11 @@ class InkView(context: Context) : View(context) {
     private fun drawSelection(c: Canvas, k: Float) {
         if (!hasSelection) return
         c.save()
-        c.translate(moveDx, moveDy)
+        if (mode == Mode.RESIZE && resizeScale != 1f) {
+            c.scale(resizeScale, resizeScale, resizeAnchorX, resizeAnchorY)
+        } else {
+            c.translate(moveDx, moveDy)
+        }
         // Поднятое выделение: мягкий ореол, само содержимое — поверх.
         val glow = 0x335B8CFF
         for (s in selStrokes) drawer.drawGlow(c, s, glow, 7f / k)
@@ -591,14 +657,39 @@ class InkView(context: Context) : View(context) {
         for (t in selTexts) drawer.drawText(c, t)
         for (s in selStrokes) if (s.tool != Tool.HIGHLIGHTER) drawer.drawStroke(c, s)
         c.restore()
+
         val b = selectionBounds() ?: return
-        b.offset(moveDx, moveDy)
+        if (mode == Mode.RESIZE && resizeScale != 1f) {
+            val w = b.width() * resizeScale
+            val h = b.height() * resizeScale
+            b.right = b.left + w
+            b.bottom = b.top + h
+        } else {
+            b.offset(moveDx, moveDy)
+        }
         val grow = (1 - selectionAppear) * 10f / k
         b.inset(-grow, -grow)
         selFrame.strokeWidth = 1.5f / k
         selFrame.color = 0xCC3A6FE0.toInt()
         selFrame.pathEffect = DashPathEffect(floatArrayOf(7f / k, 5f / k), -antsPhase * 12f / k)
         c.drawRoundRect(b, 8f / k, 8f / k, selFrame)
+
+        // Маркер изменения размера (правый нижний угол)
+        val handleR = 7f / k
+        val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = 0xFF3A6FE0.toInt()
+        }
+        val handleStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            color = Color.WHITE
+            strokeWidth = 1.5f / k
+        }
+        c.drawCircle(b.right, b.bottom, handleR, handlePaint)
+        c.drawCircle(b.right, b.bottom, handleR, handleStroke)
+        handleStroke.strokeWidth = 1.2f / k
+        val d = 3f / k
+        c.drawLine(b.right - d, b.bottom - d, b.right + d, b.bottom + d, handleStroke)
     }
 
     private fun drawLasso(c: Canvas, k: Float) {
@@ -809,7 +900,7 @@ class InkView(context: Context) : View(context) {
 
     // ---------------- ввод ----------------
 
-    private enum class Mode { NONE, DRAW, ERASE, PAN, LASSO, MOVE, SHAPE, TEXT }
+    private enum class Mode { NONE, DRAW, ERASE, PAN, LASSO, MOVE, RESIZE, SHAPE, TEXT }
 
     private var mode = Mode.NONE
     private var activePointer = -1
@@ -991,7 +1082,11 @@ class InkView(context: Context) : View(context) {
         return when (editTool) {
             EditTool.PEN, EditTool.HIGHLIGHTER -> Mode.DRAW
             EditTool.ERASER -> Mode.ERASE
-            EditTool.LASSO -> if (hasSelection && insideSelection(q[0], q[1])) Mode.MOVE else Mode.LASSO
+            EditTool.LASSO -> when {
+                hasSelection && nearResizeHandle(q[0], q[1]) -> Mode.RESIZE
+                hasSelection && insideSelection(q[0], q[1]) -> Mode.MOVE
+                else -> Mode.LASSO
+            }
             EditTool.SHAPE -> Mode.SHAPE
             EditTool.TEXT -> Mode.TEXT
         }
@@ -1027,6 +1122,17 @@ class InkView(context: Context) : View(context) {
             }
             Mode.MOVE -> {
                 moveDx = 0f; moveDy = 0f
+                performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            }
+            Mode.RESIZE -> {
+                val b = selectionBounds()
+                if (b != null) {
+                    resizeAnchorX = b.left
+                    resizeAnchorY = b.top
+                    resizeOrigW = max(10f, b.width())
+                    resizeOrigH = max(10f, b.height())
+                }
+                resizeScale = 1f
                 performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
             }
             Mode.SHAPE -> {
@@ -1084,6 +1190,16 @@ class InkView(context: Context) : View(context) {
                 reportSelection()
                 invalidate()
             }
+            Mode.RESIZE -> {
+                val q = toPage(x, y)
+                val curW = q[0] - resizeAnchorX
+                val curH = q[1] - resizeAnchorY
+                val sx = curW / resizeOrigW
+                val sy = curH / resizeOrigH
+                resizeScale = ((sx + sy) / 2f).coerceIn(0.15f, 4.0f)
+                reportSelection()
+                invalidate()
+            }
             Mode.SHAPE -> {
                 val q = toPage(x, y)
                 shapePreview = Shapes.build(shapeKind, startPX, startPY, q[0], q[1], penWidth, color)
@@ -1124,6 +1240,7 @@ class InkView(context: Context) : View(context) {
                 }
             }
             Mode.MOVE -> commitMove()
+            Mode.RESIZE -> commitResize()
             Mode.SHAPE -> {
                 val shapes = shapePreview
                 shapePreview = emptyList()
@@ -1169,8 +1286,26 @@ class InkView(context: Context) : View(context) {
                     startPen(e, 0, pen)
                 } else {
                     val q = toPage(e.x, e.y)
-                    // Пальцем можно сразу тянуть выделенное.
-                    mode = if (hasSelection && insideSelection(q[0], q[1])) Mode.MOVE.also { startPX = q[0]; startPY = q[1]; moveDx = 0f; moveDy = 0f } else Mode.PAN
+                    // Пальцем можно тянуть маркер изменения размера или перемещать выделение
+                    mode = when {
+                        hasSelection && nearResizeHandle(q[0], q[1]) -> {
+                            val b = selectionBounds()
+                            if (b != null) {
+                                resizeAnchorX = b.left
+                                resizeAnchorY = b.top
+                                resizeOrigW = max(10f, b.width())
+                                resizeOrigH = max(10f, b.height())
+                            }
+                            resizeScale = 1f
+                            performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            Mode.RESIZE
+                        }
+                        hasSelection && insideSelection(q[0], q[1]) -> {
+                            startPX = q[0]; startPY = q[1]; moveDx = 0f; moveDy = 0f
+                            Mode.MOVE
+                        }
+                        else -> Mode.PAN
+                    }
                     velocity?.recycle()
                     velocity = VelocityTracker.obtain().also { it.addMovement(e) }
                 }
@@ -1195,6 +1330,7 @@ class InkView(context: Context) : View(context) {
                         Mode.ERASE -> finishErase(p)
                         Mode.LASSO -> lassoPath.clear()
                         Mode.MOVE -> { moveDx = 0f; moveDy = 0f; reportSelection() }
+                        Mode.RESIZE -> { resizeScale = 1f; reportSelection() }
                         Mode.SHAPE -> shapePreview = emptyList()
                         else -> Unit
                     }
@@ -1275,6 +1411,7 @@ class InkView(context: Context) : View(context) {
                 lassoPath.clear()
                 if (mode == Mode.ERASE) finishErase(p)
                 if (mode == Mode.MOVE) { moveDx = 0f; moveDy = 0f }
+                if (mode == Mode.RESIZE) { resizeScale = 1f }
                 mode = Mode.NONE
                 endMoving()
                 invalidate()

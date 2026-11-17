@@ -478,6 +478,8 @@ fun SelectionMenu(ctl: NotebookController) {
                     .padding(horizontal = 6.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                MenuAction(R.drawable.ic_shrink, "Уменьшить") { ctl.scaleSelection(0.8f) }
+                MenuAction(R.drawable.ic_expand, "Увеличить") { ctl.scaleSelection(1.25f) }
                 MenuAction(R.drawable.ic_copy, "Копировать") { ctl.copySelection() }
                 MenuAction(R.drawable.ic_duplicate, "Дублировать") { ctl.duplicateSelection() }
                 MenuAction(R.drawable.ic_palette_dot, "Цвет") { colors = !colors }

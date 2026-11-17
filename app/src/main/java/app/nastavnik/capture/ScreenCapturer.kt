@@ -15,6 +15,7 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.util.DisplayMetrics
 import android.view.Display
+import app.nastavnik.data.DeviceProfile
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -44,6 +45,23 @@ class ScreenCapturer(private val context: Context) {
     private var width = 0
     private var height = 0
     private var dpi = 0
+    private var realW = 0
+    private var realH = 0
+
+    val realWidth: Int get() = if (realW > 0) realW else width
+    val realHeight: Int get() = if (realH > 0) realH else height
+
+    private fun calcResolution(m: DisplayMetrics): DeviceProfile.Resolution {
+        realW = m.widthPixels
+        realH = m.heightPixels
+        val isWeak = DeviceProfile.isWeakDevice(context)
+        val isTab = DeviceProfile.isTablet(context)
+        return if (isTab || maxOf(realW, realH) > 1600) {
+            DeviceProfile.optimalTabletResolution(realW, realH, m.densityDpi, isWeak)
+        } else {
+            DeviceProfile.Resolution(realW, realH, m.densityDpi, 1.0f)
+        }
+    }
 
     /** Последний кадр экрана (держим открытым, пока не придёт следующий) и когда он пришёл. Под [frameLock]. */
     private val frameLock = Any()
@@ -84,9 +102,10 @@ class ScreenCapturer(private val context: Context) {
         )
         projection = p
         val m = realMetrics()
-        width = m.widthPixels
-        height = m.heightPixels
-        dpi = m.densityDpi
+        val opt = calcResolution(m)
+        width = opt.width
+        height = opt.height
+        dpi = opt.dpi
         val r = newReader(width, height)
         reader = r
         return try {
@@ -148,10 +167,11 @@ class ScreenCapturer(private val context: Context) {
     private fun ensureSize() {
         val vd = virtualDisplay ?: throw CaptureException("Нет разрешения на снимок экрана")
         val m = realMetrics()
-        if (m.widthPixels == width && m.heightPixels == height && m.densityDpi == dpi) return
-        width = m.widthPixels
-        height = m.heightPixels
-        dpi = m.densityDpi
+        val opt = calcResolution(m)
+        if (opt.width == width && opt.height == height && opt.dpi == dpi) return
+        width = opt.width
+        height = opt.height
+        dpi = opt.dpi
         vd.surface = null
         dropLatest()
         runCatching { reader?.close() }

@@ -325,12 +325,15 @@ fun NastavnikTheme(appearance: Appearance = Appearance(), content: @Composable (
     }
     Brand.backdropImage = image
 
-    // «Живой» фон: пятна медленно плывут (цикл 28 с). Меняется только рисование, без перекомпоновки.
+    // «Живой» фон: пятна медленно плывут (цикл 28 с). На слабых устройствах отключаем бесконечный цикл кадров.
     if (appearance.backdrop == Backdrop.LIVE) {
-        LaunchedEffect(Unit) {
-            val start = withFrameNanos { it }
-            while (true) {
-                withFrameNanos { now -> Brand.phase = ((now - start) / 28e9f) % 1f }
+        val isWeak = remember(context) { app.nastavnik.data.DeviceProfile.isWeakDevice(context) }
+        if (!isWeak) {
+            LaunchedEffect(Unit) {
+                val start = withFrameNanos { it }
+                while (true) {
+                    withFrameNanos { now -> Brand.phase = ((now - start) / 28e9f) % 1f }
+                }
             }
         }
     }

@@ -122,4 +122,34 @@ class InkTest {
         assertEquals(3, tap.dot.size)
         assertEquals(5f, tap.dot[0], 1e-4f)
     }
+
+    @Test
+    fun strokeAndTextBoxScalingSupportsBothShrinkAndExpand() {
+        val s = line(100f, 100f, 200f, 200f, n = 3)
+        // Уменьшение 0.5x относительно центра (150, 150)
+        val shrunk = s.scaled(0.5f, 0.5f, 150f, 150f)
+        assertEquals(125f, shrunk.points[0], 1e-3f)
+        assertEquals(125f, shrunk.points[1], 1e-3f)
+        assertEquals(175f, shrunk.points[6], 1e-3f)
+        assertEquals(175f, shrunk.points[7], 1e-3f)
+        assertEquals(1.5f, shrunk.width, 1e-3f)
+
+        // Увеличение 2.0x относительно центра (150, 150)
+        val expanded = s.scaled(2.0f, 2.0f, 150f, 150f)
+        assertEquals(50f, expanded.points[0], 1e-3f)
+        assertEquals(50f, expanded.points[1], 1e-3f)
+        assertEquals(250f, expanded.points[6], 1e-3f)
+        assertEquals(250f, expanded.points[7], 1e-3f)
+        assertEquals(6.0f, expanded.width, 1e-3f)
+
+        // Масштабирование текстового блока
+        val tb = TextBox(100f, 100f, 200f, "Формула", 20f, 0xFF000000.toInt())
+        val shrunkTb = tb.scaled(0.8f, 0.8f, 100f, 100f)
+        assertEquals(160f, shrunkTb.width, 1e-3f)
+        assertEquals(16f, shrunkTb.size, 1e-3f)
+
+        val expandedTb = tb.scaled(1.5f, 1.5f, 100f, 100f)
+        assertEquals(300f, expandedTb.width, 1e-3f)
+        assertEquals(30f, expandedTb.size, 1e-3f)
+    }
 }
