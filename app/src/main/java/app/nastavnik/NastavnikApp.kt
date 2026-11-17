@@ -14,14 +14,14 @@ import app.nastavnik.ai.OpenAiClient
 import app.nastavnik.data.AppDatabase
 import app.nastavnik.data.AppSettings
 import app.nastavnik.data.AppUsage
+import app.nastavnik.data.CoordStats
 import app.nastavnik.data.SettingsRepo
 import app.nastavnik.data.Updater
 import app.nastavnik.data.UpdateInfo
+import app.nastavnik.network.NetworkPolicy
 import app.nastavnik.ink.Notebooks
 import app.nastavnik.session.CleanSession
-import app.nastavnik.study.Reminders
 import app.nastavnik.study.Alarms
-import app.nastavnik.study.WakePrefs
 import app.nastavnik.ui.Palettes
 import app.nastavnik.schedule.ScheduleRepo
 import app.nastavnik.sync.SyncManager
@@ -38,7 +38,21 @@ import kotlinx.coroutines.launch
 class NastavnikApp : Application() {
     val settings: SettingsRepo by lazy { SettingsRepo(this) }
     val db: AppDatabase by lazy { AppDatabase.create(this) }
-    private val http by lazy { ClaudeClient.defaultHttp() }
+    private val networkPolicy by lazy {
+        NetworkPolicy(
+            allowInsecureLocal = { BuildConfig.DEBUG || settings.allowInsecureLocalProxy() },
+            trustedProxyHosts = {
+                setOfNotNull(
+                    settings.load().openAiBaseUrl.let { runCatching { java.net.URI(it).host }.getOrNull() },
+                    settings.load().anthropicCompatBaseUrl.let { runCatching { java.net.URI(it).host }.getOrNull() },
+                    if (BuildConfig.DEBUG) settings.debugBaseUrl()?.let { runCatching { java.net.URI(it).host }.getOrNull() } else null,
+                    "127.0.0.1",
+                    "localhost",
+                )
+            },
+        )
+    }
+    private val http by lazy { ClaudeClient.defaultHttp(networkPolicy) }
 
     val claude: ClaudeClient by lazy {
         ClaudeClient(http).apply {
@@ -58,6 +72,9 @@ class NastavnikApp : Application() {
 
     /** Карточки повторения и учебные события для «Прогресса». */
     val study: StudyRepo by lazy { StudyRepo(this) }
+
+    /** Статистика точности координат модели и разметка промахов. */
+    val coordStats: CoordStats by lazy { CoordStats(this) }
 
     /** Тренировочные варианты, мини-тесты и карточки из подсказок. */
     val trainer: Trainer by lazy { Trainer(this) }
@@ -114,9 +131,8 @@ class NastavnikApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // До первой разблокировки после перезагрузки обычные настройки и база недоступны —
-        // запускается только будильник (его состояние в отдельном хранилище). Остальное — после разблокировки.
-        if (!WakePrefs.unlocked(this)) {
+        // Обычные настройки и база доступны после первой разблокировки.
+        if (getSystemService(android.os.UserManager::class.java)?.isUserUnlocked == false) {
             createChannels()
             androidx.core.content.ContextCompat.registerReceiver(
                 this,
@@ -142,8 +158,7 @@ class NastavnikApp : Application() {
         settings.forgetLksPassword()
         settings.migrateToParentDesign()
         Palettes.installWallpaper(this)
-        // Лёгкая версия: без своих напоминаний (только расписание, оценки, живое уведомление).
-        if (!BuildConfig.STUDENT) Reminders.schedule(this)
+        Alarms.cancelRemovedReminders(this)
         Alarms.rescheduleAll(this)
         GradesJob.schedule(this)
         checkUpdateInBackground()

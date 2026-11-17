@@ -67,14 +67,8 @@ fun OnboardingScreen(resumeTick: Int, onDone: () -> Unit, onSkip: () -> Unit) {
     val steps = listOf(
         Step(
             "Привет! Я — Наставник",
-            "Пиши где удобно: в своём приложении для записей (я вишу кнопкой поверх него) или прямо у меня в тетради. Подсказываю, как решать, но не решаю за тебя. Дай пару разрешений.",
+            "Пиши прямо в тетради стилусом или пальцем. Подсказываю, как решать, но не решаю за тебя. Дай пару разрешений.",
             done = true, actionLabel = null, action = null,
-        ),
-        Step(
-            "Поверх других окон",
-            "Чтобы кнопка и ответы наставника появлялись поверх твоего приложения для записей.",
-            done = overlay, actionLabel = "Разрешить",
-            action = { context.startActivity(Permissions.overlaySettingsIntent(context)) },
         ),
         Step(
             "Уведомления",
@@ -102,12 +96,12 @@ fun OnboardingScreen(resumeTick: Int, onDone: () -> Unit, onSkip: () -> Unit) {
         ),
         Step(
             "Всё готово",
-            "Запусти наставника и открой своё приложение для записей — или напиши решение прямо в тетради «Наставника».",
+            "Открой тетрадь и напиши решение — наставник готов помогать.",
             done = true, actionLabel = null, action = null,
         ),
     )
     val step = steps[index.coerceIn(0, steps.lastIndex)]
-    val icons = listOf(R.drawable.ic_sparkle, R.drawable.ic_layers, R.drawable.ic_bell, R.drawable.ic_image, R.drawable.ic_mic, R.drawable.ic_tune, R.drawable.ic_power)
+    val icons = listOf(R.drawable.ic_sparkle, R.drawable.ic_bell, R.drawable.ic_image, R.drawable.ic_mic, R.drawable.ic_tune, R.drawable.ic_power)
 
     // На планшете карточка — по центру экрана и не шире 620 dp.
     val topPad = (LocalConfiguration.current.screenHeightDp * 0.08f).dp
@@ -148,15 +142,13 @@ fun OnboardingScreen(resumeTick: Int, onDone: () -> Unit, onSkip: () -> Unit) {
             Text(step.title, style = MaterialTheme.typography.headlineMedium)
             Text(step.why, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (index in 1 until steps.lastIndex && step.done && step.actionLabel != "Понятно") {
-                Row(
+                Box(
                     Modifier
                         .clip(CircleShape)
                         .background(Brand.OkSoft)
                         .padding(horizontal = 14.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Text("✓", color = Brand.Ok, style = MaterialTheme.typography.titleSmall)
                     Text("Готово", color = Brand.Ok, style = MaterialTheme.typography.labelLarge)
                 }
             }
@@ -167,12 +159,10 @@ fun OnboardingScreen(resumeTick: Int, onDone: () -> Unit, onSkip: () -> Unit) {
                 InkButton(step.actionLabel) { step.action?.invoke() }
             }
             if (index == steps.lastIndex) {
-                InkButton("Запустить наставника", enabled = overlay, icon = R.drawable.ic_power) {
+                InkButton("Начать", icon = R.drawable.ic_sparkle) {
                     settings.setOnboardingDone(true)
-                    BubbleService.start(context)
                     onDone()
                 }
-                if (!overlay) Text("Сначала разреши показ поверх окон (шаг 2).", color = MaterialTheme.colorScheme.error)
             }
         }
 

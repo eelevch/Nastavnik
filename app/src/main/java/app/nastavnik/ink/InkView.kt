@@ -7,7 +7,6 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.DashPathEffect
 import android.graphics.Matrix
 import android.graphics.Paint
@@ -27,8 +26,6 @@ import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToInt
-import app.nastavnik.data.DeviceProfile
 
 /** Инструмент на листе. */
 enum class EditTool { PEN, HIGHLIGHTER, ERASER, LASSO, SHAPE, TEXT }
@@ -230,11 +227,6 @@ class InkView(context: Context) : View(context) {
     private val selExclude = HashSet<Any>()
     private var moveDx = 0f
     private var moveDy = 0f
-    private var resizeAnchorX = 0f
-    private var resizeAnchorY = 0f
-    private var resizeScale = 1f
-    private var resizeOrigW = 1f
-    private var resizeOrigH = 1f
     private val lassoPath = ArrayList<Float>()
     private var antsPhase = 0f
     private var antsAnim: ValueAnimator? = null
@@ -368,59 +360,6 @@ class InkView(context: Context) : View(context) {
         val b = selectionBounds() ?: return false
         b.inset(-12f, -12f)
         return b.contains(px, py)
-    }
-
-    /** Уменьшить (factor < 1) или увеличить (factor > 1) выделенное относительно его центра. */
-    fun scaleSelection(factor: Float) {
-        val p = page ?: return
-        if (!hasSelection) return
-        val b = selectionBounds() ?: return
-        val cx = b.centerX()
-        val cy = b.centerY()
-        val sm = selStrokes.associateWith { it.scaled(factor, factor, cx, cy) }
-        val tm = selTexts.associateWith { it.scaled(factor, factor, cx, cy) }
-        replace(p, p.strokes.map { sm[it] ?: it }, p.texts.map { tm[it] ?: it })
-        select(sm.values.toList(), tm.values.toList())
-        val percent = (factor * 100).roundToInt()
-        listener?.onHint("Размер: $percent%")
-    }
-
-    private fun nearResizeHandle(px: Float, py: Float): Boolean {
-        if (!hasSelection) return false
-        val b = selectionBounds() ?: return false
-        b.offset(moveDx, moveDy)
-        val k = scale
-        val hit = 28f / k
-        return hypot(px - b.right, py - b.bottom) <= hit
-    }
-
-    private fun startResize(qx: Float, qy: Float) {
-        val b = selectionBounds() ?: return
-        b.offset(moveDx, moveDy)
-        resizeAnchorX = b.left
-        resizeAnchorY = b.top
-        resizeOrigW = maxOf(10f, b.width())
-        resizeOrigH = maxOf(10f, b.height())
-        resizeScale = 1f
-        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-    }
-
-    private fun commitResize() {
-        val p = page ?: return
-        val s = resizeScale
-        val ax = resizeAnchorX
-        val ay = resizeAnchorY
-        resizeScale = 1f
-        if (abs(s - 1f) < 0.02f) {
-            invalidate()
-            return
-        }
-        val sm = selStrokes.associateWith { it.scaled(s, s, ax, ay) }
-        val tm = selTexts.associateWith { it.scaled(s, s, ax, ay) }
-        replace(p, p.strokes.map { sm[it] ?: it }, p.texts.map { tm[it] ?: it })
-        select(sm.values.toList(), tm.values.toList())
-        val percent = (s * 100).roundToInt()
-        listener?.onHint("Размер: $percent%")
     }
 
     // ---------------- масштаб ----------------
@@ -561,14 +500,18 @@ class InkView(context: Context) : View(context) {
     private fun renderCache(): Bitmap? {
         if (width <= 0 || height <= 0) return null
         var b = cache
-        if (b == null || b.width != width || b.height != height) {
-            b?.recycle()
-            val config = if (DeviceProfile.isWeakDevice(context)) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888
-            b = Bitmap.createBitmap(width, height, config)
+        if (b == null || b.isRecycled || b.width != width || b.height != height) {
+            if (b != null && !b.isRecycled) b.recycle()
+            b = try {
+                Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            } catch (_: OutOfMemoryError) {
+                return null
+            }
             cache = b
             cacheCanvas = Canvas(b)
         }
-        drawScene(cacheCanvas!!)
+        val cv = cacheCanvas ?: return null
+        drawScene(cv)
         cacheMatrix.set(pageMatrix)
         cacheValid = true
         return b
@@ -594,9 +537,6 @@ class InkView(context: Context) : View(context) {
     }
     private val lassoFill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val selFrame = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val handleFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.WHITE }
-    private val handleBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val handleDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xFF3A6FE0.toInt() }
     private val path = Path()
 
     override fun onDraw(canvas: Canvas) {
@@ -643,13 +583,7 @@ class InkView(context: Context) : View(context) {
     private fun drawSelection(c: Canvas, k: Float) {
         if (!hasSelection) return
         c.save()
-        if (mode == Mode.RESIZE) {
-            c.translate(resizeAnchorX, resizeAnchorY)
-            c.scale(resizeScale, resizeScale)
-            c.translate(-resizeAnchorX, -resizeAnchorY)
-        } else {
-            c.translate(moveDx, moveDy)
-        }
+        c.translate(moveDx, moveDy)
         // Поднятое выделение: мягкий ореол, само содержимое — поверх.
         val glow = 0x335B8CFF
         for (s in selStrokes) drawer.drawGlow(c, s, glow, 7f / k)
@@ -658,29 +592,13 @@ class InkView(context: Context) : View(context) {
         for (s in selStrokes) if (s.tool != Tool.HIGHLIGHTER) drawer.drawStroke(c, s)
         c.restore()
         val b = selectionBounds() ?: return
-        if (mode == Mode.RESIZE) {
-            val sw = resizeOrigW * resizeScale
-            val sh = resizeOrigH * resizeScale
-            b.set(resizeAnchorX, resizeAnchorY, resizeAnchorX + sw, resizeAnchorY + sh)
-        } else {
-            b.offset(moveDx, moveDy)
-            val grow = (1 - selectionAppear) * 10f / k
-            b.inset(-grow, -grow)
-        }
+        b.offset(moveDx, moveDy)
+        val grow = (1 - selectionAppear) * 10f / k
+        b.inset(-grow, -grow)
         selFrame.strokeWidth = 1.5f / k
         selFrame.color = 0xCC3A6FE0.toInt()
         selFrame.pathEffect = DashPathEffect(floatArrayOf(7f / k, 5f / k), -antsPhase * 12f / k)
         c.drawRoundRect(b, 8f / k, 8f / k, selFrame)
-
-        // Маркер уменьшения/изменения размера в правом нижнем углу
-        val handleR = 7f / k
-        val hx = b.right
-        val hy = b.bottom
-        handleBorder.strokeWidth = 2f / k
-        handleBorder.color = 0xFF3A6FE0.toInt()
-        c.drawCircle(hx, hy, handleR, handleFill)
-        c.drawCircle(hx, hy, handleR, handleBorder)
-        c.drawCircle(hx, hy, 2.5f / k, handleDot)
     }
 
     private fun drawLasso(c: Canvas, k: Float) {
@@ -749,19 +667,36 @@ class InkView(context: Context) : View(context) {
     private class Turn(val old: Bitmap, val direction: Int, var t: Float = 0f)
 
     private var turning: Turn? = null
+    private var turnAnim: ValueAnimator? = null
+
+    private fun cancelTurn() {
+        turnAnim?.cancel()
+        turnAnim = null
+        turning?.old?.let { if (!it.isRecycled) it.recycle() }
+        turning = null
+    }
 
     private fun snapshot(): Bitmap? {
         if (width <= 0 || height <= 0) return null
-        val b = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val c = Canvas(b)
-        if (cacheValid && cacheMatrix == pageMatrix && cache != null) c.drawBitmap(cache!!, 0f, 0f, null) else drawScene(c)
-        return b
+        return try {
+            val b = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val c = Canvas(b)
+            if (cacheValid && cacheMatrix == pageMatrix && cache != null && !cache!!.isRecycled) {
+                c.drawBitmap(cache!!, 0f, 0f, null)
+            } else {
+                drawScene(c)
+            }
+            b
+        } catch (_: OutOfMemoryError) {
+            null
+        }
     }
 
     private fun animatePageTurn(old: Bitmap, direction: Int) {
+        cancelTurn()
         val turn = Turn(old, direction)
         turning = turn
-        ValueAnimator.ofFloat(0f, 1f).apply {
+        turnAnim = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 300
             interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
             addUpdateListener {
@@ -770,8 +705,11 @@ class InkView(context: Context) : View(context) {
             }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
-                    if (turning === turn) turning = null
-                    old.recycle()
+                    if (turning === turn) {
+                        turning = null
+                        turnAnim = null
+                    }
+                    if (!old.isRecycled) old.recycle()
                     invalidate()
                 }
             })
@@ -783,7 +721,9 @@ class InkView(context: Context) : View(context) {
 
     /** Старая страница уходит в сторону, чуть уменьшаясь и тая; новая въезжает следом. */
     private fun drawTurn(canvas: Canvas, turn: Turn) {
-        val b = (if (cacheValid && cacheMatrix == pageMatrix) cache else renderCache()) ?: return
+        if (turn.old.isRecycled) return
+        val b = (if (cacheValid && cacheMatrix == pageMatrix && cache != null && !cache!!.isRecycled) cache else renderCache()) ?: return
+        if (b.isRecycled) return
         val shift = width * 0.22f
         canvas.drawColor(desk)
         canvas.save()
@@ -842,9 +782,34 @@ class InkView(context: Context) : View(context) {
         return true
     }
 
+    override fun onGenericMotionEvent(e: MotionEvent): Boolean {
+        if (e.action == MotionEvent.ACTION_BUTTON_PRESS || e.action == MotionEvent.ACTION_BUTTON_RELEASE) {
+            val btn = e.actionButton
+            if (btn == MotionEvent.BUTTON_STYLUS_PRIMARY ||
+                btn == MotionEvent.BUTTON_STYLUS_SECONDARY ||
+                btn == MotionEvent.BUTTON_SECONDARY ||
+                btn == MotionEvent.BUTTON_BACK
+            ) {
+                // Поглощаем нажатия кнопок пера, чтобы система не превращала их в «Назад»
+                return true
+            }
+        }
+        return super.onGenericMotionEvent(e)
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        if (changed && Build.VERSION.SDK_INT >= 29 && width > 0 && height > 0) {
+            val edgeW = (32 * density).toInt()
+            val leftRect = android.graphics.Rect(0, 0, edgeW, height)
+            val rightRect = android.graphics.Rect((width - edgeW).coerceAtLeast(0), 0, width, height)
+            systemGestureExclusionRects = listOf(leftRect, rightRect)
+        }
+    }
+
     // ---------------- ввод ----------------
 
-    private enum class Mode { NONE, DRAW, ERASE, PAN, LASSO, MOVE, RESIZE, SHAPE, TEXT }
+    private enum class Mode { NONE, DRAW, ERASE, PAN, LASSO, MOVE, SHAPE, TEXT }
 
     private var mode = Mode.NONE
     private var activePointer = -1
@@ -1014,17 +979,19 @@ class InkView(context: Context) : View(context) {
 
     /** Что делает перо (или палец, если им можно писать) при касании. */
     private fun penMode(e: MotionEvent, i: Int, pen: Boolean): Mode {
-        val eraserEnd = pen && (e.getToolType(i) == MotionEvent.TOOL_TYPE_ERASER || e.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY != 0)
+        val eraserBtn = (e.buttonState and (
+            MotionEvent.BUTTON_STYLUS_PRIMARY or
+            MotionEvent.BUTTON_STYLUS_SECONDARY or
+            MotionEvent.BUTTON_SECONDARY or
+            MotionEvent.BUTTON_BACK
+        )) != 0
+        val eraserEnd = pen && (e.getToolType(i) == MotionEvent.TOOL_TYPE_ERASER || eraserBtn)
         if (eraserEnd) return Mode.ERASE
         val q = toPage(e.getX(i), e.getY(i))
         return when (editTool) {
             EditTool.PEN, EditTool.HIGHLIGHTER -> Mode.DRAW
             EditTool.ERASER -> Mode.ERASE
-            EditTool.LASSO -> when {
-                hasSelection && nearResizeHandle(q[0], q[1]) -> Mode.RESIZE
-                hasSelection && insideSelection(q[0], q[1]) -> Mode.MOVE
-                else -> Mode.LASSO
-            }
+            EditTool.LASSO -> if (hasSelection && insideSelection(q[0], q[1])) Mode.MOVE else Mode.LASSO
             EditTool.SHAPE -> Mode.SHAPE
             EditTool.TEXT -> Mode.TEXT
         }
@@ -1062,7 +1029,6 @@ class InkView(context: Context) : View(context) {
                 moveDx = 0f; moveDy = 0f
                 performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
             }
-            Mode.RESIZE -> startResize(q[0], q[1])
             Mode.SHAPE -> {
                 listener?.onWritingStarted()
                 shapePreview = emptyList()
@@ -1118,15 +1084,6 @@ class InkView(context: Context) : View(context) {
                 reportSelection()
                 invalidate()
             }
-            Mode.RESIZE -> {
-                val q = toPage(x, y)
-                val newW = maxOf(10f, q[0] - resizeAnchorX)
-                val newH = maxOf(10f, q[1] - resizeAnchorY)
-                val sx = newW / resizeOrigW
-                val sy = newH / resizeOrigH
-                resizeScale = ((sx + sy) / 2f).coerceIn(0.15f, 4.0f)
-                invalidate()
-            }
             Mode.SHAPE -> {
                 val q = toPage(x, y)
                 shapePreview = Shapes.build(shapeKind, startPX, startPY, q[0], q[1], penWidth, color)
@@ -1167,7 +1124,6 @@ class InkView(context: Context) : View(context) {
                 }
             }
             Mode.MOVE -> commitMove()
-            Mode.RESIZE -> commitResize()
             Mode.SHAPE -> {
                 val shapes = shapePreview
                 shapePreview = emptyList()
@@ -1196,7 +1152,7 @@ class InkView(context: Context) : View(context) {
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
         val p = page ?: return false
-        if (turning != null && e.actionMasked == MotionEvent.ACTION_DOWN) turning = null
+        if (turning != null && e.actionMasked == MotionEvent.ACTION_DOWN) cancelTurn()
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
@@ -1213,18 +1169,8 @@ class InkView(context: Context) : View(context) {
                     startPen(e, 0, pen)
                 } else {
                     val q = toPage(e.x, e.y)
-                    // Пальцем можно тянуть маркер размера, само выделенное или двигать лист.
-                    mode = when {
-                        hasSelection && nearResizeHandle(q[0], q[1]) -> {
-                            startResize(q[0], q[1])
-                            Mode.RESIZE
-                        }
-                        hasSelection && insideSelection(q[0], q[1]) -> {
-                            startPX = q[0]; startPY = q[1]; moveDx = 0f; moveDy = 0f
-                            Mode.MOVE
-                        }
-                        else -> Mode.PAN
-                    }
+                    // Пальцем можно сразу тянуть выделенное.
+                    mode = if (hasSelection && insideSelection(q[0], q[1])) Mode.MOVE.also { startPX = q[0]; startPY = q[1]; moveDx = 0f; moveDy = 0f } else Mode.PAN
                     velocity?.recycle()
                     velocity = VelocityTracker.obtain().also { it.addMovement(e) }
                 }
@@ -1329,7 +1275,6 @@ class InkView(context: Context) : View(context) {
                 lassoPath.clear()
                 if (mode == Mode.ERASE) finishErase(p)
                 if (mode == Mode.MOVE) { moveDx = 0f; moveDy = 0f }
-                if (mode == Mode.RESIZE) { resizeScale = 1f }
                 mode = Mode.NONE
                 endMoving()
                 invalidate()
@@ -1488,6 +1433,8 @@ class InkView(context: Context) : View(context) {
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        cancelTurn()
+        if (cache != null && !cache!!.isRecycled) { cache!!.recycle(); cache = null }
         removeCallbacks(flingStep)
         removeCallbacks(holdEraser)
         removeCallbacks(snapShape)

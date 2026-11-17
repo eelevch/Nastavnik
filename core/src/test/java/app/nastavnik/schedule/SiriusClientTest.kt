@@ -13,7 +13,7 @@ import org.junit.Test
 import java.time.LocalDate
 import java.time.LocalDateTime
 
-/** Перенесено из тестов Lecturial 2 (Apache License 2.0) и дополнено. */
+/** Тесты разбора расписания с мок-сервером. */
 class SiriusClientTest {
     private lateinit var server: MockWebServer
 

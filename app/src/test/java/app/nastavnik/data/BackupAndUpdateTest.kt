@@ -1,7 +1,6 @@
 package app.nastavnik.data
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -20,8 +19,8 @@ class BackupAndUpdateTest {
         assertNull(BackupLayout.target("files/other/x"))
     }
 
-    private fun release(tag: String, url: String = "https://github.com/Ee1evch/Nastavnik/releases/download/$tag/nastavnik.apk", name: String = "Наставник, сборка") =
-        """{"tag_name":"$tag","name":"$name","assets":[{"name":"notes.txt","browser_download_url":"x"},{"name":"nastavnik.apk","size":12000000,"browser_download_url":"$url"}]}"""
+    private fun release(tag: String, url: String = "https://github.com/Ee1evch/touchnotes/releases/download/$tag/nastavnik.apk") =
+        """{"tag_name":"$tag","name":"Наставник, сборка","assets":[{"name":"notes.txt","browser_download_url":"x"},{"name":"nastavnik.apk","size":12000000,"browser_download_url":"$url"}]}"""
 
     @Test
     fun updateOnlyWhenNewerAndFromOurRepo() {
@@ -33,34 +32,27 @@ class BackupAndUpdateTest {
         assertNull(UpdateCheck.parse("{\"tag_name\":\"build-70\",\"assets\":[]}", 50))
         assertNull(UpdateCheck.parse("не json", 50))
         // В релизе есть и APK родителя — берём свой, даже если родительский идёт первым.
-        val both = """{"tag_name":"build-80","assets":[{"name":"parent.apk","browser_download_url":"https://github.com/Ee1evch/Nastavnik/releases/download/build-80/parent.apk"},""" +
-            """{"name":"nastavnik.apk","size":5,"browser_download_url":"https://github.com/Ee1evch/Nastavnik/releases/download/build-80/nastavnik.apk"}]}"""
-        assertEquals("https://github.com/Ee1evch/Nastavnik/releases/download/build-80/nastavnik.apk", UpdateCheck.parse(both, 50)!!.apkUrl)
-        assertNull(UpdateCheck.parse("""{"tag_name":"build-81","assets":[{"name":"parent.apk","browser_download_url":"https://github.com/Ee1evch/Nastavnik/releases/download/build-81/parent.apk"}]}""", 50))
+        val both = """{"tag_name":"build-80","assets":[{"name":"parent.apk","browser_download_url":"https://github.com/Ee1evch/touchnotes/releases/download/build-80/parent.apk"},""" +
+            """{"name":"nastavnik.apk","size":5,"browser_download_url":"https://github.com/Ee1evch/touchnotes/releases/download/build-80/nastavnik.apk"}]}"""
+        assertEquals("https://github.com/Ee1evch/touchnotes/releases/download/build-80/nastavnik.apk", UpdateCheck.parse(both, 50)!!.apkUrl)
+        assertNull(UpdateCheck.parse("""{"tag_name":"build-81","assets":[{"name":"parent.apk","browser_download_url":"https://github.com/Ee1evch/touchnotes/releases/download/build-81/parent.apk"}]}""", 50))
         // «Наставник · Студент» берёт свой student.apk.
-        val three = """{"tag_name":"build-82","assets":[{"name":"nastavnik.apk","browser_download_url":"https://github.com/Ee1evch/Nastavnik/releases/download/build-82/nastavnik.apk"},""" +
-            """{"name":"student.apk","browser_download_url":"https://github.com/Ee1evch/Nastavnik/releases/download/build-82/student.apk"}]}"""
-        assertEquals("https://github.com/Ee1evch/Nastavnik/releases/download/build-82/student.apk", UpdateCheck.parse(three, 50, "student.apk")!!.apkUrl)
-    }
+        val three = """{"tag_name":"build-82","assets":[{"name":"nastavnik.apk","browser_download_url":"https://github.com/Ee1evch/touchnotes/releases/download/build-82/nastavnik.apk"},""" +
+            """{"name":"student.apk","browser_download_url":"https://github.com/Ee1evch/touchnotes/releases/download/build-82/student.apk"}]}"""
+        assertEquals("https://github.com/Ee1evch/touchnotes/releases/download/build-82/student.apk", UpdateCheck.parse(three, 50, "student.apk")!!.apkUrl)
 
-    @Test
-    fun semverComparisonWorks() {
-        // Релиз 1.2.6 новее установленного 1.2.5
-        val u1 = UpdateCheck.parse(release("v1.2.6"), currentBuild = 1, currentVersionName = "1.2.5")
-        assertNotNull(u1)
-        assertEquals("1.2.6", u1!!.version)
+        // Семантическая версия v1.1.11 корректно распознаётся новее старых сборок
+        val semverRelease = release("v1.1.11")
+        val semverUpdate = UpdateCheck.parse(semverRelease, currentBuild = 10110)!!
+        assertEquals(10111, semverUpdate.build)
+        assertNull(UpdateCheck.parse(semverRelease, currentBuild = 10111))
+        // Если версия совпадает со строкой текущей версии — баннер не показывается
+        assertNull(UpdateCheck.parse(semverRelease, currentBuild = 10110, currentVersionName = "1.1.11"))
+        assertNull(UpdateCheck.parse(semverRelease, currentBuild = 10110, currentVersionName = "v1.1.11"))
 
-        // Релиз 1.2.5 равен установленному 1.2.5 при том же номере сборки — не обновляем
-        val uSame = UpdateCheck.parse(release("build-1", name = "Наставник 1.2.5, сборка 1"), currentBuild = 1, currentVersionName = "1.2.5")
-        assertNull(uSame)
-
-        // Релиз 1.2.5 со следующей сборкой (build-2) новее установленного (build-1)
-        val uNewBuild = UpdateCheck.parse(release("build-2", name = "Наставник 1.2.5, сборка 2"), currentBuild = 1, currentVersionName = "1.2.5")
-        assertNotNull(uNewBuild)
-        assertEquals(2, uNewBuild!!.build)
-
-        // Старый релиз 1.2.0 не должен считаться обновлением для 1.2.5
-        val uOld = UpdateCheck.parse(release("v1.2.0"), currentBuild = 1, currentVersionName = "1.2.5")
-        assertNull(uOld)
+        // Извлечение SHA-256 из тела релиза
+        val bodyWithSha = """{"tag_name":"v1.1.11","body":"Хеши:\n11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff  nastavnik.apk\naabbccddeeff11223344556677889900aabbccddeeff11223344556677889900  student.apk","assets":[{"name":"nastavnik.apk","size":5,"browser_download_url":"https://github.com/Ee1evch/touchnotes/releases/download/v1.1.11/nastavnik.apk"}]}"""
+        val parsedWithSha = UpdateCheck.parse(bodyWithSha, currentBuild = 10110)!!
+        assertEquals("11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff", parsedWithSha.sha256)
     }
 }

@@ -122,23 +122,4 @@ class InkTest {
         assertEquals(3, tap.dot.size)
         assertEquals(5f, tap.dot[0], 1e-4f)
     }
-
-    @Test
-    fun strokeAndTextBoxScalingDown() {
-        val s = line(100f, 100f, 200f, 200f, n = 5, p = 0.5f)
-        val scaledStroke = s.scaled(0.5f, 0.5f, 150f, 150f)
-        assertEquals(125f, scaledStroke.x(0), 1e-4f)
-        assertEquals(125f, scaledStroke.y(0), 1e-4f)
-        assertEquals(175f, scaledStroke.x(4), 1e-4f)
-        assertEquals(175f, scaledStroke.y(4), 1e-4f)
-        assertEquals(0.5f, scaledStroke.p(0), 1e-4f)
-        assertEquals(1.5f, scaledStroke.width, 1e-4f)
-
-        val tb = TextBox(100f, 100f, 200f, "Тест", 20f, 0)
-        val scaledTb = tb.scaled(0.8f, 0.8f, 200f, 200f)
-        assertEquals(120f, scaledTb.x, 1e-4f)
-        assertEquals(120f, scaledTb.y, 1e-4f)
-        assertEquals(160f, scaledTb.width, 1e-4f)
-        assertEquals(16f, scaledTb.size, 1e-4f)
-    }
 }

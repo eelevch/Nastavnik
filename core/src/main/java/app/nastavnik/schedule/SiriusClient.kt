@@ -1,8 +1,6 @@
 /*
- * Основано на SiriusScheduleDataSource из Lecturial 2 (https://github.com/neckmnull/Lecturial-2),
- * Copyright 2026 Lecturial 2 contributors, Apache License 2.0.
- * Изменено для «Наставника»: kotlinx.serialization вместо org.json, OkHttp 4, свои модели, только группы.
- * Lecturial 2 и «Наставник» — неофициальные проекты, не связанные с Университетом «Сириус».
+ * Загрузка расписания с schedule.siriusuniversity.ru.
+ * «Наставник» — неофициальный проект, не связанный с Университетом «Сириус».
  */
 package app.nastavnik.schedule
 

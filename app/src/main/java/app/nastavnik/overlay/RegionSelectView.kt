@@ -123,8 +123,6 @@ class RegionSelector(private val context: Context, private val wm: WindowManager
             strokeWidth = resources.displayMetrics.density * 2.5f
         }
         private val corner = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-        private val shotDst = Rect()
-        private val shotPaint = Paint(Paint.FILTER_BITMAP_FLAG)
         private var startX = 0f
         private var startY = 0f
         private var sel: RectF? = null
@@ -133,8 +131,8 @@ class RegionSelector(private val context: Context, private val wm: WindowManager
 
         override fun onDraw(canvas: Canvas) {
             getLocationOnScreen(loc)
-            shotDst.set(0, 0, width, height)
-            canvas.drawBitmap(shot, null, shotDst, shotPaint)
+            // Пиксель снимка (x, y) лежит на экране в (x, y): сдвигаем на положение окна.
+            canvas.drawBitmap(shot, -loc[0].toFloat(), -loc[1].toFloat(), null)
             val s = sel
             if (s == null) {
                 canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), dim)
@@ -174,14 +172,12 @@ class RegionSelector(private val context: Context, private val wm: WindowManager
 
         fun selectionInShot(): Rect? {
             val s = sel ?: return null
-            if (width <= 0 || height <= 0) return null
-            val sx = shot.width.toFloat() / width.toFloat()
-            val sy = shot.height.toFloat() / height.toFloat()
+            getLocationOnScreen(loc)
             return Rect(
-                (s.left * sx).toInt().coerceIn(0, shot.width),
-                (s.top * sy).toInt().coerceIn(0, shot.height),
-                (s.right * sx).toInt().coerceIn(0, shot.width),
-                (s.bottom * sy).toInt().coerceIn(0, shot.height),
+                (s.left + loc[0]).toInt(),
+                (s.top + loc[1]).toInt(),
+                (s.right + loc[0]).toInt(),
+                (s.bottom + loc[1]).toInt(),
             )
         }
 

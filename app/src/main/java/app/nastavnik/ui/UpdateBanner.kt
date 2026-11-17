@@ -13,8 +13,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,11 +34,12 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.nastavnik.R
 import app.nastavnik.app
+import app.nastavnik.data.TrustResult
 import kotlinx.coroutines.launch
 
 /**
- * Баннер обновления приложения: показывается, когда доступна новая версия.
- * Позволяет скачать и установить её прямо из приложения в 1 тап.
+ * Баннер обновления приложения прямо на главном экране.
+ * Позволяет установить новую сборку в 1 клик без перехода на GitHub.
  */
 @Composable
 fun InAppUpdateBanner(modifier: Modifier = Modifier) {
@@ -78,7 +81,7 @@ fun InAppUpdateBanner(modifier: Modifier = Modifier) {
                         )
                         val sizeText = if (u.sizeBytes > 0) " · ${u.sizeBytes / 1_000_000} МБ" else ""
                         Text(
-                            "Обновление ставится поверх$sizeText, тетради и настройки сохраняются.",
+                            "Обновление ставится поверх$sizeText, данные сохраняются.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Brand.InkSoft,
                         )
@@ -96,7 +99,7 @@ fun InAppUpdateBanner(modifier: Modifier = Modifier) {
                         InkButton("Обновить прямо сейчас", icon = R.drawable.ic_refresh) {
                             val updater = app.updater
                             if (!updater.canInstall()) {
-                                errorText = "Разрешите «Наставнику» установку приложений в настройках Android"
+                                errorText = "Разрешите установку обновлений в настройках Android"
                                 updater.openInstallPermission()
                                 return@InkButton
                             }
@@ -105,7 +108,11 @@ fun InAppUpdateBanner(modifier: Modifier = Modifier) {
                             scope.launch {
                                 runCatching {
                                     val apk = updater.download(u) { progress = it }
-                                    updater.install(apk)
+                                    val trust = updater.verify(apk, u.sha256)
+                                    when (trust) {
+                                        is TrustResult.Valid -> updater.install(apk)
+                                        is TrustResult.Rejected -> errorText = trust.reason
+                                    }
                                 }.onFailure {
                                     errorText = "Ошибка загрузки: ${it.message}"
                                 }

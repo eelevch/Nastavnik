@@ -9,7 +9,6 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.provider.OpenableColumns
 import app.nastavnik.capture.ImageUtils
-import app.nastavnik.data.DeviceProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -25,8 +24,8 @@ import kotlin.math.max
 class Notebooks(private val context: Context) {
     val store = NotebookStore(File(context.filesDir, "notebooks"))
 
-    /** Подложки в памяти: размер кэша подстраивается под память устройства. */
-    private val bgCache = object : android.util.LruCache<String, Bitmap>(DeviceProfile.maxBackgroundCacheBytes()) {
+    /** Подложки в памяти: страница открывается мгновенно, если её уже показывали. */
+    private val bgCache = object : android.util.LruCache<String, Bitmap>(64 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
 
@@ -38,12 +37,8 @@ class Notebooks(private val context: Context) {
     fun defaultTitle(now: Long = System.currentTimeMillis()): String =
         "Тетрадь · " + SimpleDateFormat("d MMMM", Locale("ru")).format(Date(now))
 
-    /** Подложка страницы (фото или страница PDF), размер подстраивается под профиль устройства. */
-    suspend fun background(
-        notebookId: Long,
-        page: InkPage,
-        maxSide: Int = DeviceProfile.optimalImageSide(DeviceProfile.isWeakDevice(context)),
-    ): Bitmap? {
+    /** Подложка страницы (фото или страница PDF), не больше [maxSide] пикселей по длинной стороне. */
+    suspend fun background(notebookId: Long, page: InkPage, maxSide: Int = 2400): Bitmap? {
         val name = page.background ?: return null
         val key = "$notebookId/$name/$maxSide"
         bgCache.get(key)?.let { return it }

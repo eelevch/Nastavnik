@@ -7,92 +7,69 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 
-/** Свежая сборка в GitHub Releases: номер, ссылка на APK, размер и название. */
+/** Свежая сборка в GitHub Releases: номер, ссылка на APK, размер и опциональный SHA-256. */
 data class UpdateInfo(
     val build: Int,
     val apkUrl: String,
     val sizeBytes: Long,
     val title: String,
-    val version: String = "",
+    val sha256: String? = null
 )
 
 /** Разбор ответа GitHub API `releases/latest`. Без Android — проверяется тестами. */
 object UpdateCheck {
-    const val REPO = "Ee1evch/Nastavnik"
+    const val REPO = "Ee1evch/touchnotes"
     const val LATEST_URL = "https://api.github.com/repos/$REPO/releases/latest"
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    fun parseSemver(v: String): Triple<Int, Int, Int>? {
-        val m = Regex("""v?(\d+)\.(\d+)(?:\.(\d+))?""").find(v.trim()) ?: return null
-        val maj = m.groupValues[1].toIntOrNull() ?: 0
-        val min = m.groupValues[2].toIntOrNull() ?: 0
-        val patch = m.groupValues.getOrNull(3)?.takeIf { it.isNotEmpty() }?.toIntOrNull() ?: 0
-        return Triple(maj, min, patch)
-    }
-
-    private fun compareSemver(a: Triple<Int, Int, Int>, b: Triple<Int, Int, Int>): Int {
-        if (a.first != b.first) return a.first.compareTo(b.first)
-        if (a.second != b.second) return a.second.compareTo(b.second)
-        return a.third.compareTo(b.third)
-    }
-
-    /** Обновление, если релиз новее [currentBuild] или [currentVersionName] и в нём есть APK; иначе null. */
-    fun parse(
-        body: String,
-        currentBuild: Int,
-        apkName: String = "nastavnik.apk",
-        currentVersionName: String = "",
-    ): UpdateInfo? {
+    /** Обновление, если релиз новее [currentBuild], не совпадает с [currentVersionName] и в нём есть APK; иначе null. */
+    fun parse(body: String, currentBuild: Int, apkName: String = "nastavnik.apk", currentVersionName: String = ""): UpdateInfo? {
         val obj = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return null
         val tag = obj.str("tag_name") ?: return null
-        val name = obj.str("name").orEmpty()
-
-        val releaseSemver = parseSemver(tag) ?: parseSemver(name)
-        val currentSemver = parseSemver(currentVersionName)
-
-        val cmp = if (releaseSemver != null && currentSemver != null) {
-            compareSemver(releaseSemver, currentSemver)
-        } else null
-
-        val isNewer = when {
-            cmp != null && cmp > 0 -> true
-            cmp != null && cmp < 0 -> false
-            else -> {
-                val build = Regex("""(\d+)$""").find(tag)?.value?.toIntOrNull()
-                if (build != null && build > currentBuild) {
-                    true
-                } else if (cmp == null && releaseSemver != null) {
-                    val tagBuild = releaseSemver.first * 10000 + releaseSemver.second * 100 + releaseSemver.third
-                    tagBuild > currentBuild
-                } else {
-                    false
-                }
-            }
+        val latestVer = tag.removePrefix("v").trim()
+        val curVer = currentVersionName.trim().removePrefix("v").trim()
+        if (curVer.isNotBlank() && latestVer.equals(curVer, ignoreCase = true)) {
+            return null
         }
-
-        if (!isNewer) return null
-
+        val semver = Regex("v?(\\d+)\\.(\\d+)\\.(\\d+)").find(tag)
+        val build = if (semver != null) {
+            val (maj, min, patch) = semver.destructured
+            maj.toInt() * 10000 + min.toInt() * 100 + patch.toInt()
+        } else {
+            Regex("(\\d+)$").find(tag)?.value?.toIntOrNull() ?: return null
+        }
+        if (build <= currentBuild) return null
         // В релизе несколько APK — «Наставник», «Студент» и приложение для родителя; нам — только свой.
-        val apks = (obj["assets"] as? JsonArray)?.mapNotNull { it as? JsonObject }
-            ?.filter { it.str("name")?.endsWith(".apk") == true }.orEmpty()
+        val apks = (obj["assets"] as? JsonArray)?.mapNotNull { it as? JsonObject }?.filter { it.str("name")?.endsWith(".apk") == true }.orEmpty()
         val asset = apks.firstOrNull { it.str("name") == apkName } ?: return null
         val url = asset.str("browser_download_url") ?: return null
         if (!url.startsWith("https://github.com/$REPO/")) return null
 
-        val buildNumber = Regex("""(\d+)$""").find(tag)?.value?.toIntOrNull()
-            ?: releaseSemver?.let { it.first * 10000 + it.second * 100 + it.third }
-            ?: (currentBuild + 1)
-
-        val title = name.takeIf { it.isNotBlank() } ?: tag
+        val notes = obj.str("body")
+        val sha256 = extractSha256(notes, apkName)
 
         return UpdateInfo(
-            build = buildNumber,
+            build = build,
             apkUrl = url,
             sizeBytes = asset.str("size")?.toLongOrNull() ?: 0,
-            title = title,
-            version = tag.removePrefix("v").trim(),
+            title = obj.str("name") ?: tag,
+            sha256 = sha256
         )
+    }
+
+    fun extractSha256(notes: String?, apkName: String): String? {
+        if (notes.isNullOrBlank()) return null
+        // Формат sha256sum: "<64-hex> [*]?<filename>"
+        val r1 = Regex("""(?im)^([a-f0-9]{64})\s+[*]?""" + Regex.escape(apkName) + """\s*$""").find(notes)
+        if (r1 != null) return r1.groupValues[1].lowercase()
+        // Формат "filename: <64-hex>" или "filename - <64-hex>"
+        val r2 = Regex("""(?im)^""" + Regex.escape(apkName) + """[:\s\-]+([a-f0-9]{64})\s*$""").find(notes)
+        if (r2 != null) return r2.groupValues[1].lowercase()
+        // Произвольный формат "filename ... <64-hex>" в пределах одной строки
+        val r3 = Regex("""(?i)""" + Regex.escape(apkName) + """[^\r\n]*?([a-f0-9]{64})""").find(notes)
+        if (r3 != null) return r3.groupValues[1].lowercase()
+        return null
     }
 
     private fun JsonObject.str(k: String) = (this[k] as? JsonPrimitive)?.contentOrNull

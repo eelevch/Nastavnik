@@ -120,13 +120,6 @@ fun HomeScreen(resumeTick: Int, go: (String) -> Unit, openNotebook: (Long) -> Un
                     RoundIconButton(R.drawable.ic_tune, "Настройки") { go(MainActivity.SCREEN_SETTINGS) }
                 }
 
-                InAppUpdateBanner()
-
-                if (!overlay) {
-                    Banner("Разреши «Поверх других окон», чтобы кнопка наставника появлялась над записями.", "Разрешить") {
-                        context.startActivity(Permissions.overlaySettingsIntent(context))
-                    }
-                }
                 if (notReady != null) Banner("$notReady — без этого наставник не ответит.", "Настроить") { go(MainActivity.SCREEN_SETTINGS) }
                 // Блоки — из конструктора: порядок и размер правятся кнопкой «Изменить главную».
                 HomeBoard(
@@ -149,7 +142,7 @@ fun HomeScreen(resumeTick: Int, go: (String) -> Unit, openNotebook: (Long) -> Un
 
 /** Короткая плашка «нужно внимание» в одну строку. */
 @Composable
-private fun Banner(text: String, action: String, onAction: () -> Unit) {
+internal fun Banner(text: String, action: String, onAction: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -333,7 +326,6 @@ private fun RecentNotebook(m: NotebookMeta, onOpen: () -> Unit) {
 internal fun MentorStrip(resumeTick: Int, tick: Int, canStart: Boolean, changed: () -> Unit) {
     val context = LocalContext.current
     val running by BubbleService.runningFlow.collectAsStateWithLifecycle()
-    val notesApp = remember(resumeTick) { NoteApps.chosen(context) }
     val missing = remember(resumeTick, tick) {
         listOfNotNull(
             "уведомления".takeIf { !Permissions.notifications(context) },
@@ -363,13 +355,13 @@ internal fun MentorStrip(resumeTick: Int, tick: Int, canStart: Boolean, changed:
             }
             Column(Modifier.weight(1f)) {
                 Text(
-                    if (running) "Наставник включён" else "Наставник поверх ${notesApp?.label ?: "своего приложения"}",
+                    if (running) "Наставник включён" else "Ассистент наставника",
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    if (running) "Нажми пальцем кнопку у края экрана — подсказка прямо на записях"
+                    if (running) "Кнопка наставника активна — подсказка прямо на записях"
                     else "Кнопка у края экрана, стилусу не мешает",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -382,20 +374,12 @@ internal fun MentorStrip(resumeTick: Int, tick: Int, canStart: Boolean, changed:
                 InkButton("Запустить", enabled = canStart, icon = R.drawable.ic_power) { BubbleService.start(context); changed() }
             }
         }
-        if (notesApp != null || missing.isNotEmpty()) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (missing.isNotEmpty()) {
-                    Text(
-                        "Нет доступа: ${missing.joinToString(", ")}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Brand.Error,
-                        modifier = Modifier.weight(1f),
-                    )
-                } else {
-                    Spacer(Modifier.weight(1f))
-                }
-                if (notesApp != null) ChipButton("Открыть ${notesApp.label}") { NoteApps.open(context, notesApp) }
-            }
+        if (missing.isNotEmpty()) {
+            Text(
+                "Нет доступа: ${missing.joinToString(", ")}",
+                style = MaterialTheme.typography.bodySmall,
+                color = Brand.Error,
+            )
         }
     }
 }

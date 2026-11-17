@@ -21,7 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Nastavnik"
 include(":app")
-// Общее для «Наставника» и приложения для родителя: расписание, облако, оценки (без Android).
 include(":core")
-// «Наставник · Родитель» — отдельное приложение: расписание с посещаемостью и успеваемость студента.
-include(":parent")

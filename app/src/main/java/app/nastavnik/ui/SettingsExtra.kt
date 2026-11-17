@@ -35,7 +35,7 @@ import app.nastavnik.ai.Pricing
 import app.nastavnik.ai.UsageLog
 import app.nastavnik.app
 import app.nastavnik.data.Backup
-import app.nastavnik.data.UpdateCheck
+import app.nastavnik.data.TrustResult
 import app.nastavnik.data.UpdateInfo
 import app.nastavnik.data.Updater
 import app.nastavnik.study.Streaks
@@ -87,6 +87,31 @@ fun UsageSection(model: String) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/** Точность координат рамки и статистика промахов для оценки качества промтов. */
+@Composable
+fun CoordAccuracySection() {
+    val context = LocalContext.current
+    val statsRepo = context.app.coordStats
+    var summary by remember { mutableStateOf(statsRepo.summary()) }
+    SectionCard("Верификация координат") {
+        FieldLabel(
+            "Точность рамок: ${"%.1f".format(Locale.US, summary.hitPercent)}%",
+            "LineMap верифицирует координаты по сегментам чернил: при промахе подсвечивается строка целиком.",
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Stat("Проверок", summary.total.toString(), "всего рамок", Modifier.weight(1f))
+            Stat("В чернила", summary.hits.toString(), "точное попадание", Modifier.weight(1f))
+            Stat("Промахов", summary.totalMisses.toString(), "${summary.misses} авто + ${summary.userMisses} «не здесь»", Modifier.weight(1f))
+        }
+        if (summary.total > 0 || summary.userMisses > 0) {
+            SoftButton("Сбросить статистику", icon = R.drawable.ic_refresh) {
+                statsRepo.reset()
+                summary = statsRepo.summary()
+            }
+        }
     }
 }
 
@@ -165,14 +190,14 @@ fun BackupSection() {
 fun UpdateSection() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val updater = remember { context.app.updater }
+    val updater = remember { Updater(context.applicationContext) }
     var status by remember { mutableStateOf<Pair<String, Tone>?>(null) }
-    var found by remember { mutableStateOf<UpdateInfo?>(context.app.availableUpdate.value) }
+    var found by remember { mutableStateOf<UpdateInfo?>(null) }
     var checking by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(-1f) }
     SectionCard("Обновления") {
-        FieldLabel("Версия ${updater.versionName}", "Новые сборки выходят на GitHub в репозитории ${UpdateCheck.REPO}. Обновление ставится поверх — тетради и настройки остаются.")
-        val f = found ?: context.app.availableUpdate.value
+        FieldLabel("Версия ${updater.versionName}", "Новые сборки выходят на GitHub. Обновление ставится поверх — тетради и настройки остаются.")
+        val f = found
         when {
             progress >= 0f -> {
                 Box(Modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(Brand.Line)) {
@@ -180,7 +205,7 @@ fun UpdateSection() {
                 }
                 Text("Скачиваю… ${(progress * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
             }
-            f != null -> InkButton("Скачать и установить: ${f.title}" + (if (f.sizeBytes > 0) " (${f.sizeBytes / 1_000_000} МБ)" else ""), icon = R.drawable.ic_refresh) {
+            f != null -> InkButton("Скачать и установить сборку ${f.build}" + (if (f.sizeBytes > 0) " (${f.sizeBytes / 1_000_000} МБ)" else ""), icon = R.drawable.ic_refresh) {
                 if (!updater.canInstall()) {
                     status = "Разреши «Наставнику» устанавливать приложения и нажми ещё раз." to Tone.INFO
                     updater.openInstallPermission()
@@ -188,9 +213,19 @@ fun UpdateSection() {
                 }
                 progress = 0f
                 scope.launch {
-                    runCatching { updater.download(f) { progress = it } }
-                        .onSuccess { updater.install(it); status = null }
-                        .onFailure { status = "Не удалось скачать: ${it.message}" to Tone.ERROR }
+                    runCatching {
+                        val apk = updater.download(f) { progress = it }
+                        val trust = updater.verify(apk, f.sha256)
+                        when (trust) {
+                            is TrustResult.Valid -> {
+                                updater.install(apk)
+                                status = null
+                            }
+                            is TrustResult.Rejected -> {
+                                status = trust.reason to Tone.ERROR
+                            }
+                        }
+                    }.onFailure { status = "Не удалось скачать: ${it.message}" to Tone.ERROR }
                     progress = -1f
                 }
             }
@@ -201,7 +236,6 @@ fun UpdateSection() {
                     runCatching { updater.check() }
                         .onSuccess { info ->
                             found = info
-                            context.app.availableUpdate.value = info
                             status = if (info == null) "Стоит последняя версия." to Tone.OK else null
                         }
                         .onFailure { status = "Не удалось проверить: ${it.message}" to Tone.ERROR }
