@@ -28,10 +28,14 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import androidx.compose.foundation.background
@@ -146,8 +150,13 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
     val state by ctl.mentor.state.collectAsState()
     LaunchedEffect(state.answer, ctl.index) { ctl.refreshMarks(state.answer) }
 
-    val wide = LocalConfiguration.current.screenWidthDp >= 840
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val wide = screenWidthDp >= 840
     var panel by rememberSaveable { mutableStateOf(wide) }
+    var panelWidthDp by rememberSaveable { mutableFloatStateOf(390f) }
+    val minPanelWidthDp = 260f
+    val maxPanelWidthDp = (screenWidthDp - 380f).coerceAtLeast(minPanelWidthDp).coerceAtMost(screenWidthDp * 0.7f)
+    val effectivePanelWidth = panelWidthDp.coerceIn(minPanelWidthDp, maxPanelWidthDp)
     var pagesOpen by rememberSaveable { mutableStateOf(false) }
     val importers = rememberImporters(onImages = { ctl.addImages(it) }, onPdf = { ctl.addPdf(it) })
         // Лист всегда белый, как бумага; от темы зависит только стол вокруг него.
@@ -215,17 +224,24 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                 enter = expandHorizontally(expandFrom = Alignment.Start, animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f)) + fadeIn(tween(240, delayMillis = 60)),
                 exit = shrinkHorizontally(shrinkTowards = Alignment.Start, animationSpec = spring(dampingRatio = 0.88f, stiffness = 480f)) + fadeOut(tween(160)),
             ) {
-                MentorPanel(
-                    ctl = ctl,
-                    onClose = { panel = false },
-                    onCleanReady = onCleanReady,
-                    onSettings = onSettings,
-                    modifier = Modifier
-                        .width(390.dp)
-                        .fillMaxHeight()
-                        .padding(12.dp)
-                        .imePadding(),
-                )
+                Row(Modifier.fillMaxHeight()) {
+                    PanelSplitter(
+                        onDragDeltaDp = { deltaDp ->
+                            panelWidthDp = (panelWidthDp - deltaDp).coerceIn(minPanelWidthDp, maxPanelWidthDp)
+                        },
+                    )
+                    MentorPanel(
+                        ctl = ctl,
+                        onClose = { panel = false },
+                        onCleanReady = onCleanReady,
+                        onSettings = onSettings,
+                        modifier = Modifier
+                            .width(effectivePanelWidth.dp)
+                            .fillMaxHeight()
+                            .padding(top = 12.dp, end = 12.dp, bottom = 12.dp)
+                            .imePadding(),
+                    )
+                }
             }
         }
         androidx.compose.animation.AnimatedVisibility(
@@ -246,6 +262,55 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                     .imePadding(),
             )
         }
+    }
+}
+
+/**
+ * Интерактивный сплиттер (разделитель) между рабочей областью заметок и окном наставника на планшете.
+ * Позволяет плавно регулировать ширину окна наставника пальцем или стилусом.
+ */
+@Composable
+private fun PanelSplitter(
+    onDragDeltaDp: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var isDragging by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .width(20.dp)
+            .pointerInput(density) {
+                detectHorizontalDragGestures(
+                    onDragStart = { isDragging = true },
+                    onDragEnd = { isDragging = false },
+                    onDragCancel = { isDragging = false },
+                    onHorizontalDrag = { change, dragAmount ->
+                        change.consume()
+                        onDragDeltaDp(dragAmount / density.density)
+                    }
+                )
+            }
+            .semantics { contentDescription = "Разделитель окна наставника" },
+        contentAlignment = Alignment.Center,
+    ) {
+        // Тонкая линия-разделитель
+        Box(
+            Modifier
+                .width(if (isDragging) 3.dp else 1.5.dp)
+                .fillMaxHeight()
+                .padding(vertical = 12.dp)
+                .clip(CircleShape)
+                .background(if (isDragging) Brand.Accent else Brand.Line.copy(alpha = 0.65f))
+        )
+        // Ручка-ползунок для перетаскивания стилусом или пальцем
+        Box(
+            Modifier
+                .size(if (isDragging) 8.dp else 5.dp, 48.dp)
+                .clip(CircleShape)
+                .background(if (isDragging) Brand.Accent else Brand.InkSoft.copy(alpha = 0.5f))
+        )
     }
 }
 

@@ -470,7 +470,7 @@ fun SelectionMenu(ctl: NotebookController) {
         val r = rect ?: return@AnimatedVisibility
         val density = LocalDensity.current
         val y = with(density) { (r.top - 64.dp.toPx()).coerceAtLeast(8.dp.toPx()) }
-        val x = with(density) { (r.centerX() - 150.dp.toPx()).coerceAtLeast(8.dp.toPx()) }
+        val x = with(density) { (r.centerX() - 110.dp.toPx()).coerceAtLeast(8.dp.toPx()) }
         Column(Modifier.offset { IntOffset(x.roundToInt(), y.roundToInt()) }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(
                 Modifier
@@ -478,8 +478,6 @@ fun SelectionMenu(ctl: NotebookController) {
                     .padding(horizontal = 6.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                MenuAction(R.drawable.ic_shrink, "Уменьшить") { ctl.scaleSelection(0.8f) }
-                MenuAction(R.drawable.ic_expand, "Увеличить") { ctl.scaleSelection(1.25f) }
                 MenuAction(R.drawable.ic_copy, "Копировать") { ctl.copySelection() }
                 MenuAction(R.drawable.ic_duplicate, "Дублировать") { ctl.duplicateSelection() }
                 MenuAction(R.drawable.ic_palette_dot, "Цвет") { colors = !colors }

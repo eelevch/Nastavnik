@@ -18,7 +18,7 @@ data class UpdateInfo(
 
 /** Разбор ответа GitHub API `releases/latest`. Без Android — проверяется тестами. */
 object UpdateCheck {
-    const val REPO = "Ee1evch/touchnotes"
+    const val REPO = "Ee1evch/Nastavnik"
     const val LATEST_URL = "https://api.github.com/repos/$REPO/releases/latest"
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -32,10 +32,12 @@ object UpdateCheck {
         if (curVer.isNotBlank() && latestVer.equals(curVer, ignoreCase = true)) {
             return null
         }
-        val semver = Regex("v?(\\d+)\\.(\\d+)\\.(\\d+)").find(tag)
+        val semver = Regex("v?(\\d+)\\.(\\d+)(?:\\.(\\d+))?").find(tag)
         val build = if (semver != null) {
-            val (maj, min, patch) = semver.destructured
-            maj.toInt() * 10000 + min.toInt() * 100 + patch.toInt()
+            val maj = semver.groupValues[1].toInt()
+            val min = semver.groupValues[2].toInt()
+            val patch = semver.groupValues.getOrNull(3)?.takeIf { it.isNotBlank() }?.toIntOrNull() ?: 0
+            maj * 10000 + min * 100 + patch
         } else {
             Regex("(\\d+)$").find(tag)?.value?.toIntOrNull() ?: return null
         }
@@ -44,7 +46,7 @@ object UpdateCheck {
         val apks = (obj["assets"] as? JsonArray)?.mapNotNull { it as? JsonObject }?.filter { it.str("name")?.endsWith(".apk") == true }.orEmpty()
         val asset = apks.firstOrNull { it.str("name") == apkName } ?: return null
         val url = asset.str("browser_download_url") ?: return null
-        if (!url.startsWith("https://github.com/$REPO/")) return null
+        if (!url.startsWith("https://github.com/Ee1evch/Nastavnik/") && !url.startsWith("https://github.com/Ee1evch/touchnotes/")) return null
 
         val notes = obj.str("body")
         val sha256 = extractSha256(notes, apkName)

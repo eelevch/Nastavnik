@@ -50,6 +50,12 @@ class BackupAndUpdateTest {
         assertNull(UpdateCheck.parse(semverRelease, currentBuild = 10110, currentVersionName = "1.1.11"))
         assertNull(UpdateCheck.parse(semverRelease, currentBuild = 10110, currentVersionName = "v1.1.11"))
 
+        // Версии с 2 числами (v1.3) и из репозитория Nastavnik корректно парсятся
+        val nastavnikRelease = release("v1.3", url = "https://github.com/Ee1evch/Nastavnik/releases/download/v1.3/nastavnik.apk")
+        val nastavnikUpdate = UpdateCheck.parse(nastavnikRelease, currentBuild = 10125)!!
+        assertEquals(10300, nastavnikUpdate.build)
+        assertEquals("https://github.com/Ee1evch/Nastavnik/releases/download/v1.3/nastavnik.apk", nastavnikUpdate.apkUrl)
+
         // Извлечение SHA-256 из тела релиза
         val bodyWithSha = """{"tag_name":"v1.1.11","body":"Хеши:\n11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff  nastavnik.apk\naabbccddeeff11223344556677889900aabbccddeeff11223344556677889900  student.apk","assets":[{"name":"nastavnik.apk","size":5,"browser_download_url":"https://github.com/Ee1evch/touchnotes/releases/download/v1.1.11/nastavnik.apk"}]}"""
         val parsedWithSha = UpdateCheck.parse(bodyWithSha, currentBuild = 10110)!!
