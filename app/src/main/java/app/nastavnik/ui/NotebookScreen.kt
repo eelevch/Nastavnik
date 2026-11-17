@@ -38,12 +38,18 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -1076,10 +1082,14 @@ private fun QuickChip(
 }
 
 /**
- * Живая пульсирующая сфера в стиле ChatGPT Voice:
- * - В покое: плавное дыхание и непрерывное переливание градиентов.
- * - При речи наставника (TTS): мощный динамический отклик на каждый бит/слог ([wordBeat]) + голосовая волна.
- * - При распознавании голоса пользователя: пульсация размера и ауры под громкость микрофона ([voiceRms]).
+ * Мега-реалистичная 3D-сфера в стиле OpenAI ChatGPT Voice:
+ * - Органическая подвижная граница капли (C1-сплайн Безье по 12 гармоникам) с поверхностным натяжением.
+ * - Внутренние многослойные плазменные вихри с аддитивным смешиванием (BlendMode.Plus):
+ *   электрический лазурный, неоновая маджента, теплое солнечное свечение (персиково-янтарное) и изумрудное сияние.
+ * - При пересечении лучей аддитивное свечение образует ослепительно белое раскаленное ядро.
+ * - Внешнее объемное атмосферное сияние (корона/bloom) с широкой диффузией.
+ * - Кристальный ободок Френеля вдоль подвижной границы и 3D-блики стеклянной каустики.
+ * - Физическая реакция на голос (vocal power) и удары в такт каждому произносимому слову (wordBeat).
  */
 @Composable
 private fun ChatGptOrb(
@@ -1089,133 +1099,317 @@ private fun ChatGptOrb(
     wordBeat: Long,
     modifier: Modifier = Modifier,
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "orbTransition")
-    val rotation by infiniteTransition.animateFloat(
+    val infiniteTransition = rememberInfiniteTransition(label = "orbRealism")
+
+    // Три независимых скорости вращения для многослойных внутренних вихрей
+    val timeFast by infiniteTransition.animateFloat(
         initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(8000, easing = LinearEasing)),
-        label = "orbRotation",
+        targetValue = (2f * PI).toFloat(),
+        animationSpec = infiniteRepeatable(tween(3600, easing = LinearEasing)),
+        label = "timeFast",
     )
-    val idlePulse by infiniteTransition.animateFloat(
-        initialValue = 0.94f,
-        targetValue = 1.06f,
-        animationSpec = infiniteRepeatable(tween(2400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "orbIdle",
+    val timeMedium by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = (2f * PI).toFloat(),
+        animationSpec = infiniteRepeatable(tween(5800, easing = LinearEasing)),
+        label = "timeMedium",
     )
-    val vocalWave by infiniteTransition.animateFloat(
-        initialValue = 0.92f,
-        targetValue = 1.15f,
-        animationSpec = infiniteRepeatable(tween(380, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "orbVocalWave",
+    val timeSlow by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = (2f * PI).toFloat(),
+        animationSpec = infiniteRepeatable(tween(9200, easing = LinearEasing)),
+        label = "timeSlow",
     )
 
+    // Плавное дыхание в состоянии покоя
+    val idleBreath by infiniteTransition.animateFloat(
+        initialValue = 0.96f,
+        targetValue = 1.04f,
+        animationSpec = infiniteRepeatable(tween(2500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "idleBreath",
+    )
+
+    // Быстрый пружинный отклик на каждое произносимое слово
     val beatAnim = remember { Animatable(1f) }
     LaunchedEffect(wordBeat) {
         if (wordBeat > 0L) {
-            beatAnim.snapTo(1.25f)
-            beatAnim.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 700f))
+            beatAnim.snapTo(1.36f)
+            beatAnim.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 550f))
         }
     }
 
+    // Мягкое отслеживание уровня голоса пользователя
     val liveVoiceScale by animateFloatAsState(
-        targetValue = if (listening) 1f + voiceRms * 0.45f else 1f,
-        animationSpec = spring(stiffness = 800f),
-        label = "liveVoiceScale",
+        targetValue = if (listening) 1f + voiceRms * 0.42f else 1f,
+        animationSpec = spring(stiffness = 750f),
+        label = "voiceScale",
+    )
+    val liveVoiceAmp by animateFloatAsState(
+        targetValue = if (listening) voiceRms else 0f,
+        animationSpec = spring(stiffness = 650f),
+        label = "voiceAmp",
     )
 
-    val currentScale = when {
-        isSpeaking -> idlePulse * vocalWave * beatAnim.value
-        listening -> idlePulse * liveVoiceScale
-        else -> idlePulse
-    }
+    // Выделенные массивы точек и Path для нулевых аллокаций во время отрисовки (60/120 FPS)
+    val pointsX = remember { FloatArray(12) }
+    val pointsY = remember { FloatArray(12) }
+    val fluidPath = remember { Path() }
 
     Canvas(modifier = modifier) {
         val width = size.width
         val height = size.height
-        val center = Offset(width / 2f, height / 2f)
-        val baseRadius = minOf(width, height) / 2.3f
+        val cx = width / 2f
+        val cy = height / 2f
+        val baseRadius = minOf(width, height) / 2.35f
 
-        // 1. Внешний светящийся ореол (aura glow)
-        val haloRadius = baseRadius * 1.55f * currentScale
-        val haloAlpha = when {
-            isSpeaking -> (0.35f + (beatAnim.value - 1f) * 1.5f).coerceIn(0.2f, 0.8f)
-            listening -> (0.25f + voiceRms * 0.55f).coerceIn(0.2f, 0.85f)
-            else -> 0.22f
+        val currentScale = when {
+            isSpeaking -> idleBreath * beatAnim.value
+            listening -> idleBreath * liveVoiceScale
+            else -> idleBreath
+        }
+        val orbRadius = baseRadius * currentScale
+
+        // 1. ВНЕШНЕЕ АТМОСФЕРНОЕ СВЕЧЕНИЕ (Corona Bloom)
+        val outerBloomRadius = orbRadius * 2.2f
+        val bloomAlpha = when {
+            isSpeaking -> (0.35f + (beatAnim.value - 1f) * 1.6f).coerceIn(0.2f, 0.85f)
+            listening -> (0.28f + liveVoiceAmp * 0.6f).coerceIn(0.2f, 0.85f)
+            else -> 0.25f
         }
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
-                    Color(0xFF38BDF8).copy(alpha = haloAlpha),
-                    Color(0xFF818CF8).copy(alpha = haloAlpha * 0.5f),
+                    Color(0xFF38BDF8).copy(alpha = bloomAlpha),
+                    Color(0xFF8B5CF6).copy(alpha = bloomAlpha * 0.5f),
+                    Color(0xFFEC4899).copy(alpha = bloomAlpha * 0.25f),
                     Color.Transparent,
                 ),
-                center = center,
-                radius = haloRadius,
+                center = Offset(cx, cy),
+                radius = outerBloomRadius,
             ),
-            radius = haloRadius,
-            center = center,
+            radius = outerBloomRadius,
+            center = Offset(cx, cy),
         )
 
-        // 2. Вторичная диффузная аура
-        val auraRadius = baseRadius * 1.25f * currentScale
+        // 2. ВТОРИЧНОЕ СВЕТОВОЕ КОЛЬЦО ДИФФУЗИИ
+        val midBloomRadius = orbRadius * 1.55f
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
-                    Color(0xFF2DD4BF).copy(alpha = 0.5f),
-                    Color(0xFF8B5CF6).copy(alpha = 0.35f),
+                    Color(0xFF00F2FE).copy(alpha = bloomAlpha * 0.7f),
+                    Color(0xFFD946EF).copy(alpha = bloomAlpha * 0.4f),
                     Color.Transparent,
                 ),
-                center = center,
-                radius = auraRadius,
+                center = Offset(cx, cy),
+                radius = midBloomRadius,
             ),
-            radius = auraRadius,
-            center = center,
+            radius = midBloomRadius,
+            center = Offset(cx, cy),
         )
 
-        // 3. Тело сферы с переливающимся смещенным градиентом
-        val orbRadius = baseRadius * currentScale
-        val rad = rotation * (Math.PI / 180.0)
-        val shiftX = (cos(rad) * (orbRadius * 0.25f)).toFloat()
-        val shiftY = (sin(rad) * (orbRadius * 0.25f)).toFloat()
-        val gradCenter = Offset(center.x + shiftX, center.y + shiftY)
+        // 3. РАСЧЕТ ОРГАНИЧЕСКОЙ ГИБКОЙ ГРАНИЦЫ КАПЛИ (12-точечный C1-сплайн)
+        val amp1 = 0.032f + liveVoiceAmp * 0.10f
+        val amp2 = 0.024f + liveVoiceAmp * 0.07f
+        val amp3 = 0.018f + liveVoiceAmp * 0.05f
+        val beatShock = (beatAnim.value - 1f) * 0.18f
 
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    Color(0xFFE0F2FE), // Нежно-голубой светлый центр
-                    Color(0xFF38BDF8), // Лазурный
-                    Color(0xFF6366F1), // Индиго
-                    Color(0xFF8B5CF6), // Фиолетовый
-                    Color(0xFF1E1B4B), // Глубокий космический контур
+        val step = (2.0 * PI / 12.0).toFloat()
+        for (i in 0 until 12) {
+            val theta = i * step
+            val ripple = amp1 * sin(timeFast + theta * 2f) +
+                         amp2 * cos(timeMedium - theta * 3f) +
+                         amp3 * sin(timeSlow + theta * 5f) +
+                         beatShock * sin(timeFast * 1.5f + theta * 4f)
+            val r = orbRadius * (1f + ripple)
+            pointsX[i] = cx + r * cos(theta)
+            pointsY[i] = cy + r * sin(theta)
+        }
+
+        val mid0X = (pointsX[0] + pointsX[1]) / 2f
+        val mid0Y = (pointsY[0] + pointsY[1]) / 2f
+
+        fluidPath.rewind()
+        fluidPath.moveTo(mid0X, mid0Y)
+        for (i in 1 until 12) {
+            val next = (i + 1) % 12
+            val midNextX = (pointsX[i] + pointsX[next]) / 2f
+            val midNextY = (pointsY[i] + pointsY[next]) / 2f
+            fluidPath.quadraticTo(pointsX[i], pointsY[i], midNextX, midNextY)
+        }
+        fluidPath.quadraticTo(pointsX[0], pointsY[0], mid0X, mid0Y)
+        fluidPath.close()
+
+        // 4. ВНУТРЕННИЙ ОБЪЕМНЫЙ ПЛАЗМЕННЫЙ МИР (Внутри замкнутого контура капли)
+        clipPath(fluidPath) {
+            // Глубокая космическая основа (обеспечивает сочный контраст для неона)
+            drawRect(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color(0xFF0F172A),
+                        Color(0xFF070B14),
+                        Color(0xFF020409),
+                    ),
+                    center = Offset(cx, cy),
+                    radius = orbRadius * 1.15f,
+                )
+            )
+
+            val vortexDist = orbRadius * 0.36f
+
+            // Вихрь 1: Электрический Лазурный / Cyan (BlendMode.Plus)
+            val v1x = cx + vortexDist * cos(timeFast)
+            val v1y = cy + vortexDist * sin(timeFast)
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color(0xFF00F5FF).copy(alpha = 0.95f),
+                        Color(0xFF0284C7).copy(alpha = 0.55f),
+                        Color.Transparent,
+                    ),
+                    center = Offset(v1x, v1y),
+                    radius = orbRadius * 0.95f,
                 ),
-                center = gradCenter,
-                radius = orbRadius,
+                radius = orbRadius * 0.95f,
+                center = Offset(v1x, v1y),
+                blendMode = BlendMode.Plus,
+            )
+
+            // Вихрь 2: Неоновая Маджента / Фиолетовый (BlendMode.Plus)
+            val v2x = cx + vortexDist * 1.1f * cos(-timeMedium + 2.2f)
+            val v2y = cy + vortexDist * 0.9f * sin(-timeMedium + 2.2f)
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color(0xFFE879F9).copy(alpha = 0.92f),
+                        Color(0xFF8B5CF6).copy(alpha = 0.65f),
+                        Color.Transparent,
+                    ),
+                    center = Offset(v2x, v2y),
+                    radius = orbRadius * 1.02f,
+                ),
+                radius = orbRadius * 1.02f,
+                center = Offset(v2x, v2y),
+                blendMode = BlendMode.Plus,
+            )
+
+            // Вихрь 3: Теплый Солнечный Персиково-Янтарный луч (Фирменная теплота ChatGPT) (BlendMode.Plus)
+            val v3x = cx + vortexDist * 0.85f * cos(timeSlow + 4.1f)
+            val v3y = cy + vortexDist * 1.15f * sin(timeSlow + 4.1f)
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color(0xFFFFB074).copy(alpha = 0.88f),
+                        Color(0xFFFF4D79).copy(alpha = 0.52f),
+                        Color.Transparent,
+                    ),
+                    center = Offset(v3x, v3y),
+                    radius = orbRadius * 0.82f,
+                ),
+                radius = orbRadius * 0.82f,
+                center = Offset(v3x, v3y),
+                blendMode = BlendMode.Plus,
+            )
+
+            // Вихрь 4: Изумрудное полярное сияние (BlendMode.Plus)
+            val v4x = cx + vortexDist * 0.9f * cos(-timeFast * 0.7f + 1.2f)
+            val v4y = cy + vortexDist * 0.9f * sin(-timeFast * 0.7f + 1.2f)
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color(0xFF10B981).copy(alpha = 0.72f),
+                        Color(0xFF06B6D4).copy(alpha = 0.42f),
+                        Color.Transparent,
+                    ),
+                    center = Offset(v4x, v4y),
+                    radius = orbRadius * 0.85f,
+                ),
+                radius = orbRadius * 0.85f,
+                center = Offset(v4x, v4y),
+                blendMode = BlendMode.Plus,
+            )
+
+            // 5. Ослепительно белое раскаленное термоядерное ядро (BlendMode.Plus)
+            val coreAlpha = when {
+                isSpeaking -> (0.85f + (beatAnim.value - 1f) * 1.8f).coerceIn(0.7f, 1f)
+                listening -> (0.75f + liveVoiceAmp * 0.45f).coerceIn(0.65f, 1f)
+                else -> 0.72f
+            }
+            val coreOffsetX = cx + vortexDist * 0.12f * cos(timeFast)
+            val coreOffsetY = cy + vortexDist * 0.12f * sin(timeFast)
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = coreAlpha),
+                        Color.White.copy(alpha = coreAlpha * 0.6f),
+                        Color(0x00FFFFFF),
+                    ),
+                    center = Offset(coreOffsetX, coreOffsetY),
+                    radius = orbRadius * 0.45f,
+                ),
+                radius = orbRadius * 0.45f,
+                center = Offset(coreOffsetX, coreOffsetY),
+                blendMode = BlendMode.Plus,
+            )
+        }
+
+        // 5. ОБОДОК ФРЕНЕЛЯ (Luminous Fresnel Rim) вдоль подвижной границы
+        drawPath(
+            path = fluidPath,
+            brush = Brush.sweepGradient(
+                colors = listOf(
+                    Color(0xFF38BDF8),
+                    Color(0xFFC084FC),
+                    Color(0xFFFF719A),
+                    Color(0xFF2DD4BF),
+                    Color(0xFF38BDF8),
+                ),
+                center = Offset(cx, cy),
             ),
-            radius = orbRadius,
-            center = center,
+            style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round),
+            blendMode = BlendMode.Plus,
         )
 
-        // 4. Внутренний светящийся жемчужный блик
-        val highlightCenter = Offset(center.x - orbRadius * 0.28f, center.y - orbRadius * 0.28f)
-        val highlightRadius = orbRadius * 0.45f
+        // 6. ОПТИЧЕСКАЯ КАУСТИКА И СТЕКЛЯННЫЕ 3D-БЛИКИ (BlendMode.Plus)
+        // Основной верхний блик кривизны стекла
+        val highlightCenterX = cx - orbRadius * 0.32f
+        val highlightCenterY = cy - orbRadius * 0.32f
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
                     Color.White.copy(alpha = 0.85f),
-                    Color(0x00FFFFFF),
+                    Color.White.copy(alpha = 0.25f),
+                    Color.Transparent,
                 ),
-                center = highlightCenter,
-                radius = highlightRadius,
+                center = Offset(highlightCenterX, highlightCenterY),
+                radius = orbRadius * 0.45f,
             ),
-            radius = highlightRadius,
-            center = highlightCenter,
+            radius = orbRadius * 0.45f,
+            center = Offset(highlightCenterX, highlightCenterY),
+            blendMode = BlendMode.Plus,
+        )
+
+        // Нижний вторичный рефлекс от окружения
+        val bounceCenterX = cx + orbRadius * 0.32f
+        val bounceCenterY = cy + orbRadius * 0.32f
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    Color(0x6000E5FF),
+                    Color.Transparent,
+                ),
+                center = Offset(bounceCenterX, bounceCenterY),
+                radius = orbRadius * 0.42f,
+            ),
+            radius = orbRadius * 0.42f,
+            center = Offset(bounceCenterX, bounceCenterY),
+            blendMode = BlendMode.Plus,
         )
     }
 }
 
 /**
  * Панель голосового режима в стиле ChatGPT Voice:
- * по центру живая пульсирующая сфера [ChatGptOrb], слева переключение на ввод текста (клавиатура),
+ * по центру мега-реалистичная живая сфера [ChatGptOrb], слева переключение на ввод текста (клавиатура),
  * справа кнопка остановки/закрытия.
  */
 @Composable
@@ -1232,18 +1426,18 @@ private fun ChatGptVoiceOrbBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(58.dp)
-            .clip(RoundedCornerShape(29.dp))
-            .background(Brand.Glass.copy(alpha = 0.9f))
-            .border(1.dp, Brand.Line, RoundedCornerShape(29.dp))
-            .padding(horizontal = 10.dp),
+            .height(64.dp)
+            .clip(RoundedCornerShape(32.dp))
+            .background(Brand.Glass.copy(alpha = 0.92f))
+            .border(1.dp, Brand.Line, RoundedCornerShape(32.dp))
+            .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         // Кнопка возврата к текстовому вводу слева
         Box(
             Modifier
-                .size(38.dp)
+                .size(40.dp)
                 .clip(CircleShape)
                 .background(Brand.Glass.copy(alpha = 0.7f))
                 .border(0.8.dp, Brand.Line, CircleShape)
@@ -1255,14 +1449,14 @@ private fun ChatGptVoiceOrbBar(
                 painter = painterResource(R.drawable.ic_keyboard),
                 contentDescription = null,
                 tint = Brand.Ink,
-                modifier = Modifier.size(19.dp),
+                modifier = Modifier.size(20.dp),
             )
         }
 
-        // Центр: живая пульсирующая сфера и информативный статус
+        // Центр: живая пульсирующая 3D-сфера и лаконичный чистый статус без лишних подписей
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 8.dp),
@@ -1272,34 +1466,26 @@ private fun ChatGptVoiceOrbBar(
                 listening = listening,
                 voiceRms = voiceRms,
                 wordBeat = wordBeat,
-                modifier = Modifier.size(44.dp),
+                modifier = Modifier.size(54.dp),
             )
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
-                Text(
-                    text = when {
-                        isSpeaking -> "Наставник говорит…"
-                        listening && partialText.isNotBlank() -> "«$partialText»"
-                        listening -> "Слушаю тебя…"
-                        else -> "Голосовой режим"
-                    },
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                    color = Brand.Ink,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = if (isSpeaking) "Пульсирует под ритм слов" else if (listening) "Говори свой вопрос" else "Коснись для паузы",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Brand.InkSoft,
-                    maxLines = 1,
-                )
-            }
+            Text(
+                text = when {
+                    isSpeaking -> "Наставник говорит…"
+                    listening && partialText.isNotBlank() -> "«$partialText»"
+                    listening -> "Слушаю вас…"
+                    else -> "Голосовой режим"
+                },
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = Brand.Ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
 
         // Кнопка остановки справа
         Box(
             Modifier
-                .size(38.dp)
+                .size(40.dp)
                 .clip(CircleShape)
                 .background(Brand.Glass.copy(alpha = 0.7f))
                 .border(0.8.dp, Brand.Line, CircleShape)
@@ -1311,7 +1497,7 @@ private fun ChatGptVoiceOrbBar(
                 painter = painterResource(R.drawable.ic_close),
                 contentDescription = null,
                 tint = Brand.Ink,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(19.dp),
             )
         }
     }
