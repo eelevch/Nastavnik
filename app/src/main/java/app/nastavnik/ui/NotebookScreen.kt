@@ -685,11 +685,9 @@ private fun MentorPanel(
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     ctl.meta?.tasks?.takeIf { it.isNotEmpty() }?.let { VariantCard(it) }
-                    EmptyMentor()
-                    Text("Быстрый вопрос по странице:", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     ASKS.chunked(2).forEach { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             row.forEach { a ->
@@ -1093,18 +1091,7 @@ private fun ThinkingRow(seq: Long, status: String?) {
     }
 }
 
-@Composable
-private fun EmptyMentor() {
-    Column(Modifier.fillMaxWidth().padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("Пиши на листе, а когда застрянешь — нажми «Подсказка».", style = MaterialTheme.typography.bodyMedium)
-        Text(
-            "Наставник отметит нужную строку прямо на листе, а текст подсказки будет здесь, под тем же номером — " +
-                "записи он не закроет. Решать за тебя он не будет.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
+
 
 /** Заметка наставника в панели: номер как на листе, вид, короткая подсказка и «Подробнее». */
 @Composable
@@ -1220,11 +1207,6 @@ private fun VariantCard(tasks: List<PracticeTask>) {
                     RichText(t.task, sizePx = 15)
                 }
             }
-            Text(
-                "Решай по порядку на листе. «Проверь ответ» сверит с верным ответом, а «Подсказка» не выдаст его раньше времени.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
