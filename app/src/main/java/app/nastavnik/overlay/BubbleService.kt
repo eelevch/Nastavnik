@@ -1,0 +1,1322 @@
+package app.nastavnik.overlay
+
+import android.Manifest
+import android.animation.ValueAnimator
+import android.app.Notification
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.graphics.Rect
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.content.res.Configuration
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
+import android.provider.Settings
+import android.util.Log
+import android.view.WindowManager
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
+import androidx.lifecycle.LifecycleService
+import androidx.lifecycle.lifecycleScope
+import app.nastavnik.BuildConfig
+import app.nastavnik.NastavnikApp
+import app.nastavnik.R
+import app.nastavnik.ai.Prompts
+import app.nastavnik.ai.QuickAction
+import app.nastavnik.app
+import app.nastavnik.capture.CaptureException
+import app.nastavnik.capture.ImageUtils
+import app.nastavnik.capture.ScreenCapturer
+import app.nastavnik.data.AppSettings
+import app.nastavnik.data.BubbleSide
+import app.nastavnik.data.DeviceProfile
+import app.nastavnik.geom.IRect
+import app.nastavnik.geom.LineMatch
+import app.nastavnik.geom.NotebookPages
+import app.nastavnik.geom.PageMatch
+import app.nastavnik.geom.Motion
+import app.nastavnik.geom.ScreenMotion
+import app.nastavnik.geom.Thumb
+import app.nastavnik.session.AskKind
+import app.nastavnik.session.CleanSession
+import app.nastavnik.session.CleanState
+import app.nastavnik.session.MentorSession
+import app.nastavnik.session.MentorUi
+import app.nastavnik.session.ShotGeometry
+import app.nastavnik.session.ShotResult
+import app.nastavnik.ui.MainActivity
+import app.nastavnik.ui.ProjectionPermissionActivity
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import app.nastavnik.study.TrainResult
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/**
+ * Сердце приложения: foreground-сервис, который тихо работает в фоне поверх любого приложения для записей.
+ * Отдельного окна нет: кнопка, короткое меню у кнопки и ответы прямо на записях —
+ * рамка там, где ошибка или где писать дальше, и заметка рядом.
+ */
+class BubbleService : LifecycleService(), BubbleView.Listener, SpeechInput.Callback, AnswerOverlay.Listener, AskBar.Callbacks {
+
+    private lateinit var napp: NastavnikApp
+    private lateinit var wm: WindowManager
+    private lateinit var bubble: BubbleView
+    private lateinit var menu: BubbleMenu
+    private lateinit var bar: BubbleBar
+    private lateinit var askBar: AskBar
+    private lateinit var overlay: AnswerOverlay
+    private lateinit var capturer: ScreenCapturer
+    private lateinit var mentor: MentorSession
+    private lateinit var clean: CleanSession
+    private lateinit var speech: SpeechInput
+    private var ready = false
+
+    private val main = Handler(Looper.getMainLooper())
+    private val bubbleParams = OverlayWindows.params(1, 1)
+    private var bubbleAdded = false
+    private var settings: AppSettings? = null
+    private var regionMode = false
+    private var hiddenUntil = 0L
+    private var projectionPending = false
+    private var projectionWaiter: CompletableDeferred<Boolean>? = null
+    private var dragStartX = 0
+    private var dragStartY = 0
+    private var snapAnimator: ValueAnimator? = null
+    private var lastCleanState: CleanState = CleanState.Idle
+    private var capturing = false
+
+    /** Что сейчас показывает всплывашка у кнопки — чтобы не закрыть чужое сообщение. */
+    private enum class BarOwner { NONE, ACTIONS, STATUS, ERROR, CLEAN, NOTICE, NOTEBOOK }
+    private var barOwner = BarOwner.NONE
+    private var barText: String? = null
+    private var shownErrorSeq = -1L
+    private var lastSilentOk = 0L
+    private var shownSilentError: Any? = null
+
+    // Слежение за экраном между вопросами.
+    private var trackRef: Thumb? = null
+    private var trackSeq = -1L
+    private var prevThumb: Thumb? = null
+    private var prevMask: BooleanArray? = null
+    private var dirty = false
+    private var lastChangeAt = 0L
+    private var lastWatchAt = 0L
+
+    // Весь конспект: страницы, где спрашивали, и то, что пролистали в той же тетради.
+    private lateinit var notebook: NotebookPages
+    private var notebookReady = false
+
+    /** Всё про конспект — в одном потоке: сравнение страниц тяжёлое, а список общий. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val nb = Dispatchers.Default.limitedParallelism(1)
+
+    /** Студент листает тетрадь, в которой спрашивал: новые страницы запоминаем. */
+    @Volatile
+    private var chainActive = false
+    private var chainId = 0L
+
+    /** Где в «пролистывании» верх текущего экрана (пиксели). */
+    private var chainY = 0
+    private var chainPrev: Thumb? = null
+    private var pageCheckPending = false
+    private var jumped = false
+
+    /** «Пролистать весь конспект»: запоминаем каждую новую страницу, даже после перелистывания. */
+    private var readingMode = false
+
+    // Перенос выделений после увеличения/уменьшения страницы.
+    private var relocateWanted = false
+    private var prevTrackThumb: Thumb? = null
+    private var lastRelocThumb: Thumb? = null
+
+    private val unhide = Runnable {
+        hiddenUntil = 0
+        addBubble()
+        updateNotification()
+    }
+    private val restoreTouch = Runnable { setBubbleTouchable(true) }
+
+    /**
+     * Невидимая точка 1×1 в углу экрана (под строкой состояния, в снимок не попадает). Когда снимку нужен свежий
+     * кадр, а экран неподвижен, она чуть меняет цвет — и система рисует новый кадр.
+     */
+    private var nudgeView: android.view.View? = null
+    private var nudgeOn = false
+
+    /** Сколько полных снимков подряд не удалось: после двух — разрешение на снимок экрана запрашиваем заново. */
+    private var captureFailures = 0
+
+    override fun onCreate() {
+        super.onCreate()
+        running = true
+        MentorTileService.update(this)
+        napp = app
+        capturer = ScreenCapturer(this)
+        startForegroundCompat()
+
+        wm = getSystemService(WindowManager::class.java)
+        bubble = BubbleView(ContextWrapperOverlay(this), this)
+        menu = BubbleMenu(this, wm)
+        bar = BubbleBar(this, wm).apply { onDismiss = { barOwner = BarOwner.NONE; barText = null } }
+        askBar = AskBar(this, wm, this)
+        overlay = AnswerOverlay(this, wm, this).apply { bubbleRect = { this@BubbleService.bubbleRect() } }
+        mentor = MentorSession(napp, lifecycleScope)
+        clean = napp.clean
+        speech = SpeechInput(this, this)
+        capturer.onStopped = { startForegroundCompat() }
+        ready = true
+
+        if (!Settings.canDrawOverlays(this)) {
+            // Без разрешения окна не добавить — отправляем в приложение, там объяснят.
+            startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            stopSelf()
+            return
+        }
+        settings = napp.settings.load()
+        addBubble()
+        addNudge()
+        notebook = NotebookPages(File(filesDir, "notebook"))
+        lifecycleScope.launch {
+            withContext(nb) { notebook.load(System.currentTimeMillis()) }
+            notebookReady = true
+        }
+
+        lifecycleScope.launch { mentor.load() }
+        lifecycleScope.launch { mentor.state.collect { renderMentor(it) } }
+        lifecycleScope.launch {
+            clean.state.collect { s ->
+                val prev = lastCleanState
+                lastCleanState = s
+                renderClean(prev, s)
+                refreshBubbleBusy()
+            }
+        }
+        lifecycleScope.launch {
+            napp.settings.flow().collect { s ->
+                val old = settings
+                settings = s
+                overlay.fadeAlpha = s.noteFadeAlpha
+                bubble.watching = s.watchPauseSec > 0
+                if (old == null || old.bubbleSizeDp != s.bubbleSizeDp || old.bubbleAlpha != s.bubbleAlpha || old.bubbleSide != s.bubbleSide) {
+                    applyBubbleLook(s)
+                }
+                // Поменяли ключ или провайдера — снова пробуем фоновую проверку.
+                if (old != null && (old.provider != s.provider || old.model != s.model)) shownSilentError = null
+            }
+        }
+        lifecycleScope.launch { watchLoop() }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
+        when (intent?.action) {
+            ACTION_STOP -> stopSelf()
+            ACTION_ASK -> {
+                showBubbleNow()
+                main.postDelayed({ showActions() }, 150)
+            }
+            ACTION_SHOW_BUBBLE -> showBubbleNow()
+            ACTION_PROJECTION_RESULT -> {
+                val code = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
+                val data = IntentCompat.getParcelableExtra(intent, EXTRA_RESULT_DATA, Intent::class.java)
+                onProjectionResult(code, data)
+            }
+            ACTION_PROJECTION_DENIED -> projectionWaiter?.complete(false)
+            ACTION_RELOAD -> if (ready) {
+                mentor.dismiss()
+                lifecycleScope.launch { mentor.load(resume = true) }
+            }
+        }
+        return START_NOT_STICKY
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        settings?.let { s -> if (bubbleAdded) placeBubble(s.bubbleSide, s.bubbleYFraction) }
+        menu.dismiss()
+        if (barOwner == BarOwner.ACTIONS) bar.dismiss()
+        // Повернули планшет — выделения прячем; как только картинка успокоится, найдём строки заново.
+        if (overlay.isShowing) {
+            overlay.setSuspended(true)
+            overlay.onScreenChanged()
+            relocateWanted = true
+        }
+    }
+
+    override fun onDestroy() {
+        running = false
+        MentorTileService.update(this)
+        main.removeCallbacksAndMessages(null)
+        if (ready) {
+            speech.destroy()
+            menu.dismiss()
+            bar.dismiss()
+            askBar.dismiss()
+            overlay.clear()
+            removeBubble()
+            nudgeView?.let { runCatching { wm.removeView(it) } }
+            nudgeView = null
+            mentor.cancel()
+        }
+        capturer.shutdown()
+        super.onDestroy()
+    }
+
+    // ---------------- foreground ----------------
+
+    private fun fgsTypes(): Int {
+        var t = 0
+        if (Build.VERSION.SDK_INT >= 34) t = t or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        // До Android 14 тип mediaProjection можно заявить заранее; с 14 — только после согласия пользователя.
+        if (Build.VERSION.SDK_INT < 34 || capturer.isActive || projectionPending) {
+            t = t or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        }
+        if (Build.VERSION.SDK_INT >= 30 && hasMic()) t = t or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        return t
+    }
+
+    private fun hasMic() = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    private fun startForegroundCompat() {
+        val n = buildNotification()
+        val types = fgsTypes()
+        try {
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, n, types)
+        } catch (_: Exception) {
+            // Например, микрофон нельзя заявить из фона — пробуем без него.
+            val noMic = if (Build.VERSION.SDK_INT >= 30) types and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE.inv() else types
+            runCatching { ServiceCompat.startForeground(this, NOTIFICATION_ID, n, noMic) }
+        }
+    }
+
+    private fun updateNotification() {
+        if (!running) return
+        runCatching {
+            getSystemService(android.app.NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
+        }
+    }
+
+    private fun buildNotification(): Notification {
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        fun service(action: String, code: Int) = PendingIntent.getService(
+            this, code, Intent(this, BubbleService::class.java).setAction(action), flags,
+        )
+        val open = PendingIntent.getActivity(
+            this, 10, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), flags,
+        )
+        val hidden = hiddenUntil > System.currentTimeMillis()
+        val text = if (hidden) {
+            "Кнопка спрятана до " + SimpleDateFormat("HH:mm", Locale("ru")).format(Date(hiddenUntil))
+        } else {
+            "Нажми кнопку поверх любого приложения — ответ появится прямо на записях"
+        }
+        val b = NotificationCompat.Builder(this, NastavnikApp.CHANNEL_SERVICE)
+            .setSmallIcon(R.drawable.ic_tile)
+            .setContentTitle("Наставник рядом")
+            .setContentText(text)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .setContentIntent(open)
+            .addAction(0, "Спросить", service(ACTION_ASK, 1))
+        if (hidden) b.addAction(0, "Показать кнопку", service(ACTION_SHOW_BUBBLE, 3))
+        b.addAction(0, "Выключить", service(ACTION_STOP, 2))
+        return b.build()
+    }
+
+    // ---------------- кнопка ----------------
+
+    private fun applyBubbleLook(s: AppSettings) {
+        val size = OverlayWindows.dp(this, s.bubbleSizeDp.toFloat())
+        bubbleParams.width = size
+        bubbleParams.height = size
+        bubbleParams.alpha = s.bubbleAlpha.coerceAtMost(OverlayWindows.MAX_PASS_THROUGH_ALPHA)
+        if (bubbleAdded) placeBubble(s.bubbleSide, s.bubbleYFraction)
+    }
+
+    private fun addBubble() {
+        if (bubbleAdded || hiddenUntil > System.currentTimeMillis()) return
+        val s = settings ?: napp.settings.load()
+        applyBubbleLook(s)
+        positionBubble(s.bubbleSide, s.bubbleYFraction)
+        try {
+            wm.addView(bubble, bubbleParams)
+            bubbleAdded = true
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun addNudge() {
+        val v = android.view.View(this).apply { setBackgroundColor(NUDGE_A) }
+        val p = OverlayWindows.absParams(
+            0, 0, 1, 1,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+        )
+        if (runCatching { wm.addView(v, p) }.isSuccess) nudgeView = v
+        capturer.nudge = {
+            nudgeOn = !nudgeOn
+            nudgeView?.setBackgroundColor(if (nudgeOn) NUDGE_B else NUDGE_A)
+        }
+    }
+
+    private fun removeBubble() {
+        snapAnimator?.cancel()
+        main.removeCallbacks(restoreTouch)
+        if (bubbleAdded) runCatching { wm.removeView(bubble) }
+        bubbleAdded = false
+    }
+
+    private fun showBubbleNow() {
+        main.removeCallbacks(unhide)
+        unhide.run()
+    }
+
+    private fun positionBubble(side: BubbleSide, yFraction: Float) {
+        val screen = OverlayWindows.screenSize(this)
+        val size = bubbleParams.width
+        bubbleParams.x = if (side == BubbleSide.LEFT) 0 else screen.x - size
+        bubbleParams.y = (yFraction * (screen.y - size)).toInt().coerceIn(0, (screen.y - size).coerceAtLeast(0))
+    }
+
+    private fun placeBubble(side: BubbleSide, yFraction: Float) {
+        positionBubble(side, yFraction)
+        runCatching { wm.updateViewLayout(bubble, bubbleParams) }
+    }
+
+    /** Где кнопка на экране на самом деле (окно кнопки может быть сдвинуто строкой состояния). */
+    private fun bubbleRect(): IRect? {
+        if (!bubbleAdded || !bubble.isAttachedToWindow) return null
+        val loc = IntArray(2)
+        bubble.getLocationOnScreen(loc)
+        return IRect(loc[0], loc[1], loc[0] + bubble.width, loc[1] + bubble.height)
+    }
+
+    private fun anchor(): BubbleAnchor {
+        val screen = OverlayWindows.screenSize(this)
+        val r = bubbleRect() ?: run {
+            val s = bubbleParams.width.coerceAtLeast(1)
+            IRect(bubbleParams.x, bubbleParams.y, bubbleParams.x + s, bubbleParams.y + s)
+        }
+        return BubbleAnchor(r, r.centerX < screen.x / 2)
+    }
+
+    private fun refreshBubbleBusy() {
+        if (!ready) return
+        bubble.busy = mentor.state.value.busy || clean.state.value is CleanState.Generating || clean.state.value is CleanState.Saving
+    }
+
+    /** Стилус над кнопкой: на 1,5 с окно перестаёт принимать касания, и штрих уходит в приложение под ней. */
+    private fun setBubbleTouchable(touchable: Boolean) {
+        if (!bubbleAdded) return
+        val f = bubbleParams.flags
+        val want = if (touchable) f and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv() else f or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        if (want != f) {
+            bubbleParams.flags = want
+            runCatching { wm.updateViewLayout(bubble, bubbleParams) }
+        }
+    }
+
+    override fun onStylus() {
+        setBubbleTouchable(false)
+        main.removeCallbacks(restoreTouch)
+        main.postDelayed(restoreTouch, STYLUS_PASS_MS)
+    }
+
+    override fun onTap() {
+        menu.dismiss()
+        if (barOwner == BarOwner.ACTIONS) bar.dismiss() else showActions()
+    }
+
+    /** Короткое меню у кнопки: что спросить. Никакой панели — ответ появится на записи. */
+    private fun showActions() {
+        askBar.dismiss()
+        val items = mutableListOf<BarItem>()
+        if (mentor.state.value.busy) {
+            items += BarItem("Остановить", R.drawable.ic_close) { mentor.dismiss() }
+        }
+        items += BarItem(QuickAction.NEXT_STEP.short, R.drawable.ic_bulb) { quick(QuickAction.NEXT_STEP) }
+        items += BarItem(QuickAction.FIND_ERROR.short, R.drawable.ic_search) { quick(QuickAction.FIND_ERROR) }
+        items += BarItem(QuickAction.THEORY.short, R.drawable.ic_book) { quick(QuickAction.THEORY) }
+        items += BarItem(QuickAction.CHECK_ANSWER.short, R.drawable.ic_check) { quick(QuickAction.CHECK_ANSWER) }
+        items += BarItem(QuickAction.SHOW_STEP.short, R.drawable.ic_open) { quick(QuickAction.SHOW_STEP) }
+        items += BarItem(QuickAction.SIMILAR.short, R.drawable.ic_refresh) { quick(QuickAction.SIMILAR) }
+        items += BarItem("Спросить голосом", R.drawable.ic_mic) { askByVoice() }
+        items += BarItem("Спросить текстом", R.drawable.ic_pen) { askBar.show(anchor()) }
+        items += BarItem("Чистовик", R.drawable.ic_note) { startClean() }
+        if (overlay.isShowing) {
+            items += BarItem("Убрать заметки", R.drawable.ic_close) { mentor.dismiss() }
+        }
+        val pages = if (notebookReady) notebook.size else 0
+        bar.showActions(anchor(), items, if (pages > 0) "НАСТАВНИК · КОНСПЕКТ $pages СТР." else "НАСТАВНИК")
+        barOwner = BarOwner.ACTIONS
+    }
+
+    private fun color(id: Int) = ContextCompat.getColor(this, id)
+
+    override fun onLongPress() {
+        bar.dismiss()
+        val s = settings ?: napp.settings.load()
+        val watching = s.watchPauseSec > 0
+        menu.show(
+            bubbleParams.x, bubbleParams.y, bubbleParams.width, anchor().onLeft,
+            listOf(
+                MenuEntry(if (watching) "Не следить за решением" else "Следить за решением", R.drawable.ic_eye) {
+                    napp.settings.setWatchPauseSec(if (watching) 0 else DEFAULT_WATCH_PAUSE_SEC)
+                    notice(
+                        if (watching) {
+                            "Фоновая проверка выключена."
+                        } else {
+                            "Слежу: когда перестанешь писать на ${DEFAULT_WATCH_PAUSE_SEC} с, проверю и отмечу ошибку, если она есть."
+                        },
+                    )
+                },
+                MenuEntry(if (regionMode) "Отправлять весь экран" else "Выделять область перед вопросом", R.drawable.ic_image) { toggleRegion() },
+                MenuEntry("Новая задача", R.drawable.ic_sparkle) {
+                    mentor.newTask()
+                    notice("Начинаю новую задачу.")
+                },
+                MenuEntry(if (readingMode) "Закончить чтение конспекта" else "Пролистать весь конспект", R.drawable.ic_book) {
+                    if (readingMode) stopReading() else startReading()
+                },
+                MenuEntry("Забыть конспект", R.drawable.ic_trash) { forgetNotebook() },
+                MenuEntry("История", R.drawable.ic_history) { openScreen(MainActivity.SCREEN_HISTORY) },
+                MenuEntry("Повторить карточки", R.drawable.ic_cards) { openScreen(MainActivity.SCREEN_REVIEW) },
+                MenuEntry("Настройки", R.drawable.ic_tune) { openSettings() },
+                MenuEntry("Спрятать на 10 минут", R.drawable.ic_eye_off) { hideFor(10 * 60 * 1000L) },
+                MenuEntry("Выключить", R.drawable.ic_power) { stopSelf() },
+            ),
+        )
+    }
+
+    override fun onDragStart() {
+        snapAnimator?.cancel()
+        menu.dismiss()
+        bar.dismiss()
+        dragStartX = bubbleParams.x
+        dragStartY = bubbleParams.y
+    }
+
+    override fun onDrag(dx: Int, dy: Int) {
+        val screen = OverlayWindows.screenSize(this)
+        val size = bubbleParams.width
+        bubbleParams.x = (dragStartX + dx).coerceIn(0, screen.x - size)
+        bubbleParams.y = (dragStartY + dy).coerceIn(0, screen.y - size)
+        runCatching { wm.updateViewLayout(bubble, bubbleParams) }
+    }
+
+    override fun onDragEnd() {
+        val screen = OverlayWindows.screenSize(this)
+        val size = bubbleParams.width
+        val side = if (bubbleParams.x + size / 2 < screen.x / 2) BubbleSide.LEFT else BubbleSide.RIGHT
+        val targetX = if (side == BubbleSide.LEFT) 0 else screen.x - size
+        val yFraction = if (screen.y > size) bubbleParams.y.toFloat() / (screen.y - size) else 0f
+        snapAnimator?.cancel()
+        snapAnimator = ValueAnimator.ofInt(bubbleParams.x, targetX).apply {
+            duration = 180
+            addUpdateListener {
+                bubbleParams.x = it.animatedValue as Int
+                if (bubbleAdded) runCatching { wm.updateViewLayout(bubble, bubbleParams) }
+            }
+            start()
+        }
+        napp.settings.setBubblePosition(side, yFraction)
+    }
+
+    private fun hideFor(ms: Long) {
+        bar.dismiss()
+        askBar.dismiss()
+        removeBubble()
+        hiddenUntil = System.currentTimeMillis() + ms
+        main.removeCallbacks(unhide)
+        main.postDelayed(unhide, ms)
+        updateNotification()
+    }
+
+    // ---------------- сообщения у кнопки ----------------
+
+    private fun message(owner: BarOwner, text: String, items: List<BarItem> = emptyList(), busy: Boolean = false, autoHideMs: Long = 0) {
+        if (barOwner == owner && barText == text && items.isEmpty()) return
+        bar.showMessage(anchor(), text, items, busy, autoHideMs, outside = owner == BarOwner.NOTICE)
+        barOwner = owner
+        barText = text
+    }
+
+    private fun notice(text: String) = message(BarOwner.NOTICE, text, autoHideMs = 4500)
+
+    private fun dismissBar(owner: BarOwner) {
+        if (barOwner == owner) bar.dismiss()
+    }
+
+    // ---------------- ответ наставника ----------------
+
+    private fun renderMentor(s: MentorUi) {
+        val a = s.answer
+        overlay.render(a)
+        refreshBubbleBusy()
+        // Опорный кадр для слежения за прокруткой — тот, по которому отвечал наставник.
+        // Кадр появляется не в первом состоянии ответа («Смотрю на экран…»), а после снимка.
+        if (a == null || a.seq != trackSeq || (trackRef == null && a.thumb != null)) {
+            if (a?.seq != trackSeq) {
+                relocateWanted = false
+                prevTrackThumb = null
+                lastRelocThumb = null
+            }
+            trackSeq = a?.seq ?: -1L
+            trackRef = a?.thumb
+        }
+        when {
+            a == null -> {
+                dismissBar(BarOwner.STATUS)
+            }
+            a.errorText != null -> {
+                dismissBar(BarOwner.STATUS)
+                if (shownErrorSeq != a.seq) {
+                    shownErrorSeq = a.seq
+                    val items = when {
+                        a.error?.needsSettings == true -> listOf(BarItem("Настройки", primary = true) { bar.dismiss(); openSettings() })
+                        // Сеть моргнула, сервис перегружен — повторить тот же вопрос одним нажатием.
+                        a.kind != AskKind.WATCH -> listOf(BarItem("Повторить", primary = true) { bar.dismiss(); ask(a.question, a.kind) })
+                        else -> emptyList()
+                    }
+                    message(BarOwner.ERROR, a.errorText, items)
+                }
+            }
+            a.streaming && a.marks.isEmpty() && a.kind != AskKind.WATCH -> {
+                message(BarOwner.STATUS, a.status ?: "Думаю…", listOf(BarItem("Остановить") { mentor.dismiss() }), busy = true)
+            }
+            else -> dismissBar(BarOwner.STATUS)
+        }
+        if (s.silentOkAt > lastSilentOk) {
+            lastSilentOk = s.silentOkAt
+            bubble.flash(color(R.color.kind_ok))
+        }
+        val se = s.silentError
+        if (se != null && se !== shownSilentError) {
+            shownSilentError = se
+            if (se.needsSettings) {
+                message(BarOwner.ERROR, "Фоновая проверка на паузе: ${se.userMessage}", listOf(BarItem("Настройки", primary = true) { bar.dismiss(); openSettings() }))
+            }
+        }
+    }
+
+    private fun requireKey(): Boolean {
+        val reason = napp.settings.notReadyReason() ?: return true
+        // Текст для Gemini/Claude: «Сначала вставь API-ключ (Google Gemini) в настройках.»
+        val text = if (reason.startsWith("Не задан API-ключ")) {
+            "Сначала вставь API-ключ (${napp.settings.provider().title}) в настройках."
+        } else {
+            "$reason. Открой настройки → «Нейросеть»."
+        }
+        message(BarOwner.ERROR, text, listOf(BarItem("Настройки", primary = true) { bar.dismiss(); openSettings() }))
+        return false
+    }
+
+    private fun ask(text: String, kind: AskKind) {
+        if (!requireKey()) return
+        if (barOwner == BarOwner.ERROR || barOwner == BarOwner.NOTICE) bar.dismiss()
+        mentor.ask(text, kind) { takeShot() }
+    }
+
+    private fun quick(action: QuickAction) = ask(action.prompt, AskKind.QUICK)
+
+    override fun onSend(text: String) = ask(text, AskKind.USER)
+
+    override fun onMic() = speech.toggle()
+
+    override fun onMakeClean() = startClean()
+
+    override fun onAllClosed() = mentor.dismiss()
+
+    override fun onMore() = quick(QuickAction.NEXT_STEP)
+
+    override fun onSimilar() = quick(QuickAction.SIMILAR)
+
+    override fun onSpeak(text: String) = napp.speaker.speak(text)
+
+    override fun onCard(text: String) {
+        notice("Делаю карточку…")
+        lifecycleScope.launch {
+            val topic = mentor.state.value.conversationId.takeIf { it != 0L }
+                ?.let { napp.db.conversations().get(it)?.title }.orEmpty()
+            when (val r = napp.trainer.cardFromHint(text, topic)) {
+                is TrainResult.Ok -> notice("Карточка в «Повторении»: вернётся завтра")
+                is TrainResult.Failed -> notice("Карточка не получилась: ${r.message}")
+            }
+        }
+    }
+
+    private fun toggleRegion() {
+        regionMode = !regionMode
+        notice(if (regionMode) "Перед вопросом обведи пальцем задачу — уйдёт только она." else "Снова отправляю весь экран.")
+    }
+
+    // ---------------- чистовик ----------------
+
+    private fun startClean() {
+        if (!requireKey()) return
+        // Заметки к задаче больше не нужны и не должны попасть на снимок для чистовика.
+        mentor.dismiss()
+        clean.start { takeShot(numberLines = false) }
+    }
+
+    private fun renderClean(prev: CleanState, s: CleanState) {
+        when (s) {
+            is CleanState.Collecting -> {
+                val n = s.shots.size
+                val text = buildString {
+                    append("Чистовик · снимков: $n из ${CleanState.MAX_SHOTS}")
+                    when {
+                        s.capturing -> append("\nДелаю снимок экрана…")
+                        s.message != null -> append("\n").append(s.message)
+                        else -> append("\nКонспект длиннее экрана? Прокрути конспект и добавь ещё экран.")
+                    }
+                }
+                val items = mutableListOf<BarItem>()
+                if (!s.capturing && n < CleanState.MAX_SHOTS) items += BarItem("+ Экран") { clean.addShot { takeShot(numberLines = false) } }
+                val pages = if (notebookReady) notebook.size else 0
+                if (!s.capturing && n <= 1 && pages >= 2) {
+                    items += BarItem("Весь конспект ($pages)") {
+                        lifecycleScope.launch {
+                            val images = withContext(nb) { notebook.pages.map { it.image } }
+                            // Снимок текущего экрана остаётся, к нему — все страницы по порядку (повторы модель склеит).
+                            clean.addImages(images)
+                        }
+                    }
+                }
+                if (!s.capturing && n > 0) items += BarItem("Собрать", primary = true) { clean.build() }
+                items += BarItem("Отмена") { clean.cancel() }
+                message(BarOwner.CLEAN, text, items, busy = s.capturing)
+            }
+            is CleanState.Generating -> message(
+                BarOwner.CLEAN,
+                "Собираю чистовик… обычно до минуты." + if (s.retry) "\nПервый ответ не разобрался — пробую ещё раз." else "",
+                listOf(BarItem("Отмена") { clean.cancel() }),
+                busy = true,
+            )
+            is CleanState.Failed -> if (s.note == null) {
+                val items = mutableListOf<BarItem>()
+                if (s.shots.isNotEmpty()) items += BarItem("Пересобрать", primary = true) { clean.build() }
+                if (s.needsSettings) items += BarItem("Настройки") { bar.dismiss(); openSettings() }
+                items += BarItem("Отмена") { clean.cancel() }
+                message(BarOwner.CLEAN, "Не получилось: ${s.message}", items)
+            } else {
+                dismissBar(BarOwner.CLEAN)
+            }
+            is CleanState.Preview -> {
+                dismissBar(BarOwner.CLEAN)
+                // Конспект готов — открываем предпросмотр (это уже документ, а не окно наставника).
+                if (prev !is CleanState.Preview && prev !is CleanState.Saving) openScreen(MainActivity.SCREEN_CLEAN)
+            }
+            else -> dismissBar(BarOwner.CLEAN)
+        }
+    }
+
+    // ---------------- снимок экрана ----------------
+
+    private suspend fun ensureProjection(): Boolean {
+        if (capturer.isActive) return true
+        val waiter = CompletableDeferred<Boolean>()
+        projectionWaiter = waiter
+        // Убираем свои окна, чтобы они не заслоняли экран разрешения и системный диалог.
+        bar.dismiss()
+        askBar.dismiss()
+        overlay.setCaptureHidden(true)
+        removeBubble()
+        try {
+            val started = runCatching {
+                startActivity(
+                    Intent(this, ProjectionPermissionActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION),
+                )
+            }.isSuccess
+            if (!started) return false
+            val ok = withTimeoutOrNull(PERMISSION_TIMEOUT_MS) { waiter.await() } ?: false
+            if (ok) delay(AFTER_PERMISSION_DELAY_MS) // ждём, пока закроется системный диалог
+            return ok && capturer.isActive
+        } finally {
+            projectionWaiter = null
+            overlay.setCaptureHidden(false)
+            addBubble()
+        }
+    }
+
+    private fun onProjectionResult(code: Int, data: Intent?) {
+        if (data == null) {
+            projectionWaiter?.complete(false)
+            return
+        }
+        // Android 14+: сначала foreground с типом mediaProjection, потом getMediaProjection.
+        projectionPending = true
+        startForegroundCompat()
+        val ok = capturer.start(code, data)
+        projectionPending = false
+        if (!ok) startForegroundCompat()
+        projectionWaiter?.complete(ok)
+    }
+
+    private fun setOverlaysHidden(hidden: Boolean) {
+        menu.dismiss()
+        overlay.setCaptureHidden(hidden)
+        bar.setCaptureHidden(hidden)
+        askBar.setCaptureHidden(hidden)
+        if (bubbleAdded) {
+            bubbleParams.alpha = if (hidden) 0f else (settings?.bubbleAlpha ?: 0.7f).coerceAtMost(OverlayWindows.MAX_PASS_THROUGH_ALPHA)
+            runCatching { wm.updateViewLayout(bubble, bubbleParams) }
+        }
+    }
+
+    /** Снимок без наших окон, без системных панелей, не больше 1500 px и 1,15 Мп, JPEG 85%. [contextPages] — сколько страниц конспекта приложить. */
+    private suspend fun takeShot(
+        numberLines: Boolean = true,
+        // Быстрые ответы: меньше соседних страниц — запрос легче, ответ раньше.
+        contextPages: Int = if (napp.settings.load().fastAnswers) FAST_CONTEXT_PAGES else CONTEXT_PAGES,
+    ): ShotResult {
+        if (!ensureProjection()) {
+            return ShotResult.Failed(
+                "Нет разрешения на снимок экрана — без него наставник не видит записи. Нажми кнопку ещё раз и выбери «Весь экран».",
+            )
+        }
+        if (barOwner == BarOwner.ACTIONS || barOwner == BarOwner.NOTICE) bar.dismiss()
+        capturing = true
+        val hiddenAt = System.nanoTime()
+        setOverlaysHidden(true)
+        try {
+            delay(HIDE_DELAY_MS)
+            val full = try {
+                // Кадр не раньше, чем окна точно спрятались.
+                capturer.capture(hiddenAt + HIDDEN_AFTER_NS).also { captureFailures = 0 }
+            } catch (e: CaptureException) {
+                captureFailures++
+                if (captureFailures >= 2 && capturer.isActive) {
+                    // Доступ к экрану есть, а кадров нет — сбрасываем его: при следующем нажатии Android спросит заново.
+                    captureFailures = 0
+                    capturer.stop()
+                    startForegroundCompat()
+                    return ShotResult.Failed(
+                        "Снимок экрана не получается. Нажми кнопку ещё раз — Android заново спросит разрешение, выбери «Весь экран».",
+                    )
+                }
+                return ShotResult.Failed(e.message ?: "Не удалось сделать снимок")
+            }
+            try {
+                val realW = capturer.realWidth.coerceAtLeast(full.width)
+                val realH = capturer.realHeight.coerceAtLeast(full.height)
+                val kX = full.width.toFloat() / realW.toFloat()
+                val kY = full.height.toFloat() / realH.toFloat()
+                val contentPhys = OverlayWindows.contentRect(this)
+                val choice = if (regionMode) RegionSelector(this, wm).select(full) else RegionChoice.Full
+                if (choice is RegionChoice.Cancel) return ShotResult.Cancelled
+                val rectInShot: Rect
+                val physRect: Rect
+                if (choice is RegionChoice.Region) {
+                    rectInShot = choice.rect
+                    physRect = Rect(
+                        (choice.rect.left / kX).toInt(),
+                        (choice.rect.top / kY).toInt(),
+                        (choice.rect.right / kX).toInt(),
+                        (choice.rect.bottom / kY).toInt(),
+                    )
+                } else {
+                    rectInShot = Rect((contentPhys.left * kX).toInt(), (contentPhys.top * kY).toInt(), (contentPhys.right * kX).toInt(), (contentPhys.bottom * kY).toInt())
+                    physRect = contentPhys
+                }
+                val (prepared, thumb) = withContext(Dispatchers.Default) { ImageUtils.prepare(full, rectInShot, numberLines) to ImageUtils.thumb(full) }
+                // В отладочной сборке последний снимок лежит в кэше — удобно проверить, что ушло в нейросеть.
+                if (BuildConfig.DEBUG) runCatching { File(cacheDir, "last_shot.jpg").writeBytes(prepared.jpeg) }
+                val r = physRect
+                val geometry = ShotGeometry(IRect(r.left, r.top, r.right, r.bottom), prepared.width, prepared.height, prepared.gutter, prepared.lines, prepared.luma)
+                if (numberLines) ShotGeometry.last = geometry
+                val context = if (numberLines && contextPages > 0) rememberAskedPage(full, thumb, contextPages) else emptyList()
+                return ShotResult.Ok(prepared.jpeg, geometry, thumb, context)
+            } finally {
+                full.recycle()
+            }
+        } finally {
+            setOverlaysHidden(false)
+            capturing = false
+        }
+    }
+
+    // ---------------- работа в фоне ----------------
+
+    private val power by lazy { getSystemService(PowerManager::class.java) }
+
+    /** Все наши окна на экране — при сравнении кадров их не учитываем. */
+    private fun ourRects(): List<IRect> =
+        overlay.occupiedRects() + listOfNotNull(bubbleRect(), bar.rect(), askBar.rect())
+
+    /**
+     * Раз в пару секунд смотрит на экран (уменьшенный серый кадр, без отправки куда-либо):
+     * — прокрутили страницу — рамки и заметки едут вместе с записями;
+     * — страница сменилась — прячет их;
+     * — если включена фоновая проверка: студент писал и остановился — тихо проверяет решение.
+     */
+    private suspend fun watchLoop() {
+        while (lifecycleScope.isActive) {
+            val tick = if (DeviceProfile.isWeakDevice(this@BubbleService)) 3500L else if (readingMode) READING_TICK_MS else TICK_MS
+            delay(tick)
+            // Сбой одного кадра (экран повернули посреди снимка и т. п.) не должен ронять наставника.
+            try {
+                watchStep()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.w(TAG, "watch", e)
+                prevThumb = null
+            }
+        }
+    }
+
+    private suspend fun watchStep() {
+        val s = settings ?: return
+        val tracking = overlay.isShowing && trackRef != null
+        val watching = s.watchPauseSec > 0 && shownSilentError == null
+        val collecting = s.seeNotebook && notebookReady && (chainActive || readingMode)
+        if ((!tracking && !watching && !collecting) || !capturer.isActive || capturing || askBar.isShowing || !power.isInteractive) {
+            prevThumb = null
+            chainPrev = null
+            return
+        }
+        val thumb = grabThumb() ?: return
+        val rects = ourRects()
+        // Строка состояния и панель навигации не двигаются вместе со страницей.
+        val area = OverlayWindows.contentRect(this)
+        val mask = thumb.maskOf(rects)
+        val ref = trackRef
+        if (overlay.isShowing && ref != null) {
+            val motion = withContext(Dispatchers.Default) { ScreenMotion.estimate(ref, thumb, mask, thumb.rowMaskOf(rects), area.top, area.bottom) }
+            if (BuildConfig.DEBUG) Log.i(TAG, "track: $motion")
+            val cells = thumb.cols * thumb.rows
+            when (val m = motion) {
+                is Motion.Moved -> {
+                    relocateWanted = false
+                    overlay.setSuspended(false)
+                    overlay.setOffset(m.dx, m.dy)
+                }
+                // Почти ничего не изменилось (дописали пару слов) — всё на месте.
+                is Motion.Same -> if (m.changedCells <= cells * RELOCATE_CHANGE) {
+                    relocateWanted = false
+                    overlay.setSuspended(false)
+                    overlay.setOffset(0, 0)
+                } else {
+                    relocateWanted = true
+                }
+                // Не просто прокрутка: увеличили, уменьшили, другая страница. Прячем выделения и ищем строки заново.
+                Motion.Replaced -> {
+                    overlay.setSuspended(true)
+                    relocateWanted = true
+                }
+            }
+            // Ищем, когда картинка успокоилась (жест увеличения закончился) и с прошлой попытки что-то поменялось.
+            val prevT = prevTrackThumb
+            val stable = prevT != null && ScreenMotion.changedCells(prevT, thumb, mask) <= 2
+            val last = lastRelocThumb
+            val changedSinceTry = last == null || ScreenMotion.changedCells(last, thumb, mask) > cells / 100
+            if (relocateWanted && stable && changedSinceTry) {
+                lastRelocThumb = thumb
+                relocateMarks()
+            }
+            prevTrackThumb = thumb
+        }
+        if (watching) watchTick(thumb, mask, s.watchPauseSec * 1000L)
+        if (collecting) collectPage(thumb, mask, thumb.rowMaskOf(rects), area, rects)
+    }
+
+    // ---------------- весь конспект ----------------
+
+    /**
+     * Страница, на которой студент спросил: запоминаем её (или обновляем) и с неё начинаем следить за
+     * пролистыванием. Возвращает остальные страницы конспекта по порядку — они уйдут вместе с вопросом.
+     */
+    private suspend fun rememberAskedPage(full: android.graphics.Bitmap, thumb: Thumb, limit: Int): List<ByteArray> {
+        val s = settings ?: return emptyList()
+        if (!s.seeNotebook || !notebookReady) return emptyList()
+        val area = OverlayWindows.contentRect(this)
+        return withContext(nb) {
+            runCatching {
+                val shot = ImageUtils.notebookShot(full, area)
+                val now = System.currentTimeMillis()
+                val page = when (val m = notebook.match(thumb, null, null, area.top, area.bottom)) {
+                    PageMatch.New -> {
+                        chainId = now
+                        chainY = 0
+                        notebook.add(shot.image, shot.small, thumb, chainId, 0, now)
+                    }
+                    is PageMatch.Same -> {
+                        notebook.positionOf(m.index, m.dy).let { (c, y) -> chainId = c; chainY = y }
+                        notebook.replace(m.index, shot.image, shot.small, thumb, now)
+                    }
+                    is PageMatch.Overlap -> {
+                        notebook.positionOf(m.index, m.dy).let { (c, y) -> chainId = c; chainY = y }
+                        notebook.add(shot.image, shot.small, thumb, chainId, chainY, now)
+                    }
+                }
+                chainActive = true
+                chainPrev = thumb
+                pageCheckPending = false
+                jumped = false
+                notebookPages = notebook.size
+                notebook.context(page.id, limit)
+            }.getOrDefault(emptyList())
+        }
+    }
+
+    /**
+     * Между вопросами: студент листает тетрадь. Пока страница едет — копим сдвиг; как только остановилась —
+     * сравниваем с запомненными и, если на экране новое, запоминаем. Ушёл в другое приложение или на другую
+     * страницу (всё сменилось и ничего не узнали) — перестаём, пока снова не спросит. В режиме чтения
+     * запоминаем и после перелистывания.
+     */
+    private suspend fun collectPage(thumb: Thumb, mask: BooleanArray, rowMask: BooleanArray, area: android.graphics.Rect, rects: List<IRect>) {
+        val added = withContext(nb) {
+            val prev = chainPrev
+            chainPrev = thumb
+            if (prev == null) return@withContext false
+            when (val step = ScreenMotion.estimate(prev, thumb, mask, rowMask, area.top, area.bottom)) {
+                is Motion.Moved -> {
+                    chainY -= step.dy
+                    pageCheckPending = true
+                    return@withContext false
+                }
+                Motion.Replaced -> {
+                    jumped = true
+                    pageCheckPending = true
+                    return@withContext false
+                }
+                is Motion.Same -> if (step.changedCells > 2) {
+                    pageCheckPending = true
+                    return@withContext false
+                }
+            }
+            // Экран спокоен.
+            if (!pageCheckPending) return@withContext false
+            pageCheckPending = false
+            val wasJump = jumped
+            jumped = false
+            when (val m = notebook.match(thumb, mask, rowMask, area.top, area.bottom)) {
+                is PageMatch.Same -> {
+                    notebook.positionOf(m.index, m.dy).let { (c, y) -> chainId = c; chainY = y }
+                    chainActive = true
+                    false
+                }
+                is PageMatch.Overlap -> {
+                    notebook.positionOf(m.index, m.dy).let { (c, y) -> chainId = c; chainY = y }
+                    chainActive = true
+                    false
+                }
+                PageMatch.New -> {
+                    if (wasJump && !readingMode) {
+                        // Другая страница или другое приложение — не запоминаем без спроса.
+                        chainActive = false
+                        return@withContext false
+                    }
+                    if (wasJump) {
+                        chainId = System.currentTimeMillis()
+                        chainY = 0
+                    }
+                    true
+                }
+            }
+        }
+        if (!added) return
+        // Новая страница: свежий кадр в полном размере, наши окна закрашиваем цветом листа.
+        val full = try {
+            capturer.captureLatest()
+        } catch (_: CaptureException) {
+            null
+        } ?: return
+        try {
+            val cover = rects.map { android.graphics.Rect(it.left, it.top, it.right, it.bottom) }
+            withContext(nb) {
+                val shot = ImageUtils.notebookShot(full, area, cover)
+                notebook.add(shot.image, shot.small, thumb, chainId, chainY, System.currentTimeMillis())
+            }
+        } finally {
+            full.recycle()
+        }
+        notebookPages = notebook.size
+        if (BuildConfig.DEBUG) Log.i(TAG, "notebook: ${notebook.size} pages")
+        if (readingMode) showReading()
+    }
+
+    private fun startReading() {
+        if (!canRead()) return
+        readingMode = true
+        chainPrev = null
+        pageCheckPending = true
+        jumped = true
+        showReading()
+    }
+
+    private fun stopReading() {
+        readingMode = false
+        dismissBar(BarOwner.NOTEBOOK)
+        val n = if (notebookReady) notebook.size else 0
+        notice("Запомнил страниц конспекта: $n. Наставник будет видеть их, когда спросишь.")
+    }
+
+    private fun showReading() {
+        val n = if (notebookReady) notebook.size else 0
+        message(
+            BarOwner.NOTEBOOK,
+            "Листай конспект от начала до конца — на каждом экране задержись на секунду.\nЗапомнено страниц: $n",
+            listOf(
+                BarItem("Готово", primary = true) { stopReading() },
+                BarItem("Забыть всё") { forgetNotebook() },
+            ),
+            busy = true,
+        )
+    }
+
+    private fun forgetNotebook() {
+        lifecycleScope.launch {
+            withContext(nb) {
+                notebook.clear()
+                chainActive = false
+                chainPrev = null
+            }
+            if (readingMode) showReading() else notice("Конспект забыт. Начну запоминать с того места, где спросишь.")
+        }
+    }
+
+    /** Читать конспект можно, только если он включён в настройках и есть разрешение на снимки экрана. */
+    private fun canRead(): Boolean {
+        val s = settings ?: return false
+        if (!s.seeNotebook) {
+            message(BarOwner.ERROR, "Включи «Весь конспект» в настройках, чтобы наставник видел все страницы.", listOf(BarItem("Настройки", primary = true) { bar.dismiss(); openSettings() }))
+            return false
+        }
+        if (!capturer.isActive) {
+            lifecycleScope.launch { if (ensureProjection()) startReading() }
+            return false
+        }
+        return true
+    }
+
+    /**
+     * Свежий снимок экрана (без наших окон) → на нём заново ищутся строки, и отмеченные строки узнаются
+     * по «почерку» с учётом масштаба. Выделения встают на новые места; что не нашлось — остаётся скрытым.
+     */
+    private suspend fun relocateMarks() {
+        val a = mentor.state.value.answer ?: return
+        val g = a.geometry ?: return
+        val ref = g.page() ?: return
+        if (!capturer.isActive || capturing) return
+        capturing = true
+        val hiddenAt = System.nanoTime()
+        setOverlaysHidden(true)
+        val full: android.graphics.Bitmap? = try {
+            delay(HIDE_DELAY_MS)
+            capturer.capture(hiddenAt + HIDDEN_AFTER_NS)
+        } catch (_: CaptureException) {
+            null
+        } finally {
+            setOverlaysHidden(false)
+            capturing = false
+        }
+        if (full == null) return
+        val area = OverlayWindows.contentRect(this)
+        val (rects, thumb) = try {
+            withContext(Dispatchers.Default) {
+                val page = ImageUtils.page(full, area)
+                val k = page.scale
+                val found = a.marks.map { m ->
+                    val nb = m.box ?: return@map null
+                    val box = IRect((nb.left * g.imageW).toInt(), (nb.top * g.imageH).toInt(), (nb.right * g.imageW).toInt(), (nb.bottom * g.imageH).toInt())
+                    LineMatch.relocate(ref, box, page.image)?.let { r ->
+                        IRect(area.left + (r.left / k).toInt(), area.top + (r.top / k).toInt(), area.left + (r.right / k).toInt(), area.top + (r.bottom / k).toInt())
+                    }
+                }
+                found to ImageUtils.thumb(full)
+            }
+        } finally {
+            full.recycle()
+        }
+        if (BuildConfig.DEBUG) Log.i(TAG, "relocate: $rects")
+        // Ответ мог смениться, пока искали.
+        if (mentor.state.value.answer?.seq != a.seq) return
+        relocateWanted = false
+        trackRef = thumb
+        prevTrackThumb = thumb
+        lastRelocThumb = thumb
+        overlay.relocate(rects)
+    }
+
+    private fun watchTick(thumb: Thumb, mask: BooleanArray, pauseMs: Long) {
+        val now = System.currentTimeMillis()
+        val prev = prevThumb
+        val prevM = prevMask
+        prevThumb = thumb
+        prevMask = mask
+        if (prev != null) {
+            val union = if (prevM != null && prevM.size == mask.size) BooleanArray(mask.size) { mask[it] || prevM[it] } else mask
+            if (ScreenMotion.changedCells(prev, thumb, union) >= 2) {
+                dirty = true
+                lastChangeAt = now
+            }
+        }
+        val answer = mentor.state.value.answer
+        // Ответ на вопрос студента не перебиваем тихой проверкой.
+        val userAnswerShown = answer != null && answer.kind != AskKind.WATCH && overlay.isShowing
+        if (dirty && now - lastChangeAt >= pauseMs && now - lastWatchAt >= MIN_WATCH_GAP_MS &&
+            !mentor.isBusy && !userAnswerShown && clean.state.value is CleanState.Idle &&
+            napp.settings.notReadyReason() == null
+        ) {
+            dirty = false
+            lastWatchAt = now
+            mentor.ask(Prompts.WATCH_PROMPT, AskKind.WATCH) { takeShot(contextPages = WATCH_CONTEXT_PAGES) }
+        }
+    }
+
+    /** Последний кадр экрана для слежения (наши окна на нём есть — их место при сравнении не учитывается). */
+    private suspend fun grabThumb(): Thumb? {
+        val full = try {
+            capturer.captureLatest()
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        return try {
+            withContext(Dispatchers.Default) { ImageUtils.thumb(full) }
+        } finally {
+            full.recycle()
+        }
+    }
+
+    // ---------------- экраны приложения ----------------
+
+    private fun openSettings() = openScreen(MainActivity.SCREEN_SETTINGS)
+
+    private fun openScreen(screen: String) {
+        bar.dismiss()
+        askBar.dismiss()
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .putExtra(MainActivity.EXTRA_SCREEN, screen)
+                .putExtra(MainActivity.EXTRA_FROM_OVERLAY, true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        )
+    }
+
+    // ---------------- голос ----------------
+
+    /** «Спросить голосом»: говоришь — и вопрос сразу уходит наставнику, без строки ввода. */
+    private var voiceDirect = false
+
+    private fun askByVoice() {
+        if (!requireKey()) return
+        voiceDirect = true
+        message(BarOwner.STATUS, "Слушаю… Задай вопрос голосом.", listOf(BarItem("Отмена") { voiceDirect = false; speech.stop(); bar.dismiss() }), busy = true)
+        speech.start()
+    }
+
+    override fun onListening(active: Boolean) {
+        askBar.setListening(active)
+        // Замолчал, ничего не распознав, — убираем «Слушаю…».
+        if (!active && voiceDirect) main.postDelayed({ if (voiceDirect) { voiceDirect = false; dismissBar(BarOwner.STATUS) } }, 1500)
+    }
+
+    override fun onPartial(text: String) {
+        if (voiceDirect) message(BarOwner.STATUS, "Слушаю… «$text»", listOf(BarItem("Отмена") { voiceDirect = false; speech.stop(); bar.dismiss() }), busy = true)
+        else askBar.setText(text)
+    }
+
+    override fun onResult(text: String) {
+        if (voiceDirect) {
+            voiceDirect = false
+            dismissBar(BarOwner.STATUS)
+            if (text.isNotBlank()) ask(text.trim(), AskKind.USER)
+        } else {
+            askBar.setText(text)
+        }
+    }
+    override fun onError(message: String, needsPermission: Boolean) {
+        voiceDirect = false
+        if (needsPermission) {
+            message(BarOwner.ERROR, message, listOf(BarItem("Разрешить", primary = true) { bar.dismiss(); openScreen(MainActivity.SCREEN_ONBOARDING) }))
+        } else {
+            notice(message)
+        }
+    }
+
+    /** Контекст с темой для View кнопки. */
+    private class ContextWrapperOverlay(base: Context) : android.view.ContextThemeWrapper(base, R.style.Theme_Nastavnik_Overlay)
+
+    companion object {
+        const val ACTION_STOP = "app.nastavnik.STOP"
+        const val ACTION_ASK = "app.nastavnik.ASK"
+        const val ACTION_SHOW_BUBBLE = "app.nastavnik.SHOW_BUBBLE"
+        const val ACTION_PROJECTION_RESULT = "app.nastavnik.PROJECTION_RESULT"
+        const val ACTION_PROJECTION_DENIED = "app.nastavnik.PROJECTION_DENIED"
+        const val ACTION_RELOAD = "app.nastavnik.RELOAD"
+        const val EXTRA_RESULT_CODE = "result_code"
+        const val EXTRA_RESULT_DATA = "result_data"
+        const val DEFAULT_WATCH_PAUSE_SEC = 10
+        private const val TAG = "Nastavnik"
+        private const val NOTIFICATION_ID = 42
+        private const val STYLUS_PASS_MS = 1500L
+        private const val HIDE_DELAY_MS = 180L
+
+        /** Кадр, пришедший позже этого после того, как спрятали окна, их уже не содержит. */
+        private const val HIDDEN_AFTER_NS = 50_000_000L
+        private const val AFTER_PERMISSION_DELAY_MS = 600L
+        private const val PERMISSION_TIMEOUT_MS = 120_000L
+        private const val TICK_MS = 2000L
+
+        /** Два почти прозрачных цвета точки-«будилки»: глазом не отличить, а кадр новый. */
+        private const val NUDGE_A = 0x01FFFFFF
+        private const val NUDGE_B = 0x02FFFFFF
+        private const val READING_TICK_MS = 900L
+
+        /** Сколько других страниц конспекта прикладывать к вопросу и к тихой проверке. */
+        private const val CONTEXT_PAGES = 8
+        private const val FAST_CONTEXT_PAGES = 3
+        private const val WATCH_CONTEXT_PAGES = 4
+        private const val MIN_WATCH_GAP_MS = 45_000L
+
+        /** Если изменилось больше этой доли экрана, а сдвига нет — страницу увеличили или сменили. */
+        private const val RELOCATE_CHANGE = 0.04f
+
+        private val runningState = MutableStateFlow(false)
+
+        /** Включён ли наставник — экраны приложения подписываются, чтобы не показывать старое состояние. */
+        val runningFlow: StateFlow<Boolean> = runningState.asStateFlow()
+
+        var running: Boolean
+            get() = runningState.value
+            private set(value) {
+                runningState.value = value
+            }
+
+        /** Сколько страниц конспекта запомнено — для тестов. */
+        @Volatile
+        var notebookPages = 0
+            private set
+
+        fun start(context: Context) {
+            ContextCompat.startForegroundService(context, Intent(context, BubbleService::class.java))
+        }
+
+        fun stop(context: Context) {
+            context.startService(Intent(context, BubbleService::class.java).setAction(ACTION_STOP))
+        }
+    }
+}

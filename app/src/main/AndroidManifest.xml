@@ -1,0 +1,270 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- Будильник к первой паре: экран поверх блокировки, звонок сервисом, вибрация. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- План на день: сколько минут в каких приложениях (человек даёт доступ в настройках сам). -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+    <!-- «Живые» уведомления Android 16: пара с отсчётом и навигация — вверху шторки и на экране блокировки. -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Свои напоминания и «скоро пара» — точно в срок. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
+    <!-- Обновление из приложения: скачанный с GitHub APK ставится через системный установщик. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <queries>
+        <!-- Поиск приложений для записей и других, принимающих PDF и картинки -->
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="application/pdf" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="content" android:mimeType="application/pdf" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="image/png" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND_MULTIPLE" />
+            <data android:mimeType="image/*" />
+        </intent>
+        <!-- Список приложений для выбора «где я пишу конспекты» -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <!-- Рабочий стол: во время учебного замка он открыт всегда -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+        <!-- Распознавание речи -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".NastavnikApp"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="false"
+        android:theme="@style/Theme.Nastavnik"
+        tools:targetApi="36">
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Фото и PDF из любого приложения («Поделиться», «Открыть с помощью») становятся тетрадью -->
+            <intent-filter android:label="Разобрать в Наставнике">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+            <intent-filter android:label="Разобрать в Наставнике">
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <intent-filter android:label="Открыть в Наставнике">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity>
+
+        <!-- Невидимое окно: плитка в шторке включает и выключает наставника через него -->
+        <activity
+            android:name=".ui.ToggleActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity="app.nastavnik.toggle"
+            android:theme="@style/Theme.Nastavnik.Invisible" />
+
+        <!-- Раз в 3 часа: журнал ЛКС и синхронизация (оценки — на планшет и родителю). -->
+        <service
+            android:name=".grades.GradesJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <service
+            android:name=".overlay.MentorTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile"
+            android:label="Наставник"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
+
+        <activity
+            android:name=".ui.ProjectionPermissionActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:taskAffinity="app.nastavnik.projection"
+            android:theme="@style/Theme.Nastavnik.Translucent" />
+
+        <service
+            android:name=".overlay.BubbleService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse|mediaProjection|microphone">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Плавающая кнопка-помощник поверх приложения для заметок; показывается по запросу пользователя" />
+        </service>
+
+        <!-- Виджет на главном экране: карточки на сегодня, серия, экзамен, быстрые действия. -->
+        <receiver
+            android:name=".study.StudyWidget"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_study" />
+        </receiver>
+
+        <receiver
+            android:name=".study.ReminderReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".study.AlarmReceiver"
+            android:exported="false" />
+
+        <!-- Будильник к первой паре. -->
+        <!-- directBootAware: будильник работает и до первой разблокировки после перезагрузки. -->
+        <receiver
+            android:name=".study.WakeReceiver"
+            android:directBootAware="true"
+            android:exported="false" />
+        <receiver
+            android:name=".study.WakeBootReceiver"
+            android:directBootAware="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name=".study.WakeService"
+            android:directBootAware="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <!-- Живое уведомление, режим «точно»: пока идут пары, обновляет его раз в минуту. -->
+        <service
+            android:name=".study.LiveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Живое уведомление учебного дня: отсчёт до конца пары и следующая пара, обновление раз в минуту по выбору пользователя" />
+        </service>
+        <!-- Учебная сирена: в 20:00 дня с парами, пока не решена задача дня. Работает и до разблокировки. -->
+        <receiver
+            android:name=".study.SirenReceiver"
+            android:directBootAware="true"
+            android:exported="false" />
+        <service
+            android:name=".study.SirenService"
+            android:directBootAware="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <activity
+            android:name=".ui.SirenActivity"
+            android:directBootAware="true"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:taskAffinity="app.nastavnik.siren"
+            android:turnScreenOn="true"
+            android:windowSoftInputMode="adjustResize" />
+        <!-- Учебный замок: предупреждение за 30 минут и начало вечером. -->
+        <receiver
+            android:name=".study.StudyLockReceiver"
+            android:exported="false" />
+        <!-- Защита: будильник (нельзя выключить телефон и удалить приложение) и учебный замок. -->
+        <service
+            android:name=".study.WakeGuard"
+            android:directBootAware="true"
+            android:exported="true"
+            android:label="@string/wake_guard_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/wake_guard" />
+        </service>
+        <activity
+            android:name=".ui.WakeActivity"
+            android:directBootAware="true"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:taskAffinity="app.nastavnik.wake"
+            android:turnScreenOn="true"
+            android:windowSoftInputMode="adjustResize" />
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

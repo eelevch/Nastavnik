@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- «Чернила, бумага и стекло»: тёплый фон, графитовый текст; цвет — только у смысла (ошибка, верно, теория) -->
+    <color name="paper">#F4F2EE</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="ink">#16161A</color>
+    <color name="accent">#16161A</color>
+
+    <!-- Тихая проверка: «всё верно» — кнопка коротко вспыхивает зелёным -->
+    <color name="kind_ok">#1F9D60</color>
+
+    <color name="text_main">#16161A</color>
+</resources>
