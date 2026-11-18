@@ -46,10 +46,10 @@ object TelegramMetrics {
 
     private val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(5, TimeUnit.SECONDS)
-            .readTimeout(5, TimeUnit.SECONDS)
-            .writeTimeout(5, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(false)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
             .build()
     }
 
@@ -159,8 +159,16 @@ object TelegramMetrics {
                 .build()
 
             httpClient.newCall(request).execute().use { response ->
-                response.isSuccessful
+                val ok = response.isSuccessful
+                if (!ok) {
+                    android.util.Log.w("TelegramMetrics", "Send failed: code=${response.code} body=${response.body?.string()}")
+                } else {
+                    android.util.Log.i("TelegramMetrics", "Send success!")
+                }
+                ok
             }
+        }.onFailure { e ->
+            android.util.Log.w("TelegramMetrics", "Send error: ${e.message}")
         }.getOrDefault(false)
     }
 }

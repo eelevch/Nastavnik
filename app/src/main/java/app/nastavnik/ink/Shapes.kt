@@ -247,6 +247,30 @@ object Selection {
         }
     }
 
+    /** Штрихи, которые хотя бы частично задеты лассо (любая точка внутри или рядом с контуром). */
+    fun strokesTouching(poly: FloatArray, strokes: List<Stroke>, reach: Float = 16f): List<Stroke> {
+        if (poly.size < 4) return emptyList()
+        val nPoly = poly.size / 2
+        return strokes.filter { s ->
+            for (i in 0 until s.size) {
+                if (inside(poly, s.x(i), s.y(i))) return@filter true
+            }
+            val b = s.bounds()
+            for (j in 0 until nPoly) {
+                val px = poly[j * 2]; val py = poly[j * 2 + 1]
+                if (px >= b[0] - reach && px <= b[2] + reach && py >= b[1] - reach && py <= b[3] + reach) {
+                    if (s.size == 1 && kotlin.math.hypot(s.x(0) - px, s.y(0) - py) <= reach + s.width / 2) return@filter true
+                    for (i in 0 until s.size - 1) {
+                        if (StrokeGeometry.segmentDistance(px, py, s.x(i), s.y(i), s.x(i + 1), s.y(i + 1)) <= reach + s.width / 2) {
+                            return@filter true
+                        }
+                    }
+                }
+            }
+            false
+        }
+    }
+
     /** Тексты, у которых внутри лассо середина. */
     fun textsIn(poly: FloatArray, texts: List<TextBox>): List<TextBox> {
         if (poly.size < 6) return emptyList()

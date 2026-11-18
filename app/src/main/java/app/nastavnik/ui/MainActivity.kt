@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import app.nastavnik.BuildConfig
 import app.nastavnik.R
 import app.nastavnik.data.AppSettings
+import app.nastavnik.data.TelegramMetrics
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -282,6 +283,7 @@ class MainActivity : ComponentActivity() {
         app.appScope.launch { app.grades.refresh(); app.grades.refreshLks() }
         // Доступ к «Не беспокоить» могли только что выдать в настройках системы.
         app.appScope.launch { runCatching { LessonQuiet.update(this@MainActivity) } }
+        TelegramMetrics.reportAppOpen(this)
     }
 
     override fun onStop() {
