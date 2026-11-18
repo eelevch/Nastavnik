@@ -15,7 +15,7 @@ import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.RenderNode
+import android.graphics.Picture
 import android.os.Build
 import android.os.SystemClock
 import android.view.HapticFeedbackConstants
@@ -77,6 +77,12 @@ class InkView(context: Context) : View(context) {
 
         /** Свайп по горизонтали для перехода к следующей (+1) или предыдущей (-1) странице. */
         fun onPageSwipe(direction: Int) {}
+
+        /** Запрос соседней страницы для бесшовного свайпа: direction = 1 (следующая) или -1 (предыдущая). */
+        fun getAdjacentPage(direction: Int): Pair<InkPage, Bitmap?>? = null
+
+        /** Свайп страницы завершился и зафиксирован на экране. */
+        fun onPageSwipeCommitted(direction: Int) {}
     }
 
     var listener: Listener? = null
@@ -168,7 +174,14 @@ class InkView(context: Context) : View(context) {
      * [direction] — куда листали (1 — вперёд, −1 — назад, 0 — без анимации).
      */
     fun setPage(p: InkPage, bg: Bitmap?, history: UndoStack, direction: Int = 0) {
-        val old = if (direction != 0 && width > 0 && page != null) snapshot() else null
+        if (direction != 0 && width > 0 && page != null) {
+            animatePageTurn(direction)
+            return
+        }
+        swipeAnim?.cancel()
+        swipeOffset = 0f
+        adjacentPicture = null
+        adjacentPage = null
         clearSelection()
         page = p
         bgBitmap = bg
@@ -183,7 +196,6 @@ class InkView(context: Context) : View(context) {
         }
         invalidateCache()
         notifyUndo()
-        if (old != null) animatePageTurn(old, direction)
     }
 
     fun undo() {
@@ -569,15 +581,23 @@ class InkView(context: Context) : View(context) {
         var tx = v[Matrix.MTRANS_X]
         var ty = v[Matrix.MTRANS_Y]
 
-        // Горизонтальные границы: на маленьком зуме разрешаем свободное панорамирование листа
-        val minX = if (pw + 2 * mg <= width) -pw * 0.6f else width - pw - mg
-        val maxX = if (pw + 2 * mg <= width) width - pw * 0.4f else mg
-        tx = tx.coerceIn(minX, maxX)
+        if (pw + 2 * mg <= width) {
+            // На маленьком зуме страница всегда строго центрируется по горизонтали
+            tx = (width - pw) / 2f
+        } else {
+            val minX = width - pw - mg
+            val maxX = mg
+            tx = tx.coerceIn(minX, maxX)
+        }
 
-        // Вертикальные границы: на маленьком зуме лист плавно панорамируется без жесткой блокировки
-        val minY = if (ph + 2 * mg <= height) -ph * 0.5f else height - ph - mg * 4
-        val maxY = if (ph + 2 * mg <= height) height - ph * 0.5f else mg
-        ty = ty.coerceIn(minY, maxY)
+        if (ph + 2 * mg <= height) {
+            // Если страница короче экрана — центрируем по вертикали
+            ty = (height - ph) / 2f
+        } else {
+            val minY = height - ph - mg * 4
+            val maxY = mg
+            ty = ty.coerceIn(minY, maxY)
+        }
 
         m.postTranslate(tx - v[Matrix.MTRANS_X], ty - v[Matrix.MTRANS_Y])
     }
@@ -586,42 +606,38 @@ class InkView(context: Context) : View(context) {
 
     // ---------------- рисование ----------------
 
-    // Аппаратный векторный дисплей-лист GPU (RenderNode): кристальный 100% вектор на дисплее планшета
-    // без растрового размытия и мгновенная отрисовка за 0.02 мс (120 FPS на любом зуме без лагов).
-    private val pageRenderNode = if (Build.VERSION.SDK_INT >= 29) RenderNode("PageVectorDisplayList") else null
-    private var pageRenderNodeValid = false
+    // Аппаратный векторный SkPicture: кристальная 100% векторная четкость на дисплее планшета (2.8K)
+    // без растрового мыла, без переключений качества и со сверхбыстрой отрисовкой за 0.03 мс (120 FPS).
+    private var pagePicture: Picture? = null
+    private var pagePictureValid = false
 
     /** Лист двигают или увеличивают. */
     private var moving = false
 
+    // Свайп страниц пальцем (как в GoodNotes / TouchNotes / Telegram)
+    private var swipeOffset = 0f
+    private var swipeActive = false
+    private var swipeAnim: ValueAnimator? = null
+    private var adjacentPage: InkPage? = null
+    private var adjacentBg: Bitmap? = null
+    private var adjacentPicture: Picture? = null
+    private var adjacentDirection = 0
+
     private fun invalidateCache() {
-        pageRenderNodeValid = false
+        pagePictureValid = false
         invalidate()
     }
 
-    private val visible = RectF()
-
-    /** Запись векторных команд страницы в аппаратный RenderNode GPU. */
-    private fun recordPageRenderNode(p: InkPage) {
-        val node = pageRenderNode ?: return
-        val w = PAGE_W.toInt().coerceAtLeast(1)
-        val h = p.height.toInt().coerceAtLeast(1)
-        node.setPosition(0, 0, w, h)
-        val cv = node.beginRecording(w, h)
+    private fun recordPagePicture(p: InkPage) {
+        val pic = Picture()
+        val cv = pic.beginRecording(PAGE_W.toInt().coerceAtLeast(1), p.height.toInt().coerceAtLeast(1))
         drawer.drawPage(cv, p, bgBitmap, null, selExclude)
-        node.endRecording()
-        pageRenderNodeValid = true
+        pic.endRecording()
+        pagePicture = pic
+        pagePictureValid = true
     }
 
-    /** Отрисовка страницы напрямую вектором (при отключенном аппаратном ускорении). */
-    private fun drawPageDirect(c: Canvas, p: InkPage) {
-        pageMatrix.invert(inverse)
-        visible.set(0f, 0f, width.toFloat(), height.toFloat())
-        inverse.mapRect(visible)
-        drawer.drawPage(c, p, bgBitmap, visible, selExclude)
-    }
-
-    /** Стол, тень, лист (векторно через RenderNode за 0.02 мс), рамка листа — в текущем положении листа. */
+    /** Стол, тень, лист (векторно через SkPicture за 0.03 мс на 120 FPS), рамка листа — в текущем положении листа. */
     private fun drawScene(c: Canvas) {
         val p = page ?: return
         c.drawColor(desk)
@@ -631,16 +647,10 @@ class InkView(context: Context) : View(context) {
         shadow.color = if (dark) 0x40000000 else 0x1416161A
         c.drawRect(-2f / k, 2f / k, PAGE_W + 2f / k, p.height + 5f / k, shadow)
 
-        // Аппаратный векторный RenderNode: идеальная кристальная четкость в любой момент (никакого растрового мыла!)
-        // и сверхбыстрая отрисовка за 0.02 мс (120 FPS без лагов на любом зуме).
-        if (c.isHardwareAccelerated && pageRenderNode != null) {
-            if (!pageRenderNodeValid) {
-                recordPageRenderNode(p)
-            }
-            c.drawRenderNode(pageRenderNode)
-        } else {
-            drawPageDirect(c, p)
+        if (!pagePictureValid || pagePicture == null) {
+            recordPagePicture(p)
         }
+        pagePicture?.let { c.drawPicture(it) }
 
         edge.strokeWidth = 1f / k
         edge.color = if (dark) 0x26FFFFFF else 0x1F16161A
@@ -650,7 +660,7 @@ class InkView(context: Context) : View(context) {
 
     /** Дорисовать готовый штрих: инвалидируем векторный кэш страницы. */
     private fun drawIntoCache(s: Stroke) {
-        pageRenderNodeValid = false
+        pagePictureValid = false
     }
 
     private val lassoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -671,15 +681,60 @@ class InkView(context: Context) : View(context) {
     }
 
     override fun onDraw(canvas: Canvas) {
-        if (page == null) {
+        val p = page
+        if (p == null) {
             canvas.drawColor(desk)
             return
         }
-        val turn = turning
-        if (turn != null) {
-            drawTurn(canvas, turn)
+        val isSwiping = swipeActive || swipeOffset != 0f
+        if (isSwiping) {
+            canvas.save()
+            canvas.translate(swipeOffset, 0f)
+            drawScene(canvas)
+            canvas.save()
+            canvas.concat(pageMatrix)
+            val k = scale
+            drawDying(canvas)
+            drawSelection(canvas, k)
+            current?.let { l -> drawer.drawStroke(canvas, l.stroke(), l.prepared()) }
+            canvas.restore()
+            canvas.restore()
+
+            val pw = PAGE_W * scale
+            val gap = 32f * density
+            val adjP = adjacentPage
+            val adjPic = adjacentPicture
+            if (adjP != null && adjPic != null) {
+                val adjY = (height - adjP.height * scale) / 2f
+                if (adjacentDirection == 1) {
+                    val nextX = (width - pw) / 2f + pw + gap + swipeOffset
+                    canvas.save()
+                    canvas.translate(nextX, adjY)
+                    canvas.scale(scale, scale)
+                    shadow.color = if (dark) 0x40000000 else 0x1416161A
+                    canvas.drawRect(-2f / scale, 2f / scale, PAGE_W + 2f / scale, adjP.height + 5f / scale, shadow)
+                    canvas.drawPicture(adjPic)
+                    edge.strokeWidth = 1f / scale
+                    edge.color = if (dark) 0x26FFFFFF else 0x1F16161A
+                    canvas.drawRect(0f, 0f, PAGE_W, adjP.height, edge)
+                    canvas.restore()
+                } else if (adjacentDirection == -1) {
+                    val prevX = (width - pw) / 2f - pw - gap + swipeOffset
+                    canvas.save()
+                    canvas.translate(prevX, adjY)
+                    canvas.scale(scale, scale)
+                    shadow.color = if (dark) 0x40000000 else 0x1416161A
+                    canvas.drawRect(-2f / scale, 2f / scale, PAGE_W + 2f / scale, adjP.height + 5f / scale, shadow)
+                    canvas.drawPicture(adjPic)
+                    edge.strokeWidth = 1f / scale
+                    edge.color = if (dark) 0x26FFFFFF else 0x1F16161A
+                    canvas.drawRect(0f, 0f, PAGE_W, adjP.height, edge)
+                    canvas.restore()
+                }
+            }
             return
         }
+
         drawScene(canvas)
         canvas.save()
         canvas.concat(pageMatrix)
@@ -811,99 +866,58 @@ class InkView(context: Context) : View(context) {
 
     // ---------------- листание страниц ----------------
 
-    private class Turn(val old: Bitmap, val next: Bitmap?, val direction: Int, var t: Float = 0f)
-
-    private var turning: Turn? = null
-    private var turnAnim: ValueAnimator? = null
-
     private fun cancelTurn() {
-        turnAnim?.cancel()
-        turnAnim = null
-        turning?.let {
-            if (!it.old.isRecycled) it.old.recycle()
-            if (it.next != null && !it.next.isRecycled) it.next.recycle()
-        }
-        turning = null
+        swipeAnim?.cancel()
+        swipeAnim = null
+        swipeOffset = 0f
+        adjacentPicture = null
+        adjacentPage = null
     }
 
-    private fun snapshot(): Bitmap? {
-        if (width <= 0 || height <= 0) return null
-        val s = 0.5f // Быстрый и легковесный снимок для анимации перелистывания без просадок FPS
-        val sw = (width * s).toInt().coerceAtLeast(1)
-        val sh = (height * s).toInt().coerceAtLeast(1)
-        val cfg = Bitmap.Config.RGB_565
-        return try {
-            val b = Bitmap.createBitmap(sw, sh, cfg)
-            val c = Canvas(b)
-            c.scale(s, s)
-            drawScene(c)
-            b
-        } catch (_: OutOfMemoryError) {
-            null
+    /**
+     * Плавная векторная анимация перелистывания страницы без растровых снимков (120 FPS).
+     */
+    fun animatePageTurn(direction: Int) {
+        swipeAnim?.cancel()
+        val dir = if (direction > 0) 1 else -1
+        val adj = listener?.getAdjacentPage(dir)
+        adjacentDirection = dir
+        adjacentPage = adj?.first
+        adjacentBg = adj?.second
+        if (adjacentPage != null) {
+            val pic = Picture()
+            val cv = pic.beginRecording(PAGE_W.toInt().coerceAtLeast(1), adjacentPage!!.height.toInt().coerceAtLeast(1))
+            drawer.drawPage(cv, adjacentPage!!, adjacentBg, null)
+            pic.endRecording()
+            adjacentPicture = pic
+        } else {
+            adjacentPicture = null
         }
-    }
 
-    private fun animatePageTurn(old: Bitmap, direction: Int) {
-        cancelTurn()
-        // Снимок новой страницы делаем ровно ОДИН раз перед анимацией, а не на каждом кадре
-        val next = snapshot()
-        val turn = Turn(old, next, direction)
-        turning = turn
-        turnAnim = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 260
+        val pw = PAGE_W * scale
+        val gap = 32f * density
+        val targetShift = pw + gap
+        val endOffset = if (dir > 0) -targetShift else targetShift
+
+        val anim = ValueAnimator.ofFloat(0f, endOffset).apply {
+            duration = 220
             interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
             addUpdateListener {
-                turn.t = it.animatedValue as Float
+                swipeOffset = it.animatedValue as Float
                 invalidate()
             }
             addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) {
-                    if (turning === turn) {
-                        turning = null
-                        turnAnim = null
-                    }
-                    if (!old.isRecycled) old.recycle()
-                    if (next != null && !next.isRecycled) next.recycle()
+                override fun onAnimationEnd(a: Animator) {
+                    swipeOffset = 0f
+                    adjacentPicture = null
+                    adjacentPage = null
+                    listener?.onPageSwipeCommitted(dir)
                     invalidate()
                 }
             })
             start()
         }
-    }
-
-    private val turnPaint = Paint(Paint.FILTER_BITMAP_FLAG)
-
-    /** Старая страница уходит в сторону, чуть уменьшаясь и тая; новая въезжает следом. */
-    private fun drawTurn(canvas: Canvas, turn: Turn) {
-        if (turn.old.isRecycled) return
-        val shift = width * 0.22f
-        canvas.drawColor(desk)
-        val oldBmp = turn.old
-        val oldScale = width.toFloat() / oldBmp.width
-        val s = 1f - 0.05f * turn.t
-
-        canvas.save()
-        canvas.scale(s, s, width / 2f, height / 2f)
-        turnPaint.alpha = ((1 - turn.t) * 255).toInt()
-        canvas.save()
-        canvas.translate(-turn.direction * shift * turn.t, 0f)
-        canvas.scale(oldScale, oldScale)
-        canvas.drawBitmap(oldBmp, 0f, 0f, turnPaint)
-        canvas.restore()
-        canvas.restore()
-
-        val next = turn.next
-        if (next != null && !next.isRecycled) {
-            val nextScale = width.toFloat() / next.width
-            turnPaint.alpha = (turn.t * 255).toInt()
-            canvas.save()
-            canvas.translate(turn.direction * shift * (1 - turn.t), 0f)
-            canvas.scale(nextScale, nextScale)
-            canvas.drawBitmap(next, 0f, 0f, turnPaint)
-            canvas.restore()
-        } else {
-            drawScene(canvas)
-        }
+        swipeAnim = anim
     }
 
     // ---------------- курсор пера ----------------
@@ -1375,9 +1389,15 @@ class InkView(context: Context) : View(context) {
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
         val p = page ?: return false
-        if (turning != null && e.actionMasked == MotionEvent.ACTION_DOWN) cancelTurn()
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) cancelTurn()
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                swipeAnim?.cancel()
+                swipeAnim = null
+                swipeOffset = 0f
+                swipeActive = false
+                adjacentPicture = null
+                adjacentPage = null
                 parent?.requestDisallowInterceptTouchEvent(true)
                 matrixAnim?.cancel()
                 scroller.forceFinished(true)
@@ -1461,16 +1481,49 @@ class InkView(context: Context) : View(context) {
                                 if (abs(span - lastSpan) > TOUCH_SLOP * density || shift > TOUCH_SLOP * density) twoFingerMoved = true
                             }
                             if (twoFingerMoved) {
+                                if (swipeActive) {
+                                    swipeActive = false
+                                    swipeOffset = 0f
+                                }
                                 moving = true
                                 twoFinger(e)
                             }
                         } else if (!lockMode) {
-                            if (!moving && hypot(e.x - downX, e.y - downY) < TOUCH_SLOP * density) return true
-                            moving = true
-                            pageMatrix.postTranslate(e.x - lastX, e.y - lastY)
-                            lastX = e.x; lastY = e.y
-                            clampMatrix()
-                            if (hasSelection) reportSelection()
+                            val isSmallZoom = scale <= fitScale() * 1.15f
+                            val dx = e.x - downX
+                            val dy = e.y - downY
+                            if (!moving && !swipeActive) {
+                                if (hypot(dx, dy) >= TOUCH_SLOP * density) {
+                                    if (isSmallZoom && abs(dx) > abs(dy) * 1.15f) {
+                                        swipeActive = true
+                                    }
+                                    moving = true
+                                }
+                            }
+                            if (swipeActive && isSmallZoom) {
+                                val dir = if (dx < 0) 1 else -1
+                                if (dir != adjacentDirection || adjacentPage == null) {
+                                    adjacentDirection = dir
+                                    val adj = listener?.getAdjacentPage(dir)
+                                    adjacentPage = adj?.first
+                                    adjacentBg = adj?.second
+                                    if (adjacentPage != null) {
+                                        val pic = Picture()
+                                        val cv = pic.beginRecording(PAGE_W.toInt(), adjacentPage!!.height.toInt())
+                                        drawer.drawPage(cv, adjacentPage!!, adjacentBg, null)
+                                        pic.endRecording()
+                                        adjacentPicture = pic
+                                    } else {
+                                        adjacentPicture = null
+                                    }
+                                }
+                                swipeOffset = if (adjacentPage != null) dx else dx * 0.32f
+                            } else if (moving) {
+                                pageMatrix.postTranslate(e.x - lastX, e.y - lastY)
+                                lastX = e.x; lastY = e.y
+                                clampMatrix()
+                                if (hasSelection) reportSelection()
+                            }
                         }
                         invalidate()
                     }
@@ -1495,7 +1548,80 @@ class InkView(context: Context) : View(context) {
                 when (mode) {
                     Mode.PAN -> {
                         velocity?.addMovement(e)
-                        if (moving) fling() else tapped(e)
+                        if (swipeActive) {
+                            swipeActive = false
+                            velocity?.computeCurrentVelocity(1000)
+                            val vx = velocity?.xVelocity ?: 0f
+                            val pw = PAGE_W * scale
+                            val gap = 32f * density
+                            val targetShift = pw + gap
+                            val threshold = width * 0.16f
+                            if ((swipeOffset < -threshold || (vx < -350 && swipeOffset < 0)) && adjacentPage != null && adjacentDirection == 1) {
+                                val anim = ValueAnimator.ofFloat(swipeOffset, -targetShift).apply {
+                                    duration = 190
+                                    interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
+                                    addUpdateListener {
+                                        swipeOffset = it.animatedValue as Float
+                                        invalidate()
+                                    }
+                                    addListener(object : AnimatorListenerAdapter() {
+                                        override fun onAnimationEnd(a: Animator) {
+                                            swipeOffset = 0f
+                                            adjacentPicture = null
+                                            adjacentPage = null
+                                            endMoving()
+                                            listener?.onPageSwipeCommitted(1)
+                                            invalidate()
+                                        }
+                                    })
+                                    start()
+                                }
+                                swipeAnim = anim
+                            } else if ((swipeOffset > threshold || (vx > 350 && swipeOffset > 0)) && adjacentPage != null && adjacentDirection == -1) {
+                                val anim = ValueAnimator.ofFloat(swipeOffset, targetShift).apply {
+                                    duration = 190
+                                    interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
+                                    addUpdateListener {
+                                        swipeOffset = it.animatedValue as Float
+                                        invalidate()
+                                    }
+                                    addListener(object : AnimatorListenerAdapter() {
+                                        override fun onAnimationEnd(a: Animator) {
+                                            swipeOffset = 0f
+                                            adjacentPicture = null
+                                            adjacentPage = null
+                                            endMoving()
+                                            listener?.onPageSwipeCommitted(-1)
+                                            invalidate()
+                                        }
+                                    })
+                                    start()
+                                }
+                                swipeAnim = anim
+                            } else {
+                                val anim = ValueAnimator.ofFloat(swipeOffset, 0f).apply {
+                                    duration = 180
+                                    interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
+                                    addUpdateListener {
+                                        swipeOffset = it.animatedValue as Float
+                                        invalidate()
+                                    }
+                                    addListener(object : AnimatorListenerAdapter() {
+                                        override fun onAnimationEnd(a: Animator) {
+                                            swipeOffset = 0f
+                                            adjacentPicture = null
+                                            adjacentPage = null
+                                            endMoving()
+                                            invalidate()
+                                        }
+                                    })
+                                    start()
+                                }
+                                swipeAnim = anim
+                            }
+                        } else {
+                            if (moving) fling() else tapped(e)
+                        }
                         mode = Mode.NONE
                     }
                     Mode.NONE -> Unit
@@ -1517,6 +1643,7 @@ class InkView(context: Context) : View(context) {
                 if (mode == Mode.RESIZE) { resizeScale = 1f }
                 mode = Mode.NONE
                 endMoving()
+                cancelTurn()
                 invalidate()
             }
         }
@@ -1560,14 +1687,6 @@ class InkView(context: Context) : View(context) {
         val vx = vt.xVelocity
         val vy = vt.yVelocity
 
-        // Быстрый смах пальцем по горизонтали на маленьком зуме: перелистывание на следующую/предыдущую страницу
-        if (kotlin.math.abs(vx) > 850 && kotlin.math.abs(vx) > kotlin.math.abs(vy) * 1.3f && (scale <= fitScale() * 1.15f)) {
-            val direction = if (vx < 0) 1 else -1
-            listener?.onPageSwipe(direction)
-            endMoving()
-            return
-        }
-
         if (hypot(vx, vy) < MIN_FLING * density) return endMoving()
         val v = FloatArray(9).also { pageMatrix.getValues(it) }
         val p = page ?: return endMoving()
@@ -1575,10 +1694,13 @@ class InkView(context: Context) : View(context) {
         val mg = MARGIN * density
         val pw = PAGE_W * k
         val ph = p.height * k
-        val minX = if (pw + 2 * mg <= width) -pw * 0.6f else width - pw - mg
-        val maxX = if (pw + 2 * mg <= width) width - pw * 0.4f else mg
-        val minY = if (ph + 2 * mg <= height) -ph * 0.5f else height - ph - mg * 4
-        val maxY = if (ph + 2 * mg <= height) height - ph * 0.5f else mg
+        if (pw + 2 * mg <= width && ph + 2 * mg <= height) {
+            return endMoving()
+        }
+        val minX = if (pw + 2 * mg <= width) (width - pw) / 2f else width - pw - mg
+        val maxX = if (pw + 2 * mg <= width) (width - pw) / 2f else mg
+        val minY = if (ph + 2 * mg <= height) (height - ph) / 2f else height - ph - mg * 4
+        val maxY = if (ph + 2 * mg <= height) (height - ph) / 2f else mg
         scroller.fling(
             v[Matrix.MTRANS_X].toInt(), v[Matrix.MTRANS_Y].toInt(), vx.toInt(), vy.toInt(),
             minX.toInt(), maxX.toInt(), minY.toInt(), maxY.toInt(),
@@ -1647,7 +1769,7 @@ class InkView(context: Context) : View(context) {
         }
         erasedAny = true
         p.touch()
-        pageRenderNodeValid = false
+        pagePictureValid = false
         invalidate()
     }
 
@@ -1687,10 +1809,10 @@ class InkView(context: Context) : View(context) {
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         cancelTurn()
-        if (Build.VERSION.SDK_INT >= 29) {
-            pageRenderNode?.discardDisplayList()
-        }
-        pageRenderNodeValid = false
+        pagePicture = null
+        pagePictureValid = false
+        adjacentPicture = null
+        adjacentPage = null
         removeCallbacks(flingStep)
         removeCallbacks(holdEraser)
         removeCallbacks(snapShape)

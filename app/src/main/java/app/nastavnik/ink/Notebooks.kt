@@ -39,6 +39,17 @@ class Notebooks(private val context: Context) {
     fun defaultTitle(now: Long = System.currentTimeMillis()): String =
         "Тетрадь · " + SimpleDateFormat("d MMMM", Locale("ru")).format(Date(now))
 
+    /** Быстрое получение уже декодированной подложки из кэша памяти без блокировки UI-потока. */
+    fun cachedBackground(
+        notebookId: Long,
+        page: InkPage,
+        maxSide: Int = DeviceProfile.optimalImageSide(isWeakDevice)
+    ): Bitmap? {
+        val name = page.background ?: return null
+        val key = "$notebookId/$name/$maxSide"
+        return bgCache.get(key)
+    }
+
     /** Подложка страницы (фото или страница PDF), не больше [maxSide] пикселей по длинной стороне. */
     suspend fun background(
         notebookId: Long,

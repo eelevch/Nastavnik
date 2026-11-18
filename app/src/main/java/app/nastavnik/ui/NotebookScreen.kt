@@ -14,6 +14,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -145,10 +146,6 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
         ctl.load()
         // Первый раз — коротко, как устроен лист.
         if (!context.app.settings.editorTipsShown()) tips = true
-        // Прогреваем движок WebView (им рисуются формулы в подсказках): первый запуск долгий,
-        // пусть он случится сейчас, а не в момент, когда пришёл ответ наставника.
-        delay(600)
-        runCatching { android.webkit.WebView(context).destroy() }
     }
     DisposableEffect(ctl) { onDispose { ctl.close() } }
     val close = {
@@ -196,8 +193,7 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                 Box(
                     Modifier
                         .fillMaxSize()
-                        .padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
-                        .clip(RoundedCornerShape(24.dp)),
+                        .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
                 ) {
                     AndroidView(
                         factory = { ctx ->
@@ -235,16 +231,22 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                         exit = fadeOut(),
                     ) { CircularProgressIndicator(color = Brand.Accent) }
                 }
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = panel && wide,
-                    modifier = Modifier.align(Alignment.CenterEnd),
-                    enter = slideInHorizontally(animationSpec = tween(220, easing = FastOutSlowInEasing)) { fullWidth -> fullWidth } + fadeIn(tween(180)),
-                    exit = slideOutHorizontally(animationSpec = tween(180, easing = FastOutSlowInEasing)) { fullWidth -> fullWidth } + fadeOut(tween(140)),
-                ) {
+                val panelSlide by animateFloatAsState(
+                    targetValue = if (panel && wide) 1f else 0f,
+                    animationSpec = tween(230, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)),
+                    label = "panelSlide",
+                )
+                if (panelSlide > 0.001f) {
+                    val fullPanelWidth = effectivePanelWidth.dp + 16.dp
                     Row(
                         Modifier
+                            .align(Alignment.CenterEnd)
                             .fillMaxHeight()
-                            .requiredWidth(effectivePanelWidth.dp + 16.dp)
+                            .requiredWidth(fullPanelWidth)
+                            .graphicsLayer {
+                                translationX = (1f - panelSlide) * fullPanelWidth.toPx()
+                                alpha = panelSlide.coerceIn(0f, 1f)
+                            },
                     ) {
                         PanelSplitter(
                             onDragDeltaDp = { deltaDp ->
@@ -266,23 +268,33 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                 }
             }
         }
-        androidx.compose.animation.AnimatedVisibility(
-            visible = panel && !wide,
-            modifier = Modifier.align(Alignment.BottomCenter),
-            enter = slideInVertically(tween(240, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(200)),
-            exit = slideOutVertically(tween(240, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(180)),
-        ) {
-            MentorPanel(
-                ctl = ctl,
-                onClose = { panel = false },
-                onCleanReady = onCleanReady,
-                onSettings = onSettings,
-                modifier = Modifier
+        val panelBottomSlide by animateFloatAsState(
+            targetValue = if (panel && !wide) 1f else 0f,
+            animationSpec = tween(230, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)),
+            label = "panelBottomSlide",
+        )
+        if (panelBottomSlide > 0.001f) {
+            val panelHeight = (LocalConfiguration.current.screenHeightDp * 0.65f).dp
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .height((LocalConfiguration.current.screenHeightDp * 0.65f).dp)
+                    .height(panelHeight)
                     .padding(12.dp)
-                    .imePadding(),
-            )
+                    .imePadding()
+                    .graphicsLayer {
+                        translationY = (1f - panelBottomSlide) * panelHeight.toPx()
+                        alpha = panelBottomSlide.coerceIn(0f, 1f)
+                    },
+            ) {
+                MentorPanel(
+                    ctl = ctl,
+                    onClose = { panel = false },
+                    onCleanReady = onCleanReady,
+                    onSettings = onSettings,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
     }
 }

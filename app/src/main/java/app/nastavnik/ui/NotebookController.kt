@@ -248,11 +248,11 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         loaded = true
     }
 
-    fun showPage(i: Int) {
+    fun showPage(i: Int, animate: Boolean = true) {
         val p = pages.getOrNull(i) ?: return
         flushSave()
         // Листаем с анимацией: вперёд — новая страница въезжает справа.
-        val direction = if (!loaded || i == index) 0 else if (i > index) 1 else -1
+        val direction = if (!loaded || i == index || !animate) 0 else if (i > index) 1 else -1
         index = i
         val stack = undos.getOrPut(p.id) { UndoStack() }
         scope.launch {
@@ -261,6 +261,9 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
                 ink.setPage(p, bg, stack, direction)
                 refreshMarks()
             }
+            // Предзагрузка соседних страниц для мгновенного свайпа
+            pages.getOrNull(index - 1)?.let { nbs.background(notebookId, it) }
+            pages.getOrNull(index + 1)?.let { nbs.background(notebookId, it) }
         }
     }
 
@@ -584,10 +587,24 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         scheduleAutoCheck()
     }
 
+    override fun getAdjacentPage(direction: Int): Pair<InkPage, Bitmap?>? {
+        val target = index + direction
+        val p = pages.getOrNull(target) ?: return null
+        val bg = nbs.cachedBackground(notebookId, p)
+        return p to bg
+    }
+
     override fun onPageSwipe(direction: Int) {
         val target = index + direction
         if (target in 0..pages.lastIndex) {
-            showPage(target)
+            showPage(target, animate = true)
+        }
+    }
+
+    override fun onPageSwipeCommitted(direction: Int) {
+        val target = index + direction
+        if (target in 0..pages.lastIndex) {
+            showPage(target, animate = false)
         }
     }
 
