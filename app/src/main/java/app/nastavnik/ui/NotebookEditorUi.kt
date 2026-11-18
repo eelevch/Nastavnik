@@ -259,10 +259,10 @@ fun TopToolBar(ctl: NotebookController, modifier: Modifier = Modifier) {
     var openSettings by remember { mutableStateOf(false) }
     Row(
         modifier = modifier
-            .glass(CircleShape, 4.dp, strong = true)
-            .padding(horizontal = 4.dp, vertical = 2.dp),
+            .glass(CircleShape, 6.dp, strong = true)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         val shown = if (ctl.tempEraser) EditTool.ERASER else ctl.editTool
         TOOLS.forEach { spec ->
@@ -271,7 +271,7 @@ fun TopToolBar(ctl: NotebookController, modifier: Modifier = Modifier) {
             val bg = if (on) Brand.Accent.copy(alpha = 0.15f) else Color.Transparent
             Box(
                 Modifier
-                    .size(34.dp)
+                    .size(32.dp)
                     .clip(CircleShape)
                     .background(bg)
                     .clickable {
@@ -280,7 +280,7 @@ fun TopToolBar(ctl: NotebookController, modifier: Modifier = Modifier) {
                     .semantics { contentDescription = spec.label },
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(painterResource(spec.icon), contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+                Icon(painterResource(spec.icon), contentDescription = null, tint = tint, modifier = Modifier.size(17.dp))
             }
         }
         // Точка цвета выбранного инструмента
@@ -291,7 +291,7 @@ fun TopToolBar(ctl: NotebookController, modifier: Modifier = Modifier) {
         }
         Box(
             Modifier
-                .size(24.dp)
+                .size(22.dp)
                 .clip(CircleShape)
                 .background(activeColor)
                 .border(1.dp, Brand.Line, CircleShape)
@@ -301,7 +301,7 @@ fun TopToolBar(ctl: NotebookController, modifier: Modifier = Modifier) {
         // Кнопка возврата кистей на боковую плашку
         Box(
             Modifier
-                .size(30.dp)
+                .size(28.dp)
                 .clip(CircleShape)
                 .clickable { ctl.toggleToolBarPosition() }
                 .semantics { contentDescription = "Перенести кисти сбоку" },

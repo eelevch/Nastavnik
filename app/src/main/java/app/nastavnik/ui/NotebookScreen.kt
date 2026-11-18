@@ -65,6 +65,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -185,11 +186,15 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
             .background(Color(desk))
             .systemBarsPadding(),
     ) {
-        Row(Modifier.fillMaxSize()) {
-            Column(Modifier.weight(1f).fillMaxHeight()) {
-                if (!isFullScreen) {
-                    NotebookTopBar(ctl, panel, onBack = close, onTogglePanel = { panel = !panel }, onPages = { pagesOpen = true }, importers = importers)
-                }
+        Column(Modifier.fillMaxSize()) {
+            if (!isFullScreen) {
+                NotebookTopBar(ctl, panel, onBack = close, onTogglePanel = { panel = !panel }, onPages = { pagesOpen = true }, importers = importers)
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+            ) {
                 BoxWithConstraints(
                     Modifier
                         .weight(1f)
@@ -285,37 +290,37 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                         exit = fadeOut(),
                     ) { CircularProgressIndicator(color = Brand.Accent) }
                 }
-            }
-            androidx.compose.animation.AnimatedVisibility(
-                visible = panel && wide,
-                enter = expandHorizontally(expandFrom = Alignment.Start, animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f)) + fadeIn(tween(240, delayMillis = 60)),
-                exit = shrinkHorizontally(shrinkTowards = Alignment.Start, animationSpec = spring(dampingRatio = 0.88f, stiffness = 480f)) + fadeOut(tween(160)),
-            ) {
-                Row(Modifier.fillMaxHeight()) {
-                    PanelSplitter(
-                        onDragDeltaDp = { deltaDp ->
-                            panelWidthDp = (panelWidthDp - deltaDp).coerceIn(minPanelWidthDp, maxPanelWidthDp)
-                        },
-                    )
-                    MentorPanel(
-                        ctl = ctl,
-                        onClose = { panel = false },
-                        onCleanReady = onCleanReady,
-                        onSettings = onSettings,
-                        modifier = Modifier
-                            .width(effectivePanelWidth.dp)
-                            .fillMaxHeight()
-                            .padding(top = 12.dp, end = 12.dp, bottom = 12.dp)
-                            .imePadding(),
-                    )
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = panel && wide,
+                    enter = expandHorizontally(expandFrom = Alignment.Start, animationSpec = tween(220, easing = FastOutSlowInEasing)) + fadeIn(tween(180)),
+                    exit = shrinkHorizontally(shrinkTowards = Alignment.Start, animationSpec = tween(180, easing = FastOutSlowInEasing)) + fadeOut(tween(140)),
+                ) {
+                    Row(Modifier.fillMaxHeight()) {
+                        PanelSplitter(
+                            onDragDeltaDp = { deltaDp ->
+                                panelWidthDp = (panelWidthDp - deltaDp).coerceIn(minPanelWidthDp, maxPanelWidthDp)
+                            },
+                        )
+                        MentorPanel(
+                            ctl = ctl,
+                            onClose = { panel = false },
+                            onCleanReady = onCleanReady,
+                            onSettings = onSettings,
+                            modifier = Modifier
+                                .width(effectivePanelWidth.dp)
+                                .fillMaxHeight()
+                                .padding(top = 0.dp, end = 12.dp, bottom = 12.dp)
+                                .imePadding(),
+                        )
+                    }
                 }
             }
         }
         androidx.compose.animation.AnimatedVisibility(
             visible = panel && !wide,
             modifier = Modifier.align(Alignment.BottomCenter),
-            enter = slideInVertically(spring(dampingRatio = 0.82f, stiffness = 420f)) { it } + fadeIn(),
-            exit = slideOutVertically(tween(240, easing = FastOutSlowInEasing)) { it } + fadeOut(),
+            enter = slideInVertically(tween(240, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(200)),
+            exit = slideOutVertically(tween(240, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(180)),
         ) {
             MentorPanel(
                 ctl = ctl,
@@ -416,21 +421,21 @@ private fun NotebookTopBar(
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 8.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        RoundIconButton(R.drawable.ic_arrow_back, "Назад", onBack)
+        BarButton(R.drawable.ic_arrow_back, "Назад", onClick = onBack)
         Text(
             meta?.title ?: "Тетрадь",
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.titleMedium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
-                .weight(1f, fill = !ctl.toolBarTop)
-                .clip(RoundedCornerShape(10.dp))
+                .then(if (ctl.toolBarTop) Modifier.widthIn(max = 160.dp) else Modifier.weight(1f))
+                .clip(RoundedCornerShape(8.dp))
                 .clickable { renaming = true }
-                .padding(horizontal = 6.dp, vertical = 4.dp),
+                .padding(horizontal = 4.dp, vertical = 2.dp),
         )
         val subj = meta?.subject?.trim().orEmpty()
         if (subj.isNotEmpty()) {
@@ -447,34 +452,23 @@ private fun NotebookTopBar(
                     .padding(horizontal = 6.dp, vertical = 2.dp),
             )
         }
-        // Кисти перенесены наверх — компактный ряд инструментов прямо в строке названия
+        // Кисти перенесены наверх — полный, не сжатый горизонтальный ряд инструментов по центру
         if (ctl.toolBarTop) {
-            TopToolBar(ctl, Modifier.weight(1f))
+            Spacer(Modifier.weight(1f))
+            TopToolBar(ctl)
+            Spacer(Modifier.weight(1f))
         }
         // Страницы: стрелки, номер и кнопка быстрого удаления страницы
         Row(
-            Modifier.glass(CircleShape, 4.dp, strong = true).padding(horizontal = 4.dp),
+            Modifier.glass(CircleShape, 4.dp, strong = true).padding(horizontal = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             BarIcon(R.drawable.ic_chevron_left, "Предыдущая страница", enabled = ctl.index > 0) { ctl.showPage(ctl.index - 1) }
-            Box(
-                Modifier
-                    .clip(CircleShape)
-                    .clickable(onClick = onPages)
-                    .semantics { contentDescription = "Все страницы" }
-                    .padding(horizontal = 6.dp, vertical = 8.dp),
-            ) {
-                AnimatedContent(
-                    targetState = ctl.index,
-                    transitionSpec = {
-                        val dir = if (targetState > initialState) 1 else -1
-                        (slideInVertically { h -> h * dir } + fadeIn()) togetherWith (slideOutVertically { h -> -h * dir } + fadeOut())
-                    },
-                    label = "page",
-                ) { i ->
-                    Text("${i + 1} / ${ctl.pages.size.coerceAtLeast(1)}", style = MaterialTheme.typography.labelLarge)
-                }
-            }
+            Text(
+                "${ctl.index + 1} / ${ctl.pages.size.coerceAtLeast(1)}",
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.clickable(onClick = onPages).padding(horizontal = 4.dp),
+            )
             BarIcon(R.drawable.ic_chevron, "Следующая страница", enabled = ctl.index < ctl.pages.lastIndex) { ctl.showPage(ctl.index + 1) }
             if (ctl.pages.size > 1) {
                 BarIcon(R.drawable.ic_trash, "Удалить страницу") { deletePageConfirm = true }
@@ -619,13 +613,13 @@ private fun BarButton(icon: Int, description: String, enabled: Boolean = true, a
     }
     Box(
         Modifier
-            .size(44.dp)
+            .size(34.dp)
             .then(if (active) Modifier.clip(CircleShape).background(Brand.Accent) else Modifier.glass(CircleShape, 4.dp, strong = true))
             .clickable(enabled = enabled, onClick = onClick)
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(painterResource(icon), contentDescription = null, tint = tint, modifier = Modifier.size(21.dp))
+        Icon(painterResource(icon), contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -633,13 +627,13 @@ private fun BarButton(icon: Int, description: String, enabled: Boolean = true, a
 private fun BarIcon(icon: Int, description: String, enabled: Boolean = true, onClick: () -> Unit) {
     Box(
         Modifier
-            .size(38.dp)
+            .size(28.dp)
             .clip(CircleShape)
             .clickable(enabled = enabled, onClick = onClick)
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(painterResource(icon), contentDescription = null, tint = if (enabled) Brand.Ink else Brand.Ink.copy(alpha = 0.25f), modifier = Modifier.size(20.dp))
+        Icon(painterResource(icon), contentDescription = null, tint = if (enabled) Brand.Ink else Brand.Ink.copy(alpha = 0.25f), modifier = Modifier.size(16.dp))
     }
 }
 
