@@ -123,8 +123,10 @@ import app.nastavnik.session.AskKind
 import app.nastavnik.study.ruPlural
 import app.nastavnik.study.TrainResult
 import app.nastavnik.study.PracticeTask
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Тетрадь: пишешь стилусом прямо в приложении, а наставник рядом — в панели справа. Его заметки не закрывают
@@ -239,13 +241,6 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             BarIcon(R.drawable.ic_shrink, "Свернуть полноэкранный режим") { ctl.toggleFullScreen() }
-                            Text(
-                                ctl.meta?.title ?: "Тетрадь",
-                                style = MaterialTheme.typography.labelLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(horizontal = 6.dp),
-                            )
                             BarIcon(R.drawable.ic_chevron_left, "Предыдущая страница", enabled = ctl.index > 0) { ctl.showPage(ctl.index - 1) }
                             Text("${ctl.index + 1} / ${ctl.pages.size.coerceAtLeast(1)}", style = MaterialTheme.typography.labelMedium)
                             BarIcon(R.drawable.ic_chevron, "Следующая страница", enabled = ctl.index < ctl.pages.lastIndex) { ctl.showPage(ctl.index + 1) }
@@ -402,11 +397,19 @@ private fun NotebookTopBar(
     importers: Importers,
 ) {
     var renaming by remember { mutableStateOf(false) }
+    var choosingSubject by remember { mutableStateOf(false) }
     var addMenu by remember { mutableStateOf(false) }
     var moreMenu by remember { mutableStateOf(false) }
     var paperDialog by remember { mutableStateOf(false) }
     var examDialog by remember { mutableStateOf(false) }
     var deletePageConfirm by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    var existingSubjects by remember { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            existingSubjects = context.app.notebooks.store.list().map { it.subject.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
+        }
+    }
     if (paperDialog) PaperDialog(ctl) { paperDialog = false }
     if (examDialog) ExamDialog(onStart = { m -> examDialog = false; ctl.startExam(m) }, onDismiss = { examDialog = false })
     val meta = ctl.meta
@@ -429,6 +432,21 @@ private fun NotebookTopBar(
                 .clickable { renaming = true }
                 .padding(horizontal = 6.dp, vertical = 4.dp),
         )
+        val subj = meta?.subject?.trim().orEmpty()
+        if (subj.isNotEmpty()) {
+            Text(
+                subj,
+                style = MaterialTheme.typography.labelSmall,
+                color = Brand.Accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Brand.Accent.copy(alpha = 0.12f))
+                    .clickable { choosingSubject = true }
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+        }
         // Кисти перенесены наверх — компактный ряд инструментов прямо в строке названия
         if (ctl.toolBarTop) {
             TopToolBar(ctl, Modifier.weight(1f))
@@ -495,6 +513,7 @@ private fun NotebookTopBar(
                 MenuItem("Контрольная на время…", R.drawable.ic_timer) { moreMenu = false; examDialog = true }
                 MenuItem((if (ctl.autoCheck) "✓ " else "") + "Проверять, когда остановлюсь", R.drawable.ic_eye) { moreMenu = false; ctl.toggleAutoCheck() }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                MenuItem(if (subj.isNotEmpty()) "Группа: $subj" else "Добавить в группу…", R.drawable.ic_panel) { moreMenu = false; choosingSubject = true }
                 MenuItem("Переименовать", R.drawable.ic_pen) { moreMenu = false; renaming = true }
                 if (ctl.pages.size > 1) {
                     MenuItem("Удалить текущую страницу", R.drawable.ic_trash) { moreMenu = false; deletePageConfirm = true }
@@ -534,6 +553,47 @@ private fun NotebookTopBar(
             text = { AppTextField(text, { text = it }, "Например: Матанализ, пределы") },
             confirmButton = { InkButton("Сохранить") { ctl.rename(text); renaming = false } },
             dismissButton = { SoftButton("Отмена") { renaming = false } },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(28.dp),
+        )
+    }
+    if (choosingSubject && meta != null) {
+        var subjectText by remember { mutableStateOf(meta.subject) }
+        AlertDialog(
+            onDismissRequest = { choosingSubject = false },
+            title = { Text("Группа конспекта") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Выберите существующую группу или введите новую:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (existingSubjects.isNotEmpty()) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            ChipButton("Без группы", selected = subjectText.isBlank()) {
+                                subjectText = ""
+                            }
+                            existingSubjects.forEach { s ->
+                                ChipButton(s, selected = subjectText.trim() == s) {
+                                    subjectText = s
+                                }
+                            }
+                        }
+                    }
+                    AppTextField(subjectText, { subjectText = it }, "Название группы", placeholder = "Например: Физика, Матанализ")
+                }
+            },
+            confirmButton = {
+                InkButton("Сохранить") {
+                    ctl.setSubject(subjectText)
+                    choosingSubject = false
+                }
+            },
+            dismissButton = { SoftButton("Отмена") { choosingSubject = false } },
             containerColor = MaterialTheme.colorScheme.surface,
             shape = RoundedCornerShape(28.dp),
         )

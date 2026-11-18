@@ -386,6 +386,11 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         scope.launch { meta = withContext(Dispatchers.IO) { nbs.store.rename(m, title) } }
     }
 
+    fun setSubject(subject: String) {
+        val m = meta ?: return
+        scope.launch { meta = withContext(Dispatchers.IO) { nbs.store.setSubject(m, subject) } }
+    }
+
     fun clearPage() = ink.clearPage()
     fun undo() = ink.undo()
     fun redo() = ink.redo()

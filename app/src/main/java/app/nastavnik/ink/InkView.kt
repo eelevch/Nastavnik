@@ -12,6 +12,8 @@ import android.graphics.DashPathEffect
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PorterDuff
+import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Build
 import android.os.SystemClock
@@ -561,22 +563,35 @@ class InkView(context: Context) : View(context) {
 
     // ---------------- рисование ----------------
 
-    private var cache: Bitmap? = null
-    private var cacheCanvas: Canvas? = null
-    private val cacheMatrix = Matrix()
-    private var cacheValid = false
+    // Кэш листа в координатах страницы: при скролле и перемещении не перерисовываем тысячи векторных штрихов,
+    // а рисуем готовый растровый лист с текущей матрицей (1 вызов drawBitmap вместо 50 000 drawLines).
+    private var pageCache: Bitmap? = null
+    private var pageCacheCanvas: Canvas? = null
+    private var pageCacheValid = false
+    private var pageCacheScale = 1f
+    private val pageSrcRect = Rect()
+    private val pageDstRect = RectF()
+    private val cacheFilterPaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
-    /** Лист двигают или увеличивают — рисуем напрямую, без картинки. */
+    /** Лист двигают или увеличивают. */
     private var moving = false
 
     private fun invalidateCache() {
-        cacheValid = false
+        pageCacheValid = false
         invalidate()
     }
 
     private val visible = RectF()
 
-    /** Стол, тень, лист, подложка, разлиновка, текст и штрихи (кроме выделенных) — в текущем положении листа. */
+    /** Отрисовка страницы напрямую вектором (при нехватке памяти для кэша). */
+    private fun drawPageDirect(c: Canvas, p: InkPage) {
+        pageMatrix.invert(inverse)
+        visible.set(0f, 0f, width.toFloat(), height.toFloat())
+        inverse.mapRect(visible)
+        drawer.drawPage(c, p, bgBitmap, visible, selExclude)
+    }
+
+    /** Стол, тень, лист (из кэша или векторно), рамка листа — в текущем положении листа. */
     private fun drawScene(c: Canvas) {
         val p = page ?: return
         c.drawColor(desk)
@@ -585,47 +600,73 @@ class InkView(context: Context) : View(context) {
         val k = scale
         shadow.color = if (dark) 0x40000000 else 0x1416161A
         c.drawRect(-2f / k, 2f / k, PAGE_W + 2f / k, p.height + 5f / k, shadow)
-        pageMatrix.invert(inverse)
-        visible.set(0f, 0f, width.toFloat(), height.toFloat())
-        inverse.mapRect(visible)
-        drawer.drawPage(c, p, bgBitmap, visible, selExclude)
+
+        val b = if (pageCacheValid && pageCache != null && !pageCache!!.isRecycled) pageCache else renderPageCache()
+        if (b != null && !b.isRecycled) {
+            pageSrcRect.set(0, 0, b.width, b.height)
+            pageDstRect.set(0f, 0f, PAGE_W, p.height)
+            c.drawBitmap(b, pageSrcRect, pageDstRect, cacheFilterPaint)
+        } else {
+            drawPageDirect(c, p)
+        }
+
         edge.strokeWidth = 1f / k
         edge.color = if (dark) 0x26FFFFFF else 0x1F16161A
         c.drawRect(0f, 0f, PAGE_W, p.height, edge)
         c.restore()
     }
 
-    private fun renderCache(): Bitmap? {
+    private fun renderPageCache(): Bitmap? {
+        val p = page ?: return null
         if (width <= 0 || height <= 0) return null
-        var b = cache
-        if (b == null || b.isRecycled || b.width != width || b.height != height) {
+        val targetScale = scale.coerceIn(0.5f, 2.5f)
+        val isWeak = app.nastavnik.data.DeviceProfile.isWeakDevice(context)
+        val maxDim = if (isWeak) 2048f else 3072f
+        val maxScale = minOf(maxDim / PAGE_W, maxDim / p.height.coerceAtLeast(100f), 2.5f)
+        val effScale = targetScale.coerceIn(0.5f, maxScale)
+        val bw = (PAGE_W * effScale).toInt().coerceAtLeast(100)
+        val bh = (p.height * effScale).toInt().coerceAtLeast(100)
+
+        var b = pageCache
+        if (b == null || b.isRecycled || b.width != bw || b.height != bh) {
             if (b != null && !b.isRecycled) b.recycle()
-            val isWeak = app.nastavnik.data.DeviceProfile.isWeakDevice(context)
             val cfg = if (isWeak) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888
             b = try {
-                Bitmap.createBitmap(width, height, cfg)
+                Bitmap.createBitmap(bw, bh, cfg)
             } catch (_: OutOfMemoryError) {
-                return null
+                try {
+                    Bitmap.createBitmap(bw, bh, Bitmap.Config.RGB_565)
+                } catch (_: OutOfMemoryError) {
+                    return null
+                }
             }
-            cache = b
-            cacheCanvas = Canvas(b)
+            pageCache = b
+            pageCacheCanvas = Canvas(b)
         }
-        val cv = cacheCanvas ?: return null
-        drawScene(cv)
-        cacheMatrix.set(pageMatrix)
-        cacheValid = true
+        val cv = pageCacheCanvas ?: return null
+        cv.save()
+        if (b.config == Bitmap.Config.ARGB_8888) {
+            cv.drawColor(0, PorterDuff.Mode.CLEAR)
+        }
+        cv.scale(effScale, effScale)
+        drawer.drawPage(cv, p, bgBitmap, null, selExclude)
+        cv.restore()
+
+        pageCacheScale = effScale
+        pageCacheValid = true
         return b
     }
 
     /** Дорисовать готовый штрих прямо в картинку страницы — без полной перерисовки. */
     private fun drawIntoCache(s: Stroke) {
-        val c = cacheCanvas ?: return
-        if (!cacheValid || cacheMatrix != pageMatrix || s.tool == Tool.HIGHLIGHTER) {
-            cacheValid = false
+        val c = pageCacheCanvas ?: return
+        val b = pageCache ?: return
+        if (!pageCacheValid || b.isRecycled || s.tool == Tool.HIGHLIGHTER) {
+            pageCacheValid = false
             return
         }
         c.save()
-        c.concat(pageMatrix)
+        c.scale(pageCacheScale, pageCacheScale)
         drawer.drawStroke(c, s)
         c.restore()
     }
@@ -657,12 +698,7 @@ class InkView(context: Context) : View(context) {
             drawTurn(canvas, turn)
             return
         }
-        if (moving) {
-            drawScene(canvas)
-        } else {
-            val b = if (cacheValid && cacheMatrix == pageMatrix) cache else renderCache()
-            if (b != null) canvas.drawBitmap(b, 0f, 0f, null) else drawScene(canvas)
-        }
+        drawScene(canvas)
         canvas.save()
         canvas.concat(pageMatrix)
         val k = scale
@@ -812,11 +848,7 @@ class InkView(context: Context) : View(context) {
         return try {
             val b = Bitmap.createBitmap(width, height, cfg)
             val c = Canvas(b)
-            if (cacheValid && cacheMatrix == pageMatrix && cache != null && !cache!!.isRecycled) {
-                c.drawBitmap(cache!!, 0f, 0f, null)
-            } else {
-                drawScene(c)
-            }
+            drawScene(c)
             b
         } catch (_: OutOfMemoryError) {
             null
@@ -853,7 +885,7 @@ class InkView(context: Context) : View(context) {
     /** Старая страница уходит в сторону, чуть уменьшаясь и тая; новая въезжает следом. */
     private fun drawTurn(canvas: Canvas, turn: Turn) {
         if (turn.old.isRecycled) return
-        val b = (if (cacheValid && cacheMatrix == pageMatrix && cache != null && !cache!!.isRecycled) cache else renderCache()) ?: return
+        val b = snapshot() ?: return
         if (b.isRecycled) return
         val shift = width * 0.22f
         canvas.drawColor(desk)
@@ -1419,11 +1451,6 @@ class InkView(context: Context) : View(context) {
                 // Перо подняли, а ладонь ещё лежит — действие закончено.
                 endPen(e, e.actionIndex, isPen(e, e.actionIndex), p)
             } else if (mode == Mode.PAN) {
-                if (e.pointerCount == 2 && maxPointers == 2 && !twoFingerMoved && SystemClock.uptimeMillis() - twoFingerAt < TAP_MS) {
-                    undo()
-                    listener?.onHint("Отменено")
-                    twoFingerAt = 0
-                }
                 val rest = (0 until e.pointerCount).firstOrNull { it != e.actionIndex } ?: 0
                 lastX = e.getX(rest); lastY = e.getY(rest)
                 downX = lastX; downY = lastY
@@ -1535,7 +1562,9 @@ class InkView(context: Context) : View(context) {
         if (!moving) return
         moving = false
         zoomChanged()
-        invalidateCache()
+        if (pageCacheValid && abs(pageCacheScale - scale) / pageCacheScale > 0.2f) {
+            invalidateCache()
+        }
     }
 
     private fun pressure(e: MotionEvent, i: Int, pen: Boolean) = if (pen) e.getPressure(i) else FINGER_PRESSURE
@@ -1615,7 +1644,9 @@ class InkView(context: Context) : View(context) {
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         cancelTurn()
-        if (cache != null && !cache!!.isRecycled) { cache!!.recycle(); cache = null }
+        if (pageCache != null && !pageCache!!.isRecycled) { pageCache!!.recycle(); pageCache = null }
+        pageCacheCanvas = null
+        pageCacheValid = false
         removeCallbacks(flingStep)
         removeCallbacks(holdEraser)
         removeCallbacks(snapShape)

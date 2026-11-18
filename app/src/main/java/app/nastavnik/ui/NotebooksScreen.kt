@@ -113,6 +113,13 @@ fun NotebooksScreen(resumeTick: Int, onBack: () -> Unit, onOpen: (Long) -> Unit,
             }
             return@ScreenScaffold
         }
+        val items = list ?: return@ScreenScaffold
+        val uniqueSubjects = remember(items) {
+            items.map { it.subject.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
+        }
+        var filterSubject by remember { mutableStateOf("Все") }
+        var newNotebookSubject by remember { mutableStateOf("") }
+
         Column(
             Modifier
                 .fillMaxWidth()
@@ -127,12 +134,24 @@ fun NotebooksScreen(resumeTick: Int, onBack: () -> Unit, onOpen: (Long) -> Unit,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            var selectedSubject by remember { mutableStateOf("Все") }
+            if (uniqueSubjects.isNotEmpty()) {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Группа:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ChipButton("Без группы", selected = newNotebookSubject.isBlank()) { newNotebookSubject = "" }
+                    uniqueSubjects.forEach { s ->
+                        ChipButton(s, selected = newNotebookSubject == s) { newNotebookSubject = s }
+                    }
+                }
+            }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Paper.entries.forEach { p ->
                     PaperChoice(p) {
                         scope.launch {
-                            val subj = if (selectedSubject != "Все" && selectedSubject != "Без предмета") selectedSubject else ""
+                            val subj = newNotebookSubject.trim()
                             val (m, _) = withContext(Dispatchers.IO) { nbs.store.create(nbs.defaultTitle(), p, subject = subj) }
                             onOpen(m.id)
                         }
@@ -148,14 +167,8 @@ fun NotebooksScreen(resumeTick: Int, onBack: () -> Unit, onOpen: (Long) -> Unit,
             problem?.let { StatusLine(it, Tone.ERROR) }
         }
 
-        val items = list ?: return@ScreenScaffold
         if (items.isEmpty()) return@ScreenScaffold
         SectionLabel("Мои тетради")
-
-        val uniqueSubjects = remember(items) {
-            items.map { it.subject.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
-        }
-        var filterSubject by remember { mutableStateOf("Все") }
 
         // Заметные интерактивные группы по предметам: чипы фильтрации с подсчётом конспектов
         Row(
@@ -168,17 +181,20 @@ fun NotebooksScreen(resumeTick: Int, onBack: () -> Unit, onOpen: (Long) -> Unit,
         ) {
             ChipButton("Все тетради · ${items.size}", selected = filterSubject == "Все") {
                 filterSubject = "Все"
+                newNotebookSubject = ""
             }
             uniqueSubjects.forEach { subj ->
                 val count = items.count { it.subject.trim() == subj }
                 ChipButton("$subj · $count", selected = filterSubject == subj) {
                     filterSubject = subj
+                    newNotebookSubject = subj
                 }
             }
             val noSubjCount = items.count { it.subject.isBlank() }
             if (uniqueSubjects.isNotEmpty() && noSubjCount > 0) {
                 ChipButton("Без предмета · $noSubjCount", selected = filterSubject == "Без предмета") {
                     filterSubject = "Без предмета"
+                    newNotebookSubject = ""
                 }
             }
         }
@@ -193,7 +209,7 @@ fun NotebooksScreen(resumeTick: Int, onBack: () -> Unit, onOpen: (Long) -> Unit,
 
         FlowRow(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             filtered.forEach { m ->
-                NotebookCard(m, onOpen = { onOpen(m.id) }, onChanged = { reload++ })
+                NotebookCard(m, onOpen = { onOpen(m.id) }, onChanged = { reload++ }, existingSubjects = uniqueSubjects)
             }
         }
     }
@@ -258,7 +274,7 @@ internal fun PaperPreview(p: Paper) {
 private val dateFmt = SimpleDateFormat("d MMMM, HH:mm", Locale("ru"))
 
 @Composable
-private fun NotebookCard(m: NotebookMeta, onOpen: () -> Unit, onChanged: () -> Unit, readOnly: Boolean = false) {
+private fun NotebookCard(m: NotebookMeta, onOpen: () -> Unit, onChanged: () -> Unit, readOnly: Boolean = false, existingSubjects: List<String> = emptyList()) {
     val context = LocalContext.current
     val nbs = context.app.notebooks
     val scope = rememberCoroutineScope()
@@ -270,7 +286,6 @@ private fun NotebookCard(m: NotebookMeta, onOpen: () -> Unit, onChanged: () -> U
     val thumb by produceState<ImageBitmap?>(null, m.id, m.updatedAt) {
         value = withContext(Dispatchers.IO) {
             val f = nbs.store.thumb(m.id)
-            // Тетрадь пришла с другого устройства без превью — рисуем его здесь.
             if (!f.exists()) runCatching { nbs.store.loadPages(m).firstOrNull()?.let { nbs.saveThumb(m, it) } }
             f.takeIf { it.exists() }?.let { BitmapFactory.decodeFile(it.path)?.asImageBitmap() }
         }
@@ -311,6 +326,7 @@ private fun NotebookCard(m: NotebookMeta, onOpen: () -> Unit, onChanged: () -> U
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
                     .background(Brand.Accent.copy(alpha = 0.12f))
+                    .clickable { choosingSubject = true }
                     .padding(horizontal = 6.dp, vertical = 2.dp),
             )
         }
@@ -329,7 +345,7 @@ private fun NotebookCard(m: NotebookMeta, onOpen: () -> Unit, onChanged: () -> U
                     Icon(painterResource(R.drawable.ic_more), contentDescription = "Действия с тетрадью", tint = Brand.Ink, modifier = Modifier.size(20.dp))
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
-                    DropdownMenuItem(text = { Text("Задать предмет") }, onClick = { menu = false; choosingSubject = true })
+                    DropdownMenuItem(text = { Text(if (m.subject.isNotBlank()) "Группа: ${m.subject}" else "Добавить в группу…") }, onClick = { menu = false; choosingSubject = true })
                     DropdownMenuItem(text = { Text("Переименовать") }, onClick = { menu = false; renaming = true })
                     DropdownMenuItem(text = { Text("Удалить") }, onClick = { menu = false; confirm = true })
                 }
@@ -340,11 +356,30 @@ private fun NotebookCard(m: NotebookMeta, onOpen: () -> Unit, onChanged: () -> U
         var subjectText by remember { mutableStateOf(m.subject) }
         AlertDialog(
             onDismissRequest = { choosingSubject = false },
-            title = { Text("Предмет тетради") },
+            title = { Text("Группа конспекта") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Например: Математический анализ, Физика, Информатика", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    AppTextField(subjectText, { subjectText = it }, "Название предмета")
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Выберите существующую группу или введите новую:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (existingSubjects.isNotEmpty()) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            ChipButton("Без группы", selected = subjectText.isBlank()) {
+                                subjectText = ""
+                            }
+                            existingSubjects.forEach { s ->
+                                ChipButton(s, selected = subjectText.trim() == s) {
+                                    subjectText = s
+                                }
+                            }
+                        }
+                    }
+                    AppTextField(subjectText, { subjectText = it }, "Название группы", placeholder = "Например: Физика, Матанализ")
                 }
             },
             confirmButton = {
