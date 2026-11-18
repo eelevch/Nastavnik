@@ -19,8 +19,8 @@ android {
         // Номер сборки GitHub Actions: каждая новая сборка «новее» предыдущей — по нему приложение
         // находит обновление в GitHub Releases и ставит его поверх.
         val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 162
-        versionCode = maxOf(build, 10407)
-        versionName = "1.4.7"
+        versionCode = maxOf(build, 10408)
+        versionName = "1.4.8"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testProguardFiles("proguard-rules.pro")
         buildConfigField("boolean", "STUDENT", "false")

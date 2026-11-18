@@ -584,6 +584,13 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         scheduleAutoCheck()
     }
 
+    override fun onPageSwipe(direction: Int) {
+        val target = index + direction
+        if (target in 0..pages.lastIndex) {
+            showPage(target)
+        }
+    }
+
     private fun flushSave() {
         if (saveJob?.isActive == true) {
             saveJob?.cancel()

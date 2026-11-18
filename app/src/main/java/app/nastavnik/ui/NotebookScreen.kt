@@ -188,20 +188,15 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
     ) {
         Column(Modifier.fillMaxSize()) {
             NotebookTopBar(ctl, panel, onBack = close, onTogglePanel = { panel = !panel }, onPages = { pagesOpen = true }, importers = importers)
-            Row(
+            Box(
                 Modifier
                     .fillMaxWidth()
                     .weight(1f),
             ) {
                 Box(
                     Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .padding(
-                            start = 12.dp,
-                            end = if (panel && wide) 4.dp else 12.dp,
-                            bottom = 12.dp,
-                        )
+                        .fillMaxSize()
+                        .padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
                         .clip(RoundedCornerShape(24.dp)),
                 ) {
                     AndroidView(
@@ -242,6 +237,7 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                 }
                 androidx.compose.animation.AnimatedVisibility(
                     visible = panel && wide,
+                    modifier = Modifier.align(Alignment.CenterEnd),
                     enter = slideInHorizontally(animationSpec = tween(220, easing = FastOutSlowInEasing)) { fullWidth -> fullWidth } + fadeIn(tween(180)),
                     exit = slideOutHorizontally(animationSpec = tween(180, easing = FastOutSlowInEasing)) { fullWidth -> fullWidth } + fadeOut(tween(140)),
                 ) {

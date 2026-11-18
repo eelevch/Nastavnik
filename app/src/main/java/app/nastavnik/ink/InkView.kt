@@ -74,6 +74,9 @@ class InkView(context: Context) : View(context) {
 
         /** Перо задержали — временно включился ластик (или выключился, когда перо подняли). */
         fun onTemporaryEraser(active: Boolean) {}
+
+        /** Свайп по горизонтали для перехода к следующей (+1) или предыдущей (-1) странице. */
+        fun onPageSwipe(direction: Int) {}
     }
 
     var listener: Listener? = null
@@ -173,8 +176,11 @@ class InkView(context: Context) : View(context) {
         marks = emptyList()
         selectedMark = null
         current = null
-        fitted = false
-        if (width > 0) fitWidth()
+        if (!fitted && width > 0) {
+            fitWidth()
+        } else {
+            clampMatrix()
+        }
         invalidateCache()
         notifyUndo()
         if (old != null) animatePageTurn(old, direction)
@@ -562,8 +568,17 @@ class InkView(context: Context) : View(context) {
         val mg = MARGIN * density
         var tx = v[Matrix.MTRANS_X]
         var ty = v[Matrix.MTRANS_Y]
-        tx = if (pw + 2 * mg <= width) (width - pw) / 2 else tx.coerceIn(width - pw - mg, mg)
-        ty = if (ph + 2 * mg <= height) ty.coerceIn(mg, height - ph - mg) else ty.coerceIn(height - ph - mg * 4, mg)
+
+        // Горизонтальные границы: на маленьком зуме разрешаем свободное панорамирование листа
+        val minX = if (pw + 2 * mg <= width) -pw * 0.6f else width - pw - mg
+        val maxX = if (pw + 2 * mg <= width) width - pw * 0.4f else mg
+        tx = tx.coerceIn(minX, maxX)
+
+        // Вертикальные границы: на маленьком зуме лист плавно панорамируется без жесткой блокировки
+        val minY = if (ph + 2 * mg <= height) -ph * 0.5f else height - ph - mg * 4
+        val maxY = if (ph + 2 * mg <= height) height - ph * 0.5f else mg
+        ty = ty.coerceIn(minY, maxY)
+
         m.postTranslate(tx - v[Matrix.MTRANS_X], ty - v[Matrix.MTRANS_Y])
     }
 
@@ -813,11 +828,14 @@ class InkView(context: Context) : View(context) {
 
     private fun snapshot(): Bitmap? {
         if (width <= 0 || height <= 0) return null
-        val isWeak = app.nastavnik.data.DeviceProfile.isWeakDevice(context)
-        val cfg = if (isWeak) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888
+        val s = 0.5f // Быстрый и легковесный снимок для анимации перелистывания без просадок FPS
+        val sw = (width * s).toInt().coerceAtLeast(1)
+        val sh = (height * s).toInt().coerceAtLeast(1)
+        val cfg = Bitmap.Config.RGB_565
         return try {
-            val b = Bitmap.createBitmap(width, height, cfg)
+            val b = Bitmap.createBitmap(sw, sh, cfg)
             val c = Canvas(b)
+            c.scale(s, s)
             drawScene(c)
             b
         } catch (_: OutOfMemoryError) {
@@ -860,16 +878,29 @@ class InkView(context: Context) : View(context) {
         if (turn.old.isRecycled) return
         val shift = width * 0.22f
         canvas.drawColor(desk)
-        canvas.save()
+        val oldBmp = turn.old
+        val oldScale = width.toFloat() / oldBmp.width
         val s = 1f - 0.05f * turn.t
+
+        canvas.save()
         canvas.scale(s, s, width / 2f, height / 2f)
         turnPaint.alpha = ((1 - turn.t) * 255).toInt()
-        canvas.drawBitmap(turn.old, -turn.direction * shift * turn.t, 0f, turnPaint)
+        canvas.save()
+        canvas.translate(-turn.direction * shift * turn.t, 0f)
+        canvas.scale(oldScale, oldScale)
+        canvas.drawBitmap(oldBmp, 0f, 0f, turnPaint)
         canvas.restore()
+        canvas.restore()
+
         val next = turn.next
         if (next != null && !next.isRecycled) {
+            val nextScale = width.toFloat() / next.width
             turnPaint.alpha = (turn.t * 255).toInt()
-            canvas.drawBitmap(next, turn.direction * shift * (1 - turn.t), 0f, turnPaint)
+            canvas.save()
+            canvas.translate(turn.direction * shift * (1 - turn.t), 0f)
+            canvas.scale(nextScale, nextScale)
+            canvas.drawBitmap(next, 0f, 0f, turnPaint)
+            canvas.restore()
         } else {
             drawScene(canvas)
         }
@@ -1528,6 +1559,15 @@ class InkView(context: Context) : View(context) {
         vt.computeCurrentVelocity(1000)
         val vx = vt.xVelocity
         val vy = vt.yVelocity
+
+        // Быстрый смах пальцем по горизонтали на маленьком зуме: перелистывание на следующую/предыдущую страницу
+        if (kotlin.math.abs(vx) > 850 && kotlin.math.abs(vx) > kotlin.math.abs(vy) * 1.3f && (scale <= fitScale() * 1.15f)) {
+            val direction = if (vx < 0) 1 else -1
+            listener?.onPageSwipe(direction)
+            endMoving()
+            return
+        }
+
         if (hypot(vx, vy) < MIN_FLING * density) return endMoving()
         val v = FloatArray(9).also { pageMatrix.getValues(it) }
         val p = page ?: return endMoving()
@@ -1535,10 +1575,10 @@ class InkView(context: Context) : View(context) {
         val mg = MARGIN * density
         val pw = PAGE_W * k
         val ph = p.height * k
-        val minX = if (pw + 2 * mg <= width) v[Matrix.MTRANS_X] else width - pw - mg
-        val maxX = if (pw + 2 * mg <= width) v[Matrix.MTRANS_X] else mg
-        val minY = if (ph + 2 * mg <= height) v[Matrix.MTRANS_Y] else height - ph - mg * 4
-        val maxY = if (ph + 2 * mg <= height) v[Matrix.MTRANS_Y] else mg
+        val minX = if (pw + 2 * mg <= width) -pw * 0.6f else width - pw - mg
+        val maxX = if (pw + 2 * mg <= width) width - pw * 0.4f else mg
+        val minY = if (ph + 2 * mg <= height) -ph * 0.5f else height - ph - mg * 4
+        val maxY = if (ph + 2 * mg <= height) height - ph * 0.5f else mg
         scroller.fling(
             v[Matrix.MTRANS_X].toInt(), v[Matrix.MTRANS_Y].toInt(), vx.toInt(), vy.toInt(),
             minX.toInt(), maxX.toInt(), minY.toInt(), maxY.toInt(),
