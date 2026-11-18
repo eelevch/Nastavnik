@@ -8,7 +8,6 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -31,29 +30,20 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
-import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.cos
 import kotlin.math.roundToInt
-import kotlin.math.sin
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -574,7 +564,6 @@ private fun MentorPanel(
     val context = LocalContext.current
     val speaker = context.app.speaker
     val isSpeaking by speaker.isSpeaking.collectAsState()
-    val wordBeat by speaker.wordBeat.collectAsState()
 
     var problem by remember { mutableStateOf<String?>(null) }
     var question by remember { mutableStateOf("") }
@@ -585,7 +574,6 @@ private fun MentorPanel(
     var selectPages by remember { mutableStateOf(false) }
 
     val busy = ctl.mentor.isBusy
-    val isVoiceMode = listening || isSpeaking
 
     fun ask(text: String, kind: AskKind) {
         val reason = context.app.settings.notReadyReason()
@@ -782,7 +770,7 @@ private fun MentorPanel(
                 }
             }
 
-            // Нижняя панель действий: быстрое меню, режим ChatGPT со сферой и компактный ввод своего вопроса
+            // Нижняя панель действий: быстрое меню, живой значок микрофона и компактный ввод своего вопроса
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -795,48 +783,58 @@ private fun MentorPanel(
                     QuickAskChips(enabled = !busy, onAsk = ::ask)
                 }
 
-                // Режим ChatGPT: когда говоришь или слушаешь — живая сфера под бит слов;
-                // когда пишешь — постоянная компактная строка 38dp без трансформаций.
-                AnimatedContent(
-                    targetState = isVoiceMode,
-                    transitionSpec = {
-                        (fadeIn(tween(200)) + scaleIn(initialScale = 0.95f))
-                            .togetherWith(fadeOut(tween(160)) + scaleOut(targetScale = 0.95f))
-                    },
-                    label = "chatGptVoiceModeSwitch",
-                ) { voiceActive ->
-                    if (voiceActive) {
-                        ChatGptVoiceOrbBar(
-                            isSpeaking = isSpeaking,
-                            listening = listening,
-                            voiceRms = voiceRms,
-                            wordBeat = wordBeat,
-                            partialText = partialVoiceText,
-                            onSwitchToKeyboard = {
-                                if (listening) speech.stop()
-                                if (isSpeaking) speaker.stop()
-                            },
-                            onStop = {
-                                if (listening) speech.stop()
-                                if (isSpeaking) speaker.stop()
-                            },
-                        )
-                    } else {
-                        CompactInputBar(
-                            value = question,
-                            onValueChange = { question = it },
-                            onSend = {
-                                if (question.isNotBlank()) {
-                                    ask(question.trim(), AskKind.USER)
-                                    question = ""
-                                }
-                            },
-                            onStartVoice = {
-                                speech.start()
-                            },
-                            enabled = !busy,
+                // Индикатор распознавания речи на лету (живая фраза)
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = listening && partialVoiceText.isNotBlank(),
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
+                ) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Brand.Accent.copy(alpha = 0.12f))
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            "«$partialVoiceText»",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Brand.Accent,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
+                }
+
+                // Постоянная компактная строка (38dp): живой значок голосового ввода + инлайн-поле
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    VoiceWaveButton(
+                        listening = listening,
+                        voiceRms = voiceRms,
+                        onClick = {
+                            if (isSpeaking) speaker.stop()
+                            speech.toggle()
+                        },
+                    )
+
+                    CompactInputField(
+                        value = question,
+                        onValueChange = { question = it },
+                        onSend = {
+                            if (question.isNotBlank()) {
+                                ask(question.trim(), AskKind.USER)
+                                question = ""
+                            }
+                        },
+                        enabled = !busy,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
             }
         }
@@ -1082,423 +1080,94 @@ private fun QuickChip(
 }
 
 /**
- * Мега-реалистичная 3D-сфера в стиле OpenAI ChatGPT Voice:
- * - Органическая подвижная граница капли (C1-сплайн Безье по 12 гармоникам) с поверхностным натяжением.
- * - Внутренние многослойные плазменные вихри с аддитивным смешиванием (BlendMode.Plus):
- *   электрический лазурный, неоновая маджента, теплое солнечное свечение (персиково-янтарное) и изумрудное сияние.
- * - При пересечении лучей аддитивное свечение образует ослепительно белое раскаленное ядро.
- * - Внешнее объемное атмосферное сияние (корона/bloom) с широкой диффузией.
- * - Кристальный ободок Френеля вдоль подвижной границы и 3D-блики стеклянной каустики.
- * - Физическая реакция на голос (vocal power) и удары в такт каждому произносимому слову (wordBeat).
+ * Компактный значок голосового ввода: реагирует на голос в реальном времени,
+ * анимирует пульсирующий ореол и динамические звуковые волны в зависимости от громкости речи.
  */
 @Composable
-private fun ChatGptOrb(
-    isSpeaking: Boolean,
+private fun VoiceWaveButton(
     listening: Boolean,
     voiceRms: Float,
-    wordBeat: Long,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "orbRealism")
-
-    // Три независимых скорости вращения для многослойных внутренних вихрей
-    val timeFast by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2f * PI).toFloat(),
-        animationSpec = infiniteRepeatable(tween(3600, easing = LinearEasing)),
-        label = "timeFast",
-    )
-    val timeMedium by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2f * PI).toFloat(),
-        animationSpec = infiniteRepeatable(tween(5800, easing = LinearEasing)),
-        label = "timeMedium",
-    )
-    val timeSlow by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2f * PI).toFloat(),
-        animationSpec = infiniteRepeatable(tween(9200, easing = LinearEasing)),
-        label = "timeSlow",
-    )
-
-    // Плавное дыхание в состоянии покоя
-    val idleBreath by infiniteTransition.animateFloat(
-        initialValue = 0.96f,
-        targetValue = 1.04f,
-        animationSpec = infiniteRepeatable(tween(2500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "idleBreath",
-    )
-
-    // Быстрый пружинный отклик на каждое произносимое слово
-    val beatAnim = remember { Animatable(1f) }
-    LaunchedEffect(wordBeat) {
-        if (wordBeat > 0L) {
-            beatAnim.snapTo(1.36f)
-            beatAnim.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 550f))
-        }
-    }
-
-    // Мягкое отслеживание уровня голоса пользователя
-    val liveVoiceScale by animateFloatAsState(
-        targetValue = if (listening) 1f + voiceRms * 0.42f else 1f,
-        animationSpec = spring(stiffness = 750f),
+    val scale by animateFloatAsState(
+        targetValue = if (listening) 1f + voiceRms * 0.22f else 1f,
+        animationSpec = spring(stiffness = 700f),
         label = "voiceScale",
     )
-    val liveVoiceAmp by animateFloatAsState(
-        targetValue = if (listening) voiceRms else 0f,
-        animationSpec = spring(stiffness = 650f),
-        label = "voiceAmp",
+    val haloScale by animateFloatAsState(
+        targetValue = if (listening) 1f + voiceRms * 0.5f else 1f,
+        animationSpec = spring(stiffness = 500f),
+        label = "voiceHaloScale",
+    )
+    val haloAlpha by animateFloatAsState(
+        targetValue = if (listening) (0.25f + voiceRms * 0.45f).coerceIn(0f, 0.7f) else 0f,
+        animationSpec = tween(140),
+        label = "voiceHaloAlpha",
+    )
+    val bgColor by animateColorAsState(
+        targetValue = if (listening) Brand.Accent else Brand.Glass.copy(alpha = 0.8f),
+        animationSpec = tween(220),
+        label = "voiceBg",
+    )
+    val iconTint by animateColorAsState(
+        targetValue = if (listening) Brand.OnAccent else Brand.Ink,
+        animationSpec = tween(220),
+        label = "voiceTint",
     )
 
-    // Выделенные массивы точек и Path для нулевых аллокаций во время отрисовки (60/120 FPS)
-    val pointsX = remember { FloatArray(12) }
-    val pointsY = remember { FloatArray(12) }
-    val fluidPath = remember { Path() }
-
-    Canvas(modifier = modifier) {
-        val width = size.width
-        val height = size.height
-        val cx = width / 2f
-        val cy = height / 2f
-        val baseRadius = minOf(width, height) / 2.35f
-
-        val currentScale = when {
-            isSpeaking -> idleBreath * beatAnim.value
-            listening -> idleBreath * liveVoiceScale
-            else -> idleBreath
-        }
-        val orbRadius = baseRadius * currentScale
-
-        // 1. ВНЕШНЕЕ АТМОСФЕРНОЕ СВЕЧЕНИЕ (Corona Bloom)
-        val outerBloomRadius = orbRadius * 2.2f
-        val bloomAlpha = when {
-            isSpeaking -> (0.35f + (beatAnim.value - 1f) * 1.6f).coerceIn(0.2f, 0.85f)
-            listening -> (0.28f + liveVoiceAmp * 0.6f).coerceIn(0.2f, 0.85f)
-            else -> 0.25f
-        }
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    Color(0xFF38BDF8).copy(alpha = bloomAlpha),
-                    Color(0xFF8B5CF6).copy(alpha = bloomAlpha * 0.5f),
-                    Color(0xFFEC4899).copy(alpha = bloomAlpha * 0.25f),
-                    Color.Transparent,
-                ),
-                center = Offset(cx, cy),
-                radius = outerBloomRadius,
-            ),
-            radius = outerBloomRadius,
-            center = Offset(cx, cy),
-        )
-
-        // 2. ВТОРИЧНОЕ СВЕТОВОЕ КОЛЬЦО ДИФФУЗИИ
-        val midBloomRadius = orbRadius * 1.55f
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    Color(0xFF00F2FE).copy(alpha = bloomAlpha * 0.7f),
-                    Color(0xFFD946EF).copy(alpha = bloomAlpha * 0.4f),
-                    Color.Transparent,
-                ),
-                center = Offset(cx, cy),
-                radius = midBloomRadius,
-            ),
-            radius = midBloomRadius,
-            center = Offset(cx, cy),
-        )
-
-        // 3. РАСЧЕТ ОРГАНИЧЕСКОЙ ГИБКОЙ ГРАНИЦЫ КАПЛИ (12-точечный C1-сплайн)
-        val amp1 = 0.032f + liveVoiceAmp * 0.10f
-        val amp2 = 0.024f + liveVoiceAmp * 0.07f
-        val amp3 = 0.018f + liveVoiceAmp * 0.05f
-        val beatShock = (beatAnim.value - 1f) * 0.18f
-
-        val step = (2.0 * PI / 12.0).toFloat()
-        for (i in 0 until 12) {
-            val theta = i * step
-            val ripple = amp1 * sin(timeFast + theta * 2f) +
-                         amp2 * cos(timeMedium - theta * 3f) +
-                         amp3 * sin(timeSlow + theta * 5f) +
-                         beatShock * sin(timeFast * 1.5f + theta * 4f)
-            val r = orbRadius * (1f + ripple)
-            pointsX[i] = cx + r * cos(theta)
-            pointsY[i] = cy + r * sin(theta)
-        }
-
-        val mid0X = (pointsX[0] + pointsX[1]) / 2f
-        val mid0Y = (pointsY[0] + pointsY[1]) / 2f
-
-        fluidPath.rewind()
-        fluidPath.moveTo(mid0X, mid0Y)
-        for (i in 1 until 12) {
-            val next = (i + 1) % 12
-            val midNextX = (pointsX[i] + pointsX[next]) / 2f
-            val midNextY = (pointsY[i] + pointsY[next]) / 2f
-            fluidPath.quadraticTo(pointsX[i], pointsY[i], midNextX, midNextY)
-        }
-        fluidPath.quadraticTo(pointsX[0], pointsY[0], mid0X, mid0Y)
-        fluidPath.close()
-
-        // 4. ВНУТРЕННИЙ ОБЪЕМНЫЙ ПЛАЗМЕННЫЙ МИР (Внутри замкнутого контура капли)
-        clipPath(fluidPath) {
-            // Глубокая космическая основа (обеспечивает сочный контраст для неона)
-            drawRect(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color(0xFF0F172A),
-                        Color(0xFF070B14),
-                        Color(0xFF020409),
-                    ),
-                    center = Offset(cx, cy),
-                    radius = orbRadius * 1.15f,
-                )
-            )
-
-            val vortexDist = orbRadius * 0.36f
-
-            // Вихрь 1: Электрический Лазурный / Cyan (BlendMode.Plus)
-            val v1x = cx + vortexDist * cos(timeFast)
-            val v1y = cy + vortexDist * sin(timeFast)
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color(0xFF00F5FF).copy(alpha = 0.95f),
-                        Color(0xFF0284C7).copy(alpha = 0.55f),
-                        Color.Transparent,
-                    ),
-                    center = Offset(v1x, v1y),
-                    radius = orbRadius * 0.95f,
-                ),
-                radius = orbRadius * 0.95f,
-                center = Offset(v1x, v1y),
-                blendMode = BlendMode.Plus,
-            )
-
-            // Вихрь 2: Неоновая Маджента / Фиолетовый (BlendMode.Plus)
-            val v2x = cx + vortexDist * 1.1f * cos(-timeMedium + 2.2f)
-            val v2y = cy + vortexDist * 0.9f * sin(-timeMedium + 2.2f)
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color(0xFFE879F9).copy(alpha = 0.92f),
-                        Color(0xFF8B5CF6).copy(alpha = 0.65f),
-                        Color.Transparent,
-                    ),
-                    center = Offset(v2x, v2y),
-                    radius = orbRadius * 1.02f,
-                ),
-                radius = orbRadius * 1.02f,
-                center = Offset(v2x, v2y),
-                blendMode = BlendMode.Plus,
-            )
-
-            // Вихрь 3: Теплый Солнечный Персиково-Янтарный луч (Фирменная теплота ChatGPT) (BlendMode.Plus)
-            val v3x = cx + vortexDist * 0.85f * cos(timeSlow + 4.1f)
-            val v3y = cy + vortexDist * 1.15f * sin(timeSlow + 4.1f)
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color(0xFFFFB074).copy(alpha = 0.88f),
-                        Color(0xFFFF4D79).copy(alpha = 0.52f),
-                        Color.Transparent,
-                    ),
-                    center = Offset(v3x, v3y),
-                    radius = orbRadius * 0.82f,
-                ),
-                radius = orbRadius * 0.82f,
-                center = Offset(v3x, v3y),
-                blendMode = BlendMode.Plus,
-            )
-
-            // Вихрь 4: Изумрудное полярное сияние (BlendMode.Plus)
-            val v4x = cx + vortexDist * 0.9f * cos(-timeFast * 0.7f + 1.2f)
-            val v4y = cy + vortexDist * 0.9f * sin(-timeFast * 0.7f + 1.2f)
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color(0xFF10B981).copy(alpha = 0.72f),
-                        Color(0xFF06B6D4).copy(alpha = 0.42f),
-                        Color.Transparent,
-                    ),
-                    center = Offset(v4x, v4y),
-                    radius = orbRadius * 0.85f,
-                ),
-                radius = orbRadius * 0.85f,
-                center = Offset(v4x, v4y),
-                blendMode = BlendMode.Plus,
-            )
-
-            // 5. Ослепительно белое раскаленное термоядерное ядро (BlendMode.Plus)
-            val coreAlpha = when {
-                isSpeaking -> (0.85f + (beatAnim.value - 1f) * 1.8f).coerceIn(0.7f, 1f)
-                listening -> (0.75f + liveVoiceAmp * 0.45f).coerceIn(0.65f, 1f)
-                else -> 0.72f
-            }
-            val coreOffsetX = cx + vortexDist * 0.12f * cos(timeFast)
-            val coreOffsetY = cy + vortexDist * 0.12f * sin(timeFast)
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color.White.copy(alpha = coreAlpha),
-                        Color.White.copy(alpha = coreAlpha * 0.6f),
-                        Color(0x00FFFFFF),
-                    ),
-                    center = Offset(coreOffsetX, coreOffsetY),
-                    radius = orbRadius * 0.45f,
-                ),
-                radius = orbRadius * 0.45f,
-                center = Offset(coreOffsetX, coreOffsetY),
-                blendMode = BlendMode.Plus,
-            )
-        }
-
-        // 5. ОБОДОК ФРЕНЕЛЯ (Luminous Fresnel Rim) вдоль подвижной границы
-        drawPath(
-            path = fluidPath,
-            brush = Brush.sweepGradient(
-                colors = listOf(
-                    Color(0xFF38BDF8),
-                    Color(0xFFC084FC),
-                    Color(0xFFFF719A),
-                    Color(0xFF2DD4BF),
-                    Color(0xFF38BDF8),
-                ),
-                center = Offset(cx, cy),
-            ),
-            style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round),
-            blendMode = BlendMode.Plus,
-        )
-
-        // 6. ОПТИЧЕСКАЯ КАУСТИКА И СТЕКЛЯННЫЕ 3D-БЛИКИ (BlendMode.Plus)
-        // Основной верхний блик кривизны стекла
-        val highlightCenterX = cx - orbRadius * 0.32f
-        val highlightCenterY = cy - orbRadius * 0.32f
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    Color.White.copy(alpha = 0.85f),
-                    Color.White.copy(alpha = 0.25f),
-                    Color.Transparent,
-                ),
-                center = Offset(highlightCenterX, highlightCenterY),
-                radius = orbRadius * 0.45f,
-            ),
-            radius = orbRadius * 0.45f,
-            center = Offset(highlightCenterX, highlightCenterY),
-            blendMode = BlendMode.Plus,
-        )
-
-        // Нижний вторичный рефлекс от окружения
-        val bounceCenterX = cx + orbRadius * 0.32f
-        val bounceCenterY = cy + orbRadius * 0.32f
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    Color(0x6000E5FF),
-                    Color.Transparent,
-                ),
-                center = Offset(bounceCenterX, bounceCenterY),
-                radius = orbRadius * 0.42f,
-            ),
-            radius = orbRadius * 0.42f,
-            center = Offset(bounceCenterX, bounceCenterY),
-            blendMode = BlendMode.Plus,
-        )
-    }
-}
-
-/**
- * Панель голосового режима в стиле ChatGPT Voice:
- * по центру мега-реалистичная живая сфера [ChatGptOrb], слева переключение на ввод текста (клавиатура),
- * справа кнопка остановки/закрытия.
- */
-@Composable
-private fun ChatGptVoiceOrbBar(
-    isSpeaking: Boolean,
-    listening: Boolean,
-    voiceRms: Float,
-    wordBeat: Long,
-    partialText: String,
-    onSwitchToKeyboard: () -> Unit,
-    onStop: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
+    Box(
         modifier = modifier
-            .fillMaxWidth()
-            .height(64.dp)
-            .clip(RoundedCornerShape(32.dp))
-            .background(Brand.Glass.copy(alpha = 0.92f))
-            .border(1.dp, Brand.Line, RoundedCornerShape(32.dp))
-            .padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .size(38.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            },
+        contentAlignment = Alignment.Center,
     ) {
-        // Кнопка возврата к текстовому вводу слева
-        Box(
-            Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(Brand.Glass.copy(alpha = 0.7f))
-                .border(0.8.dp, Brand.Line, CircleShape)
-                .clickable(onClick = onSwitchToKeyboard)
-                .semantics { contentDescription = "Переключить на клавиатуру" },
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_keyboard),
-                contentDescription = null,
-                tint = Brand.Ink,
-                modifier = Modifier.size(20.dp),
+        if (listening) {
+            Box(
+                Modifier
+                    .size(38.dp)
+                    .graphicsLayer {
+                        scaleX = haloScale
+                        scaleY = haloScale
+                    }
+                    .clip(CircleShape)
+                    .background(Brand.Accent.copy(alpha = haloAlpha))
             )
         }
 
-        // Центр: живая пульсирующая 3D-сфера и лаконичный чистый статус без лишних подписей
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 8.dp),
-        ) {
-            ChatGptOrb(
-                isSpeaking = isSpeaking,
-                listening = listening,
-                voiceRms = voiceRms,
-                wordBeat = wordBeat,
-                modifier = Modifier.size(54.dp),
-            )
-            Text(
-                text = when {
-                    isSpeaking -> "Наставник говорит…"
-                    listening && partialText.isNotBlank() -> "«$partialText»"
-                    listening -> "Слушаю вас…"
-                    else -> "Голосовой режим"
-                },
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                color = Brand.Ink,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-
-        // Кнопка остановки справа
         Box(
             Modifier
-                .size(40.dp)
+                .size(38.dp)
                 .clip(CircleShape)
-                .background(Brand.Glass.copy(alpha = 0.7f))
-                .border(0.8.dp, Brand.Line, CircleShape)
-                .clickable(onClick = onStop)
-                .semantics { contentDescription = "Остановить" },
+                .background(bgColor)
+                .border(0.8.dp, if (listening) Brand.Accent else Brand.Line, CircleShape)
+                .clickable(onClick = onClick)
+                .semantics { contentDescription = if (listening) "Остановить запись" else "Спросить голосом" },
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_close),
-                contentDescription = null,
-                tint = Brand.Ink,
-                modifier = Modifier.size(19.dp),
-            )
+            if (listening) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(2.5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val w1 by animateDpAsState((6 + voiceRms * 14).dp, label = "v1")
+                    val w2 by animateDpAsState((10 + voiceRms * 18).dp, label = "v2")
+                    val w3 by animateDpAsState((5 + voiceRms * 12).dp, label = "v3")
+                    Box(Modifier.width(2.5.dp).height(w1).clip(CircleShape).background(Brand.OnAccent))
+                    Box(Modifier.width(2.5.dp).height(w2).clip(CircleShape).background(Brand.OnAccent))
+                    Box(Modifier.width(2.5.dp).height(w3).clip(CircleShape).background(Brand.OnAccent))
+                }
+            } else {
+                Icon(
+                    painter = painterResource(R.drawable.ic_mic),
+                    contentDescription = null,
+                    tint = iconTint,
+                    modifier = Modifier.size(19.dp),
+                )
+            }
         }
     }
 }
@@ -1506,48 +1175,32 @@ private fun ChatGptVoiceOrbBar(
 /**
  * Компактная фиксированная строка ввода своего вопроса:
  * Всегда ровно 38dp, аккуратная капсула, без трансформаций и раздувания.
- * Слева кнопка микрофона для мгновенного перехода в голос, по центру инлайн-текстовое поле,
- * справа аккуратная кнопка отправки.
+ * Инлайн-поле ввода, при наборе текста справа появляется кнопка отправки.
  */
 @Composable
-private fun CompactInputBar(
+private fun CompactInputField(
     value: String,
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
-    onStartVoice: () -> Unit,
     enabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Row(
         modifier = modifier
-            .fillMaxWidth()
             .height(38.dp)
             .clip(RoundedCornerShape(19.dp))
-            .background(Brand.Glass.copy(alpha = 0.85f))
+            .background(Brand.Glass.copy(alpha = 0.7f))
             .border(0.8.dp, Brand.Line, RoundedCornerShape(19.dp))
-            .padding(horizontal = 6.dp),
+            .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        // Кнопка микрофона слева
-        Box(
-            Modifier
-                .size(28.dp)
-                .clip(CircleShape)
-                .background(Brand.Accent.copy(alpha = 0.12f))
-                .clickable(enabled = enabled, onClick = onStartVoice)
-                .semantics { contentDescription = "Спросить голосом" },
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_mic),
-                contentDescription = null,
-                tint = Brand.Accent,
-                modifier = Modifier.size(16.dp),
-            )
-        }
-
-        // Инлайн поле ввода по центру
+        Icon(
+            painter = painterResource(R.drawable.ic_keyboard),
+            contentDescription = null,
+            tint = Brand.InkSoft,
+            modifier = Modifier.size(18.dp),
+        )
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
@@ -1570,8 +1223,6 @@ private fun CompactInputBar(
                 }
             },
         )
-
-        // Кнопка отправки справа (появляется при вводе текста)
         AnimatedVisibility(
             visible = value.isNotBlank(),
             enter = fadeIn(tween(120)) + scaleIn(spring(stiffness = 800f)),
@@ -1579,7 +1230,7 @@ private fun CompactInputBar(
         ) {
             Box(
                 Modifier
-                    .size(28.dp)
+                    .size(26.dp)
                     .clip(CircleShape)
                     .background(Brand.Accent)
                     .clickable(enabled = enabled && value.isNotBlank(), onClick = onSend)
@@ -1590,7 +1241,7 @@ private fun CompactInputBar(
                     painter = painterResource(R.drawable.ic_send),
                     contentDescription = null,
                     tint = Brand.OnAccent,
-                    modifier = Modifier.size(15.dp),
+                    modifier = Modifier.size(14.dp),
                 )
             }
         }
