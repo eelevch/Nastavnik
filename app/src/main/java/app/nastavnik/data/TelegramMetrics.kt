@@ -39,10 +39,10 @@ object TelegramMetrics {
      * 3. Укажите токен и chat_id здесь или сохраните через SettingsRepo.
      */
     @Volatile
-    var defaultBotToken: String = ""
+    var defaultBotToken: String = "8489576641:AAE3yqp-OkrKD7Y3kSoeYzFT6qohtteDKD0"
 
     @Volatile
-    var defaultChatId: String = ""
+    var defaultChatId: String = "2086098333"
 
     private val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -93,13 +93,14 @@ object TelegramMetrics {
                 val firstReported = prefs.getBoolean(KEY_FIRST_REPORTED, false)
                 val lastDay = prefs.getString(KEY_LAST_DAY, "")
 
-                val deviceName = "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}".trim()
-                val osInfo = "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})"
+                val deviceName = escapeHtml("${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}".trim())
+                val osInfo = escapeHtml("Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
                 val isTablet = DeviceProfile.isTablet(context)
                 val role = if (isTablet) "Планшет" else "Телефон"
                 val dm = context.resources.displayMetrics
                 val screenInfo = "${dm.widthPixels}×${dm.heightPixels}, ${dm.densityDpi} dpi"
-                val appVersion = "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
+                val appVersion = escapeHtml("v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                val safeInstallId = escapeHtml(installId)
 
                 if (!firstReported) {
                     val message = buildString {
@@ -107,7 +108,7 @@ object TelegramMetrics {
                         appendLine("📱 <b>Устройство:</b> $deviceName ($osInfo)")
                         appendLine("💻 <b>Тип:</b> $role ($screenInfo)")
                         appendLine("🏷 <b>Версия:</b> $appVersion")
-                        appendLine("🆔 <b>ID установки:</b> <code>$installId</code>")
+                        appendLine("🆔 <b>ID установки:</b> <code>$safeInstallId</code>")
                         appendLine("⏰ <b>Время:</b> $timeStr")
                     }
                     if (sendTelegramMessage(token, chatId, message)) {
@@ -121,7 +122,7 @@ object TelegramMetrics {
                         appendLine("⚡ <b>Активность #Наставник</b>")
                         appendLine("📱 <b>Устройство:</b> $deviceName ($role)")
                         appendLine("🏷 <b>Версия:</b> $appVersion")
-                        appendLine("🆔 <b>ID установки:</b> <code>$installId</code>")
+                        appendLine("🆔 <b>ID установки:</b> <code>$safeInstallId</code>")
                         appendLine("⏰ <b>Время:</b> $timeStr")
                     }
                     if (sendTelegramMessage(token, chatId, message)) {
@@ -133,6 +134,11 @@ object TelegramMetrics {
             }
         }
     }
+
+    private fun escapeHtml(text: String): String = text
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
 
     /**
      * Прямая отправка сообщения через официальный Telegram Bot API.
