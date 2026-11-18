@@ -476,7 +476,7 @@ class InkView(context: Context) : View(context) {
         pageMatrix.postTranslate(MARGIN * density, MARGIN * density)
         fitted = true
         zoomChanged()
-        invalidateCache()
+        invalidate()
     }
 
     /** Плавно вернуть лист по ширине экрана. */
@@ -491,12 +491,20 @@ class InkView(context: Context) : View(context) {
         animateMatrix(target)
     }
 
+    private var resizingUntil = 0L
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         if (!fitted) {
             fitWidth()
         } else {
             clampMatrix()
+            resizingUntil = SystemClock.uptimeMillis() + 400L
             invalidate()
+            postDelayed({
+                if (SystemClock.uptimeMillis() >= resizingUntil) {
+                    invalidate()
+                }
+            }, 420L)
         }
     }
 
@@ -542,7 +550,7 @@ class InkView(context: Context) : View(context) {
                 override fun onAnimationEnd(animation: Animator) {
                     moving = false
                     zoomChanged()
-                    invalidateCache()
+                    invalidate()
                 }
             })
             start()
@@ -605,10 +613,12 @@ class InkView(context: Context) : View(context) {
         shadow.color = if (dark) 0x40000000 else 0x1416161A
         c.drawRect(-2f / k, 2f / k, PAGE_W + 2f / k, p.height + 5f / k, shadow)
 
-        // При скролле и панорамировании (moving) используем готовый растровый кэш (0.1 мс на кадр, 120 FPS).
-        // В покое (moving == false), а также при рисовании и стирании ластиком рисуем НАПРЯМУЮ ВЕКТОРОМ:
+        // При скролле и панорамировании (moving), а также при покадровой анимации окна наставника (isResizing)
+        // используем готовый растровый кэш (0.1 мс на кадр, 120 FPS).
+        // В покое (moving == false && !isResizing), а также при рисовании и стирании ластиком рисуем НАПРЯМУЮ ВЕКТОРОМ:
         // это обеспечивает 100% максимальную чёткость и качество линий экрана планшета без размытия растра!
-        if (moving) {
+        val isResizing = SystemClock.uptimeMillis() < resizingUntil
+        if (moving || isResizing) {
             val b = if (pageCacheValid && pageCache != null && !pageCache!!.isRecycled) pageCache else renderPageCache()
             if (b != null && !b.isRecycled) {
                 pageSrcRect.set(0, 0, b.width, b.height)
@@ -630,9 +640,12 @@ class InkView(context: Context) : View(context) {
     private fun renderPageCache(): Bitmap? {
         val p = page ?: return null
         if (width <= 0 || height <= 0) return null
-        val effScale = scale.coerceIn(0.75f, 3.5f)
-        val bw = (PAGE_W * effScale).toInt().coerceIn(100, 4096)
-        val bh = (p.height * effScale).toInt().coerceIn(100, 4096)
+        // Фиксированное оптимальное разрешение растрового кэша (1800x2400)
+        // НЕ зависит от переменного scale зума, благодаря чему зум НЕ сбрасывает кэш
+        // и отсутствует задержка 0.5-1 секунды при начале скролла после зума!
+        val cacheScale = 1.5f
+        val bw = (PAGE_W * cacheScale).toInt().coerceIn(100, 2400)
+        val bh = (p.height * cacheScale).toInt().coerceIn(100, 3200)
 
         var b = pageCache
         if (b == null || b.isRecycled || b.width != bw || b.height != bh) {
@@ -656,7 +669,7 @@ class InkView(context: Context) : View(context) {
         drawer.drawPage(cv, p, bgBitmap, null, selExclude)
         cv.restore()
 
-        pageCacheScale = effScale
+        pageCacheScale = cacheScale
         pageCacheValid = true
         return b
     }
@@ -1566,11 +1579,7 @@ class InkView(context: Context) : View(context) {
         if (!moving) return
         moving = false
         zoomChanged()
-        if (pageCacheValid && abs(pageCacheScale - scale) / pageCacheScale > 0.2f) {
-            invalidateCache()
-        } else {
-            invalidate()
-        }
+        invalidate()
     }
 
     private fun pressure(e: MotionEvent, i: Int, pen: Boolean) = if (pen) e.getPressure(i) else FINGER_PRESSURE

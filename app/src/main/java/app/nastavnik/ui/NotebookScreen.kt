@@ -66,6 +66,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -282,8 +283,6 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                         HomeworkBar(ctl, Modifier.align(Alignment.BottomCenter).padding(start = 72.dp, end = 16.dp, bottom = 56.dp))
                     }
 
-                    // Инструменты — плашкой сбоку (если не полноэкранный режим и не перенесены наверх)
-                    EditorRail(ctl, maxHeight)
                     androidx.compose.animation.AnimatedVisibility(
                         visible = !ctl.loaded,
                         modifier = Modifier.align(Alignment.Center),
@@ -292,10 +291,14 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                 }
                 androidx.compose.animation.AnimatedVisibility(
                     visible = panel && wide,
-                    enter = expandHorizontally(expandFrom = Alignment.Start, animationSpec = tween(220, easing = FastOutSlowInEasing)) + fadeIn(tween(180)),
-                    exit = shrinkHorizontally(shrinkTowards = Alignment.Start, animationSpec = tween(180, easing = FastOutSlowInEasing)) + fadeOut(tween(140)),
+                    enter = slideInHorizontally(animationSpec = tween(220, easing = FastOutSlowInEasing)) { fullWidth -> fullWidth } + fadeIn(tween(180)),
+                    exit = slideOutHorizontally(animationSpec = tween(180, easing = FastOutSlowInEasing)) { fullWidth -> fullWidth } + fadeOut(tween(140)),
                 ) {
-                    Row(Modifier.fillMaxHeight()) {
+                    Row(
+                        Modifier
+                            .fillMaxHeight()
+                            .requiredWidth(effectivePanelWidth.dp + 16.dp)
+                    ) {
                         PanelSplitter(
                             onDragDeltaDp = { deltaDp ->
                                 panelWidthDp = (panelWidthDp - deltaDp).coerceIn(minPanelWidthDp, maxPanelWidthDp)
@@ -432,7 +435,7 @@ private fun NotebookTopBar(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
-                .then(if (ctl.toolBarTop) Modifier.widthIn(max = 160.dp) else Modifier.weight(1f))
+                .widthIn(max = 140.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .clickable { renaming = true }
                 .padding(horizontal = 4.dp, vertical = 2.dp),
@@ -452,12 +455,10 @@ private fun NotebookTopBar(
                     .padding(horizontal = 6.dp, vertical = 2.dp),
             )
         }
-        // Кисти перенесены наверх — полный, не сжатый горизонтальный ряд инструментов по центру
-        if (ctl.toolBarTop) {
-            Spacer(Modifier.weight(1f))
-            TopToolBar(ctl)
-            Spacer(Modifier.weight(1f))
-        }
+        // Кисти всегда сверху — расширенный центрированный ряд инструментов по центру
+        Spacer(Modifier.weight(1f))
+        TopToolBar(ctl)
+        Spacer(Modifier.weight(1f))
         // Страницы: стрелки, номер и кнопка быстрого удаления страницы
         Row(
             Modifier.glass(CircleShape, 4.dp, strong = true).padding(horizontal = 2.dp),
@@ -704,12 +705,12 @@ private fun Divider() {
 private class Ask(val action: QuickAction, val icon: Int, val title: String, val hint: String)
 
 private val ASKS = listOf(
-    Ask(QuickAction.NEXT_STEP, R.drawable.ic_bulb, "Подсказка", "что дальше"),
-    Ask(QuickAction.FIND_ERROR, R.drawable.ic_search, "Где ошибка?", "отметит её"),
-    Ask(QuickAction.CHECK_ANSWER, R.drawable.ic_check, "Проверить", "мой ответ"),
-    Ask(QuickAction.THEORY, R.drawable.ic_book, "Теория", "с примером"),
-    Ask(QuickAction.SHOW_STEP, R.drawable.ic_chevron, "Покажи шаг", "один шаг"),
-    Ask(QuickAction.SIMILAR, R.drawable.ic_refresh, "Похожая", "для тренировки"),
+    Ask(QuickAction.NEXT_STEP, R.drawable.ic_bulb, "Подсказка", "подскажет шаг"),
+    Ask(QuickAction.FIND_ERROR, R.drawable.ic_search, "Где ошибка?", "проверит записи"),
+    Ask(QuickAction.CHECK_ANSWER, R.drawable.ic_check, "Проверить ответ", "верно ли всё"),
+    Ask(QuickAction.THEORY, R.drawable.ic_book, "Теория", "формулы и правила"),
+    Ask(QuickAction.SHOW_STEP, R.drawable.ic_chevron, "Показать шаг", "ход решения"),
+    Ask(QuickAction.SIMILAR, R.drawable.ic_refresh, "Похожая задача", "для тренировки"),
 )
 
 /**
@@ -797,11 +798,11 @@ private fun MentorPanel(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                IconBadge(R.drawable.ic_sparkle, 28)
+                IconBadge(R.drawable.ic_sparkle, 26)
                 Column(Modifier.weight(1f)) {
                     Text("Наставник", style = MaterialTheme.typography.titleMedium)
                     if (ctl.chatMessages.isNotEmpty()) {
@@ -813,10 +814,26 @@ private fun MentorPanel(
                         )
                     }
                 }
+                // Контекст страниц: компактный интуитивный бейдж
+                Box(
+                    Modifier
+                        .clip(CircleShape)
+                        .background(Brand.Accent.copy(alpha = 0.12f))
+                        .clickable { selectPages = true }
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    val count = ctl.selectedContextPages?.size ?: 1
+                    Text(
+                        if (count <= 1) "Стр. ${ctl.index + 1}" else "$count стр.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Brand.Accent,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
                 if (ctl.ink.marks.isNotEmpty()) {
                     Box(
                         Modifier
-                            .size(32.dp)
+                            .size(30.dp)
                             .clip(CircleShape)
                             .clickable { ctl.toggleMarks() }
                             .semantics { contentDescription = if (ctl.marksVisible) "Скрыть выделение" else "Показать выделение" },
@@ -826,42 +843,32 @@ private fun MentorPanel(
                             painterResource(if (ctl.marksVisible) R.drawable.ic_eye_off else R.drawable.ic_eye),
                             contentDescription = null,
                             tint = Brand.InkSoft,
-                            modifier = Modifier.size(18.dp),
+                            modifier = Modifier.size(17.dp),
                         )
                     }
                 }
                 if (ctl.chatMessages.isNotEmpty()) {
                     Box(
                         Modifier
-                            .size(32.dp)
+                            .size(30.dp)
                             .clip(CircleShape)
                             .clickable { ctl.clearChat() }
                             .semantics { contentDescription = "Очистить чат" },
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(painterResource(R.drawable.ic_plus), contentDescription = null, tint = Brand.InkSoft, modifier = Modifier.size(18.dp))
+                        Icon(painterResource(R.drawable.ic_trash), contentDescription = null, tint = Brand.InkSoft, modifier = Modifier.size(17.dp))
                     }
-                }
-                Box(
-                    Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .clickable { selectPages = true }
-                        .semantics { contentDescription = "Страницы для контекста" },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(painterResource(R.drawable.ic_note), contentDescription = null, tint = Brand.InkSoft, modifier = Modifier.size(18.dp))
                 }
                 // Крестик закрытия панели наставника
                 Box(
                     Modifier
-                        .size(32.dp)
+                        .size(30.dp)
                         .clip(CircleShape)
                         .clickable(onClick = onClose)
                         .semantics { contentDescription = "Закрыть наставника" },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(painterResource(R.drawable.ic_close), contentDescription = null, tint = Brand.Ink, modifier = Modifier.size(20.dp))
+                    Icon(painterResource(R.drawable.ic_close), contentDescription = null, tint = Brand.Ink, modifier = Modifier.size(18.dp))
                 }
             }
 
@@ -890,10 +897,16 @@ private fun MentorPanel(
                         .weight(1f)
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     ctl.meta?.tasks?.takeIf { it.isNotEmpty() }?.let { VariantCard(it) }
+                    Text(
+                        "Быстрые действия:",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Brand.InkSoft,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 2.dp),
+                    )
                     ASKS.chunked(2).forEach { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             row.forEach { a ->
@@ -1455,18 +1468,26 @@ private fun AskTile(a: Ask, enabled: Boolean, modifier: Modifier, onClick: () ->
     Row(
         modifier
             .graphicsLayer { scaleX = scale; scaleY = scale; alpha = if (enabled) 1f else 0.45f }
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(Brand.Glass.copy(alpha = 0.7f))
-            .border(0.6.dp, Brand.Line, RoundedCornerShape(18.dp))
+            .border(0.6.dp, Brand.Line, RoundedCornerShape(16.dp))
             .clickable(interactionSource = source, indication = null, enabled = enabled, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .padding(horizontal = 10.dp, vertical = 10.dp)
             .semantics { contentDescription = a.title },
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Icon(painterResource(a.icon), contentDescription = null, tint = Brand.Ink, modifier = Modifier.size(20.dp))
+        Box(
+            Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(Brand.Accent.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(painterResource(a.icon), contentDescription = null, tint = Brand.Accent, modifier = Modifier.size(17.dp))
+        }
         Column(Modifier.weight(1f)) {
-            Text(a.title, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+            Text(a.title, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
             Text(a.hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
@@ -1567,25 +1588,34 @@ private fun NoteCard(number: Int, m: Mark, topic: String, onLocate: () -> Unit, 
                             .padding(horizontal = 6.dp, vertical = 2.dp),
                     )
                 }
-                Text("показать ↗", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "к записям ↗",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Brand.Accent,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Brand.Accent.copy(alpha = 0.12f))
+                        .clickable(onClick = onLocate)
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
             }
             Box(
                 Modifier
-                    .size(32.dp)
+                    .size(28.dp)
                     .clip(CircleShape)
                     .clickable { speak(if (expanded && m.detail != null) "${m.text}. ${m.detail}" else m.text) }
                     .semantics { contentDescription = "Прочитать вслух" },
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(painterResource(R.drawable.ic_volume), contentDescription = null, tint = Brand.InkSoft, modifier = Modifier.size(18.dp))
+                Icon(painterResource(R.drawable.ic_volume), contentDescription = null, tint = Brand.InkSoft, modifier = Modifier.size(16.dp))
             }
         }
-        RichText(m.text, sizePx = 16)
+        RichText(m.text, sizePx = 15)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (m.detail != null) LinkText(if (expanded) "Коротко ↑" else "Подробнее ↓") { expanded = !expanded }
+            if (m.detail != null) LinkText(if (expanded) "Свернуть ↑" else "Подробнее ↓") { expanded = !expanded }
             Spacer(Modifier.weight(1f))
             when {
-                carding -> Text("Делаю карточку…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                carding -> Text("Сохраняю…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 carded != null -> Text(carded!!, style = MaterialTheme.typography.labelMedium, color = if (carded!!.startsWith("✓")) Brand.Ok else Brand.Error)
                 else -> LinkText("В карточки +") {
                     carding = true

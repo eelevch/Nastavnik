@@ -137,7 +137,7 @@ class SettingsRepo(private val context: Context) {
     fun railRight(): Boolean = prefs.getBoolean(K_RAIL_RIGHT, false)
     fun railY(): Float = prefs.getFloat(K_RAIL_Y, 0.15f)
     fun setRail(right: Boolean, y: Float) = prefs.edit { putBoolean(K_RAIL_RIGHT, right); putFloat(K_RAIL_Y, y.coerceIn(0f, 1f)) }
-    fun toolBarTop(): Boolean = prefs.getBoolean(K_TOOLBAR_TOP, false)
+    fun toolBarTop(): Boolean = prefs.getBoolean(K_TOOLBAR_TOP, true)
     fun setToolBarTop(top: Boolean) = prefs.edit { putBoolean(K_TOOLBAR_TOP, top) }
 
     /** Подсказки по жестам листа показаны (один раз). */
