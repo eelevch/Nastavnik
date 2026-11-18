@@ -176,29 +176,42 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
     if (pagesOpen) PagesOverview(ctl, onAdd = { ctl.addPage(ctl.page?.paper ?: Paper.GRID) }) { pagesOpen = false }
     TextDialog(ctl)
 
+    val isFullScreen = ctl.fullScreen
     Box(
         Modifier
             .fillMaxSize()
-            .paperBackdrop()
+            .background(Color(desk))
             .systemBarsPadding(),
     ) {
         Row(Modifier.fillMaxSize()) {
             Column(Modifier.weight(1f).fillMaxHeight()) {
-                NotebookTopBar(ctl, panel, onBack = close, onTogglePanel = { panel = !panel }, onPages = { pagesOpen = true }, importers = importers)
+                if (!isFullScreen) {
+                    NotebookTopBar(ctl, panel, onBack = close, onTogglePanel = { panel = !panel }, onPages = { pagesOpen = true }, importers = importers)
+                }
                 BoxWithConstraints(
                     Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .padding(start = 12.dp, end = if (panel && wide) 0.dp else 12.dp, bottom = 12.dp)
-                        .clip(RoundedCornerShape(24.dp)),
+                        .padding(
+                            start = if (isFullScreen) 0.dp else 12.dp,
+                            end = if (isFullScreen || (panel && wide)) 0.dp else 12.dp,
+                            bottom = if (isFullScreen) 0.dp else 12.dp,
+                        )
+                        .clip(if (isFullScreen) RoundedCornerShape(0.dp) else RoundedCornerShape(24.dp)),
                 ) {
-                    AndroidView(factory = { ctl.ink }, modifier = Modifier.fillMaxSize())
+                    AndroidView(
+                        factory = { ctx ->
+                            ctl.attachContext(ctx)
+                            ctl.ink
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    )
                     SelectionMenu(ctl)
-                    EditorHint(ctl, Modifier.align(Alignment.TopCenter).padding(top = 14.dp))
+                    EditorHint(ctl, Modifier.align(Alignment.TopCenter).padding(top = if (isFullScreen) 72.dp else 14.dp))
                     // Лист увеличен — маленькая плашка с масштабом; нажатие возвращает по ширине.
                     androidx.compose.animation.AnimatedVisibility(
                         visible = abs(ctl.zoom - 1f) > 0.04f,
-                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp),
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
                         enter = fadeIn() + scaleIn(initialScale = 0.8f),
                         exit = fadeOut() + scaleOut(targetScale = 0.8f),
                     ) {
@@ -213,10 +226,63 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                         )
                     }
 
-                    // Страница задачи ДЗ — плашка с проверкой.
-                    HomeworkBar(ctl, Modifier.align(Alignment.BottomCenter).padding(start = 72.dp, end = 16.dp, bottom = 56.dp))
+                    // В полноэкранном режиме: плавающие не прибитые к краям стеклянные островки управления
+                    if (isFullScreen) {
+                        // Плавающий левый верхний островок навигации
+                        Row(
+                            Modifier
+                                .align(Alignment.TopStart)
+                                .padding(start = 16.dp, top = 16.dp)
+                                .glass(CircleShape, 10.dp, strong = true)
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            BarIcon(R.drawable.ic_shrink, "Свернуть полноэкранный режим") { ctl.toggleFullScreen() }
+                            Text(
+                                ctl.meta?.title ?: "Тетрадь",
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 6.dp),
+                            )
+                            BarIcon(R.drawable.ic_chevron_left, "Предыдущая страница", enabled = ctl.index > 0) { ctl.showPage(ctl.index - 1) }
+                            Text("${ctl.index + 1} / ${ctl.pages.size.coerceAtLeast(1)}", style = MaterialTheme.typography.labelMedium)
+                            BarIcon(R.drawable.ic_chevron, "Следующая страница", enabled = ctl.index < ctl.pages.lastIndex) { ctl.showPage(ctl.index + 1) }
+                            BarIcon(R.drawable.ic_plus, "Новая страница") { ctl.addPage(ctl.page?.paper ?: Paper.GRID) }
+                        }
 
-                    // Инструменты — плашкой сбоку, цвета открываются по касанию.
+                        // Плавающий правый верхний островок: фиксация + КНОПКА НАСТАВНИКА
+                        Row(
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(end = 16.dp, top = 16.dp)
+                                .glass(CircleShape, 10.dp, strong = true)
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            BarButton(
+                                if (ctl.lockMode) R.drawable.ic_lock else R.drawable.ic_unlock,
+                                if (ctl.lockMode) "Фиксация листа включена" else "Фиксация листа",
+                                active = ctl.lockMode,
+                                onClick = { ctl.toggleLockMode() },
+                            )
+                            BarButton(
+                                R.drawable.ic_sparkle,
+                                if (panel) "Скрыть наставника" else "Наставник",
+                                active = panel,
+                                onClick = { panel = !panel },
+                            )
+                        }
+                    }
+
+                    // Страница задачи ДЗ — плашка с проверкой.
+                    if (!isFullScreen) {
+                        HomeworkBar(ctl, Modifier.align(Alignment.BottomCenter).padding(start = 72.dp, end = 16.dp, bottom = 56.dp))
+                    }
+
+                    // Инструменты — плашкой сбоку (если не полноэкранный режим и не перенесены наверх)
                     EditorRail(ctl, maxHeight)
                     androidx.compose.animation.AnimatedVisibility(
                         visible = !ctl.loaded,
@@ -340,13 +406,14 @@ private fun NotebookTopBar(
     var moreMenu by remember { mutableStateOf(false) }
     var paperDialog by remember { mutableStateOf(false) }
     var examDialog by remember { mutableStateOf(false) }
+    var deletePageConfirm by remember { mutableStateOf(false) }
     if (paperDialog) PaperDialog(ctl) { paperDialog = false }
     if (examDialog) ExamDialog(onStart = { m -> examDialog = false; ctl.startExam(m) }, onDismiss = { examDialog = false })
     val meta = ctl.meta
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -357,12 +424,16 @@ private fun NotebookTopBar(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
-                .weight(1f)
+                .weight(1f, fill = !ctl.toolBarTop)
                 .clip(RoundedCornerShape(10.dp))
                 .clickable { renaming = true }
                 .padding(horizontal = 6.dp, vertical = 4.dp),
         )
-        // Страницы: стрелки и номер; номер открывает обзор всех страниц.
+        // Кисти перенесены наверх — компактный ряд инструментов прямо в строке названия
+        if (ctl.toolBarTop) {
+            TopToolBar(ctl, Modifier.weight(1f))
+        }
+        // Страницы: стрелки, номер и кнопка быстрого удаления страницы
         Row(
             Modifier.glass(CircleShape, 4.dp, strong = true).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -387,13 +458,35 @@ private fun NotebookTopBar(
                 }
             }
             BarIcon(R.drawable.ic_chevron, "Следующая страница", enabled = ctl.index < ctl.pages.lastIndex) { ctl.showPage(ctl.index + 1) }
+            if (ctl.pages.size > 1) {
+                BarIcon(R.drawable.ic_trash, "Удалить страницу") { deletePageConfirm = true }
+            }
         }
+        // Режим фиксации листа: только 2 пальца + фиксированный зум
+        BarButton(
+            if (ctl.lockMode) R.drawable.ic_lock else R.drawable.ic_unlock,
+            if (ctl.lockMode) "Фиксация включена (только 2 пальца, зум зафиксирован)" else "Включить фиксацию листа",
+            active = ctl.lockMode,
+            onClick = { ctl.toggleLockMode() },
+        )
+        // Полноэкранный режим просмотра конспекта без лишних панелей
+        BarButton(R.drawable.ic_expand, "На весь экран", onClick = { ctl.toggleFullScreen() })
         BarButton(R.drawable.ic_undo, "Отменить", enabled = ctl.canUndo) { ctl.undo() }
         BarButton(R.drawable.ic_redo, "Вернуть", enabled = ctl.canRedo) { ctl.redo() }
         // Всё остальное — в одном меню: страницы, бумага, контрольная, проверка.
         Box {
             BarButton(R.drawable.ic_more, "Ещё") { moreMenu = true }
             DropdownMenu(expanded = moreMenu, onDismissRequest = { moreMenu = false }, containerColor = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
+                MenuItem(if (ctl.toolBarTop) "Панель кистей: сбоку" else "Панель кистей: сверху", R.drawable.ic_panel) {
+                    moreMenu = false
+                    ctl.toggleToolBarPosition()
+                }
+                MenuItem(if (ctl.lockMode) "Выключить фиксацию" else "Фиксация (2 пальца + зум)", if (ctl.lockMode) R.drawable.ic_lock else R.drawable.ic_unlock) {
+                    moreMenu = false
+                    ctl.toggleLockMode()
+                }
+                MenuItem("Полноэкранный режим", R.drawable.ic_expand) { moreMenu = false; ctl.toggleFullScreen() }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 MenuItem("Новая страница", R.drawable.ic_plus) { moreMenu = false; ctl.addPage(ctl.page?.paper ?: Paper.GRID) }
                 MenuItem("Фото или PDF как страница", R.drawable.ic_camera) { moreMenu = false; addMenu = true }
                 MenuItem("Все страницы", R.drawable.ic_pages) { moreMenu = false; onPages() }
@@ -403,6 +496,9 @@ private fun NotebookTopBar(
                 MenuItem((if (ctl.autoCheck) "✓ " else "") + "Проверять, когда остановлюсь", R.drawable.ic_eye) { moreMenu = false; ctl.toggleAutoCheck() }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 MenuItem("Переименовать", R.drawable.ic_pen) { moreMenu = false; renaming = true }
+                if (ctl.pages.size > 1) {
+                    MenuItem("Удалить текущую страницу", R.drawable.ic_trash) { moreMenu = false; deletePageConfirm = true }
+                }
                 MenuItem("Очистить страницу", R.drawable.ic_eraser) { moreMenu = false; ctl.clearPage() }
             }
             DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }, containerColor = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
@@ -413,6 +509,22 @@ private fun NotebookTopBar(
         }
         val mentorAction = if (panel) "Скрыть наставника" else "Показать наставника"
         BarButton(R.drawable.ic_sparkle, mentorAction, active = panel, onClick = onTogglePanel)
+    }
+    if (deletePageConfirm) {
+        AlertDialog(
+            onDismissRequest = { deletePageConfirm = false },
+            title = { Text("Удалить страницу ${ctl.index + 1}?") },
+            text = { Text("Страница будет удалена из тетради.", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+            confirmButton = {
+                InkButton("Удалить", danger = true) {
+                    ctl.deletePage()
+                    deletePageConfirm = false
+                }
+            },
+            dismissButton = { SoftButton("Отмена") { deletePageConfirm = false } },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(24.dp),
+        )
     }
     if (renaming && meta != null) {
         var text by remember { mutableStateOf(meta.title) }
@@ -458,7 +570,7 @@ private fun BarButton(icon: Int, description: String, enabled: Boolean = true, a
 }
 
 @Composable
-private fun BarIcon(icon: Int, description: String, enabled: Boolean, onClick: () -> Unit) {
+private fun BarIcon(icon: Int, description: String, enabled: Boolean = true, onClick: () -> Unit) {
     Box(
         Modifier
             .size(38.dp)

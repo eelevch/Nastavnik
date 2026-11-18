@@ -75,7 +75,18 @@ class InkView(context: Context) : View(context) {
 
     var listener: Listener? = null
     private val drawer = PageDrawer()
-    private val density = resources.displayMetrics.density
+    private var density = resources.displayMetrics.density
+
+    init {
+        // Аппаратное ускорение для плавных 60-120 FPS без дропов кадров
+        setLayerType(LAYER_TYPE_HARDWARE, null)
+    }
+
+    /** Привязать активный Activity-контекст для точного совпадения экранных координат и калибровки пера. */
+    fun updateContext(actContext: Context) {
+        val d = actContext.resources.displayMetrics.density
+        if (d > 0f) density = d
+    }
 
     var page: InkPage? = null
         private set
@@ -101,6 +112,14 @@ class InkView(context: Context) : View(context) {
     var partialEraser: Boolean = false
     var shapeKind: ShapeKind = ShapeKind.LINE
     var fingerDraws: Boolean = false
+
+    /** Режим фиксации: перемещение листа ТОЛЬКО двумя пальцами, а зум строго зафиксирован (защита от случайных смещений). */
+    var lockMode: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
 
     /** Нарисованное от руки и задержанное перо выравнивается в фигуру. */
     var snapShapes: Boolean = true
@@ -287,7 +306,7 @@ class InkView(context: Context) : View(context) {
         }
     }
 
-    private fun selectionBounds(): RectF? {
+    fun selectionBounds(): RectF? {
         val b = Selection.bounds(selStrokes, emptyList()) ?: if (selTexts.isEmpty()) return null else null
         var l = b?.get(0) ?: Float.MAX_VALUE
         var t = b?.get(1) ?: Float.MAX_VALUE
@@ -298,6 +317,25 @@ class InkView(context: Context) : View(context) {
         }
         if (l > r) return null
         return RectF(l - 6, t - 6, r + 6, bt + 6)
+    }
+
+    /** Снимок выделенной области для вопроса наставнику по конкретным формулам / записям. */
+    fun selectionSnapshot(): Bitmap? {
+        val b = selectionBounds() ?: return null
+        val p = page ?: return null
+        val k = 2f
+        val w = (b.width() * k).toInt().coerceIn(32, 2048)
+        val h = (b.height() * k).toInt().coerceIn(32, 2048)
+        return try {
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val c = Canvas(bmp)
+            c.scale(k, k)
+            c.translate(-b.left, -b.top)
+            drawer.drawPage(c, p, bgBitmap, b)
+            bmp
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     private fun reportSelection() {
@@ -1306,6 +1344,7 @@ class InkView(context: Context) : View(context) {
                             startPX = q[0]; startPY = q[1]; moveDx = 0f; moveDy = 0f
                             Mode.MOVE
                         }
+                        lockMode -> Mode.NONE
                         else -> Mode.PAN
                     }
                     velocity?.recycle()
@@ -1338,11 +1377,12 @@ class InkView(context: Context) : View(context) {
                     }
                     mode = Mode.PAN
                 }
-                if (mode == Mode.PAN && e.pointerCount == 2) {
+                if ((mode == Mode.NONE || mode == Mode.PAN) && e.pointerCount >= 2 && !isPen(e, ai)) {
+                    mode = Mode.PAN
                     twoFingerAt = SystemClock.uptimeMillis()
                     twoFingerMoved = false
+                    startTwoFinger(e)
                 }
-                if (mode == Mode.PAN) startTwoFinger(e)
             }
             MotionEvent.ACTION_MOVE -> {
                 when (mode) {
@@ -1358,7 +1398,7 @@ class InkView(context: Context) : View(context) {
                                 moving = true
                                 twoFinger(e)
                             }
-                        } else {
+                        } else if (!lockMode) {
                             if (!moving && hypot(e.x - downX, e.y - downY) < TOUCH_SLOP * density) return true
                             moving = true
                             pageMatrix.postTranslate(e.x - lastX, e.y - lastY)
@@ -1425,6 +1465,7 @@ class InkView(context: Context) : View(context) {
     /** Касание пальцем без движения: текст, снять выделение, двойное — масштаб. */
     private fun tapped(e: MotionEvent) {
         endMoving()
+        if (lockMode) return
         val now = SystemClock.uptimeMillis()
         if (now - downAt > TAP_MS) return
         val q = toPage(e.x, e.y)
@@ -1452,6 +1493,7 @@ class InkView(context: Context) : View(context) {
     }
 
     private fun fling() {
+        if (lockMode) return endMoving()
         val vt = velocity ?: return endMoving()
         vt.computeCurrentVelocity(1000)
         val vx = vt.xVelocity
@@ -1558,7 +1600,7 @@ class InkView(context: Context) : View(context) {
         val fx = (e.getX(0) + e.getX(1)) / 2
         val fy = (e.getY(0) + e.getY(1)) / 2
         val span = hypot(e.getX(0) - e.getX(1), e.getY(0) - e.getY(1))
-        if (lastSpan > 10f) {
+        if (!lockMode && lastSpan > 10f) {
             val k = scale
             val f = (span / lastSpan).coerceIn(0.5f, 2f)
             val nk = (k * f).coerceIn(fitScale() * MIN_ZOOM, fitScale() * MAX_ZOOM)

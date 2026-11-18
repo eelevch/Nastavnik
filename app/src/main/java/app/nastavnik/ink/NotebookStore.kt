@@ -17,6 +17,8 @@ data class NotebookMeta(
     val conversationId: Long = 0,
     /** Тренировочный вариант, который решают в этой тетради (условия видны в панели, ответы знает только наставник). */
     val tasks: List<app.nastavnik.study.PracticeTask> = emptyList(),
+    /** Предмет тетради для группировки в каталоге (например «Математический анализ», «Физика»). */
+    val subject: String = "",
 )
 
 /**
@@ -53,17 +55,17 @@ class NotebookStore(private val root: File) {
     }
 
     /** Новая тетрадь с одной чистой страницей. */
-    fun create(title: String, paper: Paper, now: Long = System.currentTimeMillis()): Pair<NotebookMeta, InkPage> {
+    fun create(title: String, paper: Paper, subject: String = "", now: Long = System.currentTimeMillis()): Pair<NotebookMeta, InkPage> {
         val page = InkPage(newId(now), paper)
-        val m = NotebookMeta(newId(now), title, now, now, listOf(page.id), paper.name)
+        val m = NotebookMeta(newId(now), title, now, now, listOf(page.id), paper.name, subject = subject)
         saveMeta(m)
         savePage(m.id, page)
         return m to page
     }
 
     /** Новая тетрадь из готовых страниц (фото, PDF). */
-    fun createWith(title: String, pages: List<InkPage>, now: Long = System.currentTimeMillis()): NotebookMeta {
-        val m = NotebookMeta(newId(now), title, now, now, pages.map { it.id }, Paper.BLANK.name)
+    fun createWith(title: String, pages: List<InkPage>, subject: String = "", now: Long = System.currentTimeMillis()): NotebookMeta {
+        val m = NotebookMeta(newId(now), title, now, now, pages.map { it.id }, Paper.BLANK.name, subject = subject)
         saveMeta(m)
         pages.forEach { savePage(m.id, it) }
         return m
@@ -95,6 +97,8 @@ class NotebookStore(private val root: File) {
     }
 
     fun rename(m: NotebookMeta, title: String): NotebookMeta = m.copy(title = title.trim().ifEmpty { m.title }).also(::saveMeta)
+
+    fun setSubject(m: NotebookMeta, subject: String): NotebookMeta = m.copy(subject = subject.trim()).also(::saveMeta)
 
     fun delete(id: Long) {
         dir(id).deleteRecursively()

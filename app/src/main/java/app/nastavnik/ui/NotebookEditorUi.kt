@@ -111,6 +111,7 @@ private val RAIL_W = 56.dp
  */
 @Composable
 fun EditorRail(ctl: NotebookController, maxHeight: Dp) {
+    if (ctl.fullScreen || ctl.toolBarTop) return
     val density = LocalDensity.current
     var open by remember { mutableStateOf(false) }
     val alpha by animateFloatAsState(if (ctl.writing && !open) 0.28f else 1f, tween(if (ctl.writing) 160 else 420), label = "railAlpha")
@@ -246,6 +247,144 @@ private fun OptionsButton(ctl: NotebookController, open: Boolean, onClick: () ->
             EditTool.SHAPE -> Icon(painterResource(SHAPES.first { it.first == ctl.shapeKind }.second), contentDescription = null, tint = Color(ctl.penColor), modifier = Modifier.size(22.dp))
             EditTool.ERASER -> Text(if (ctl.partialEraser) "½" else "1", style = MaterialTheme.typography.titleMedium)
             EditTool.LASSO -> Icon(painterResource(R.drawable.ic_paste), contentDescription = null, tint = if (ctl.canPaste) Brand.Ink else Brand.Ink.copy(alpha = 0.3f), modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+/**
+ * Компактный горизонтальный ряд кистей прямо в верхней панели (где название и свободное место).
+ */
+@Composable
+fun TopToolBar(ctl: NotebookController, modifier: Modifier = Modifier) {
+    var openSettings by remember { mutableStateOf(false) }
+    Row(
+        modifier = modifier
+            .glass(CircleShape, 4.dp, strong = true)
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        val shown = if (ctl.tempEraser) EditTool.ERASER else ctl.editTool
+        TOOLS.forEach { spec ->
+            val on = shown == spec.tool
+            val tint = if (on) Brand.Accent else Brand.Ink
+            val bg = if (on) Brand.Accent.copy(alpha = 0.15f) else Color.Transparent
+            Box(
+                Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(bg)
+                    .clickable {
+                        if (on) openSettings = !openSettings else ctl.pickTool(spec.tool)
+                    }
+                    .semantics { contentDescription = spec.label },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(painterResource(spec.icon), contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+            }
+        }
+        // Точка цвета выбранного инструмента
+        val activeColor = when (ctl.editTool) {
+            EditTool.HIGHLIGHTER -> Color(ctl.markerColor)
+            EditTool.PEN, EditTool.SHAPE -> Color(ctl.penColor)
+            else -> Brand.InkSoft
+        }
+        Box(
+            Modifier
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(activeColor)
+                .border(1.dp, Brand.Line, CircleShape)
+                .clickable { openSettings = !openSettings }
+                .semantics { contentDescription = "Цвет и толщина" }
+        )
+        // Кнопка возврата кистей на боковую плашку
+        Box(
+            Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                .clickable { ctl.toggleToolBarPosition() }
+                .semantics { contentDescription = "Перенести кисти сбоку" },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(painterResource(R.drawable.ic_panel), contentDescription = null, tint = Brand.InkSoft, modifier = Modifier.size(15.dp))
+        }
+    }
+    if (openSettings) {
+        Dialog(onDismissRequest = { openSettings = false }) {
+            Box(
+                Modifier
+                    .width(260.dp)
+                    .glass(RoundedCornerShape(24.dp), 18.dp, strong = true)
+                    .padding(16.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    when (ctl.editTool) {
+                        EditTool.PEN -> {
+                            PopTitle("Ручка")
+                            ColorGrid(NotebookController.PENS, ctl.penColor) { ctl.pickPen(it); openSettings = false }
+                            PopTitle("Толщина")
+                            WidthSlider(ctl.penWidth, 1.2f..8f, Color(ctl.penColor)) { ctl.changePenWidth(it) }
+                        }
+                        EditTool.HIGHLIGHTER -> {
+                            PopTitle("Маркер")
+                            ColorGrid(NotebookController.MARKERS, ctl.markerColor, marker = true) { ctl.pickMarker(it); openSettings = false }
+                            PopTitle("Толщина")
+                            WidthSlider(ctl.markerWidth, 10f..36f, Color(ctl.markerColor).copy(alpha = 0.6f)) { ctl.changeMarkerWidth(it) }
+                        }
+                        EditTool.ERASER -> {
+                            PopTitle("Ластик стирает")
+                            RadioRow(!ctl.partialEraser, "Линию целиком") { ctl.choosePartialEraser(false); openSettings = false }
+                            RadioRow(ctl.partialEraser, "Часть линии") { ctl.choosePartialEraser(true); openSettings = false }
+                            SoftButton("Очистить страницу", Modifier.fillMaxWidth(), icon = R.drawable.ic_trash) { ctl.clearPage(); openSettings = false }
+                        }
+                        EditTool.LASSO -> {
+                            PopTitle("Лассо")
+                            Text("Обведи записи — их можно двигать, спросить наставника, копировать.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (ctl.canPaste) InkButton("Вставить", Modifier.fillMaxWidth(), icon = R.drawable.ic_paste) { ctl.paste(); openSettings = false }
+                        }
+                        EditTool.SHAPE -> {
+                            PopTitle("Фигура")
+                            SHAPES.chunked(3).forEach { row ->
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    row.forEach { (k, icon) ->
+                                        val on = ctl.shapeKind == k
+                                        Box(
+                                            Modifier
+                                                .size(width = 66.dp, height = 44.dp)
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(if (on) Brand.Accent else Brand.Line)
+                                                .clickable { ctl.pickShape(k); openSettings = false },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(painterResource(icon), contentDescription = null, tint = if (on) Brand.OnAccent else Brand.Ink, modifier = Modifier.size(22.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        EditTool.TEXT -> {
+                            PopTitle("Размер шрифта")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                NotebookController.TEXT_SIZES.forEachIndexed { idx, sz ->
+                                    val on = ctl.textSize == sz
+                                    Box(
+                                        Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(if (on) Brand.Accent else Brand.Line)
+                                            .clickable { ctl.pickTextSize(sz); openSettings = false }
+                                            .padding(vertical = 8.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text(listOf("Мелкий", "Обычный", "Крупный")[idx], style = MaterialTheme.typography.labelMedium, color = if (on) Brand.OnAccent else Brand.Ink)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -478,6 +617,7 @@ fun SelectionMenu(ctl: NotebookController) {
                     .padding(horizontal = 6.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                MenuAction(R.drawable.ic_sparkle, "Спросить") { ctl.askSelection() }
                 MenuAction(R.drawable.ic_copy, "Копировать") { ctl.copySelection() }
                 MenuAction(R.drawable.ic_duplicate, "Дублировать") { ctl.duplicateSelection() }
                 MenuAction(R.drawable.ic_palette_dot, "Цвет") { colors = !colors }

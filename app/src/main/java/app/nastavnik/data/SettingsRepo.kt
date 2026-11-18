@@ -137,6 +137,8 @@ class SettingsRepo(private val context: Context) {
     fun railRight(): Boolean = prefs.getBoolean(K_RAIL_RIGHT, false)
     fun railY(): Float = prefs.getFloat(K_RAIL_Y, 0.15f)
     fun setRail(right: Boolean, y: Float) = prefs.edit { putBoolean(K_RAIL_RIGHT, right); putFloat(K_RAIL_Y, y.coerceIn(0f, 1f)) }
+    fun toolBarTop(): Boolean = prefs.getBoolean(K_TOOLBAR_TOP, false)
+    fun setToolBarTop(top: Boolean) = prefs.edit { putBoolean(K_TOOLBAR_TOP, top) }
 
     /** Подсказки по жестам листа показаны (один раз). */
     fun editorTipsShown(): Boolean = prefs.getBoolean(K_TIPS, false)
@@ -482,6 +484,7 @@ class SettingsRepo(private val context: Context) {
         private const val K_TIPS = "editor_tips_shown"
         private const val K_RAIL_RIGHT = "rail_right"
         private const val K_RAIL_Y = "rail_y"
+        private const val K_TOOLBAR_TOP = "toolbar_top"
         private const val K_LIGHT = "theme_light"
         private const val K_DARK = "theme_dark"
         private const val K_ACCENT = "theme_accent"

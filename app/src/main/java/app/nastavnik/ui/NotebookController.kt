@@ -108,6 +108,38 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
     var railY by mutableStateOf(app.settings.railY())
         private set
 
+    /** Панель кистей перенесена наверх (где название, где много свободного места). */
+    var toolBarTop by mutableStateOf(app.settings.toolBarTop())
+        private set
+
+    fun toggleToolBarPosition() {
+        toolBarTop = !toolBarTop
+        app.settings.setToolBarTop(toolBarTop)
+        showHint(if (toolBarTop) "Кисти перенесены наверх" else "Кисти перенесены сбоку")
+    }
+
+    /** Режим фиксации: перемещение строго двумя пальцами, а зум закреплён. */
+    var lockMode by mutableStateOf(false)
+        private set
+
+    fun toggleLockMode() {
+        lockMode = !lockMode
+        ink.lockMode = lockMode
+        showHint(if (lockMode) "Фиксация листа: перемещение 2 пальцами, зум закреплён" else "Свободное перемещение и зум")
+    }
+
+    /** Полноэкранный режим чтения конспекта: без боковых плашек, плавающие элементы и кнопка наставника. */
+    var fullScreen by mutableStateOf(false)
+        private set
+
+    fun toggleFullScreen() {
+        fullScreen = !fullScreen
+    }
+
+    fun attachContext(context: android.content.Context) {
+        ink.updateContext(context)
+    }
+
     fun moveRail(right: Boolean, y: Float) {
         railRight = right
         railY = y
@@ -423,6 +455,43 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
     fun scaleSelection(factor: Float) = ink.scaleSelection(factor)
     fun clearSelection() = ink.clearSelection()
 
+    /** Задать вопрос наставнику конкретно по выделенной лассо области (штрихам, формулам, задачам). */
+    fun askSelection(customQuestion: String? = null) {
+        val bmp = ink.selectionSnapshot() ?: return
+        if (app.settings.notReadyReason() != null) return
+        val question = customQuestion ?: "Объясни выделенное: что здесь написано, всё ли верно и как решить?"
+        autoJob?.cancel()
+        val now = System.currentTimeMillis()
+        val userMsgId = now * 10L
+        val botMsgId = userMsgId + 1L
+        chatMessages.add(MentorChatMessage(id = userMsgId, isUser = true, text = question, kind = AskKind.USER, timestamp = now))
+        chatMessages.add(
+            MentorChatMessage(
+                id = botMsgId,
+                isUser = false,
+                text = "",
+                kind = AskKind.USER,
+                answer = AnswerUi(seq = botMsgId, kind = AskKind.USER, question = question, streaming = true, status = "Изучаю выделенную область…"),
+                timestamp = now,
+            )
+        )
+        val p = page ?: return
+        answerPageId = p.id
+        answerScale = 1f
+        showHint("Вопрос по выделенному отправлен")
+        val stream = java.io.ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+        val jpeg = stream.toByteArray()
+        val w = bmp.width
+        val h = bmp.height
+        bmp.recycle()
+        mentor.ask(question, AskKind.USER) {
+            val geom = ShotGeometry(IRect(0, 0, w, h), w, h, 0, null, null)
+            ShotGeometry.last = geom
+            ShotResult.Ok(jpeg, geom, null, emptyList())
+        }
+    }
+
     fun copySelection() {
         val (s, t) = ink.selectionCopy()
         if (s.isEmpty() && t.isEmpty()) return
@@ -528,7 +597,7 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         }
     }
 
-    /** Уходим из тетради: сохранить страницу и обновить превью. */
+    /** Уходим из тетради: сохранить страницу и обновить превью. Если конспект пустой — удаляем его. */
     fun close() {
         autoJob?.cancel()
         examJob?.cancel()
@@ -541,6 +610,14 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         contextCache.clear()
         cleanPageCache.clear()
         val m = meta ?: return
+        // Пользовательское требование: если в тетради ничего не было сделано — удаляем её, не захламляя список
+        val isEmpty = pages.all { it.strokes.isEmpty() && it.texts.isEmpty() && it.background == null }
+        if (isEmpty && m.tasks.isEmpty()) {
+            app.appScope.launch(Dispatchers.IO) {
+                runCatching { nbs.store.delete(notebookId) }
+            }
+            return
+        }
         val first = pages.firstOrNull() ?: return
         app.appScope.launch {
             flushSaveNow()

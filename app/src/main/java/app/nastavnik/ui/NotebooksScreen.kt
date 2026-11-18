@@ -6,7 +6,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -125,11 +127,13 @@ fun NotebooksScreen(resumeTick: Int, onBack: () -> Unit, onOpen: (Long) -> Unit,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            var selectedSubject by remember { mutableStateOf("Все") }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Paper.entries.forEach { p ->
                     PaperChoice(p) {
                         scope.launch {
-                            val (m, _) = withContext(Dispatchers.IO) { nbs.store.create(nbs.defaultTitle(), p) }
+                            val subj = if (selectedSubject != "Все" && selectedSubject != "Без предмета") selectedSubject else ""
+                            val (m, _) = withContext(Dispatchers.IO) { nbs.store.create(nbs.defaultTitle(), p, subject = subj) }
                             onOpen(m.id)
                         }
                     }
@@ -147,8 +151,48 @@ fun NotebooksScreen(resumeTick: Int, onBack: () -> Unit, onOpen: (Long) -> Unit,
         val items = list ?: return@ScreenScaffold
         if (items.isEmpty()) return@ScreenScaffold
         SectionLabel("Мои тетради")
+
+        val uniqueSubjects = remember(items) {
+            items.map { it.subject.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
+        }
+        var filterSubject by remember { mutableStateOf("Все") }
+
+        // Заметные интерактивные группы по предметам: чипы фильтрации с подсчётом конспектов
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ChipButton("Все тетради · ${items.size}", selected = filterSubject == "Все") {
+                filterSubject = "Все"
+            }
+            uniqueSubjects.forEach { subj ->
+                val count = items.count { it.subject.trim() == subj }
+                ChipButton("$subj · $count", selected = filterSubject == subj) {
+                    filterSubject = subj
+                }
+            }
+            val noSubjCount = items.count { it.subject.isBlank() }
+            if (uniqueSubjects.isNotEmpty() && noSubjCount > 0) {
+                ChipButton("Без предмета · $noSubjCount", selected = filterSubject == "Без предмета") {
+                    filterSubject = "Без предмета"
+                }
+            }
+        }
+
+        val filtered = remember(items, filterSubject) {
+            when (filterSubject) {
+                "Все" -> items
+                "Без предмета" -> items.filter { it.subject.isBlank() }
+                else -> items.filter { it.subject.trim() == filterSubject }
+            }
+        }
+
         FlowRow(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            items.forEach { m ->
+            filtered.forEach { m ->
                 NotebookCard(m, onOpen = { onOpen(m.id) }, onChanged = { reload++ })
             }
         }
@@ -222,6 +266,7 @@ private fun NotebookCard(m: NotebookMeta, onOpen: () -> Unit, onChanged: () -> U
     var menu by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
+    var choosingSubject by remember { mutableStateOf(false) }
     val thumb by produceState<ImageBitmap?>(null, m.id, m.updatedAt) {
         value = withContext(Dispatchers.IO) {
             val f = nbs.store.thumb(m.id)
@@ -256,6 +301,19 @@ private fun NotebookCard(m: NotebookMeta, onOpen: () -> Unit, onChanged: () -> U
                 Icon(painterResource(R.drawable.ic_notebook), contentDescription = null, tint = Brand.Ink.copy(alpha = 0.3f), modifier = Modifier.size(36.dp))
             }
         }
+        if (m.subject.isNotBlank()) {
+            Text(
+                m.subject,
+                style = MaterialTheme.typography.labelSmall,
+                color = Brand.Accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Brand.Accent.copy(alpha = 0.12f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(m.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -271,11 +329,37 @@ private fun NotebookCard(m: NotebookMeta, onOpen: () -> Unit, onChanged: () -> U
                     Icon(painterResource(R.drawable.ic_more), contentDescription = "Действия с тетрадью", tint = Brand.Ink, modifier = Modifier.size(20.dp))
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
+                    DropdownMenuItem(text = { Text("Задать предмет") }, onClick = { menu = false; choosingSubject = true })
                     DropdownMenuItem(text = { Text("Переименовать") }, onClick = { menu = false; renaming = true })
                     DropdownMenuItem(text = { Text("Удалить") }, onClick = { menu = false; confirm = true })
                 }
             }
         }
+    }
+    if (choosingSubject) {
+        var subjectText by remember { mutableStateOf(m.subject) }
+        AlertDialog(
+            onDismissRequest = { choosingSubject = false },
+            title = { Text("Предмет тетради") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Например: Математический анализ, Физика, Информатика", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    AppTextField(subjectText, { subjectText = it }, "Название предмета")
+                }
+            },
+            confirmButton = {
+                InkButton("Сохранить") {
+                    scope.launch {
+                        withContext(Dispatchers.IO) { nbs.store.setSubject(m, subjectText) }
+                        onChanged()
+                    }
+                    choosingSubject = false
+                }
+            },
+            dismissButton = { SoftButton("Отмена") { choosingSubject = false } },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(28.dp),
+        )
     }
     if (renaming) {
         var text by remember { mutableStateOf(m.title) }
