@@ -16,6 +16,7 @@ import app.nastavnik.data.AppSettings
 import app.nastavnik.data.AppUsage
 import app.nastavnik.data.CoordStats
 import app.nastavnik.data.SettingsRepo
+import app.nastavnik.data.TelegramMetrics
 import app.nastavnik.data.Updater
 import app.nastavnik.data.UpdateInfo
 import app.nastavnik.network.NetworkPolicy
@@ -162,6 +163,7 @@ class NastavnikApp : Application() {
         Alarms.rescheduleAll(this)
         GradesJob.schedule(this)
         checkUpdateInBackground()
+        TelegramMetrics.reportAppOpen(this)
     }
 
     private fun createChannels() {

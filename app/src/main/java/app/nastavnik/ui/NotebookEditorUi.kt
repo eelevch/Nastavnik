@@ -112,7 +112,7 @@ private val RAIL_W = 56.dp
  */
 @Composable
 fun EditorRail(ctl: NotebookController, maxHeight: Dp) {
-    if (ctl.fullScreen || ctl.toolBarTop) return
+    if (ctl.toolBarTop) return
     val density = LocalDensity.current
     var open by remember { mutableStateOf(false) }
     val alpha by animateFloatAsState(if (ctl.writing && !open) 0.28f else 1f, tween(if (ctl.writing) 160 else 420), label = "railAlpha")

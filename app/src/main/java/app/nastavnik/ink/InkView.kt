@@ -613,12 +613,14 @@ class InkView(context: Context) : View(context) {
         shadow.color = if (dark) 0x40000000 else 0x1416161A
         c.drawRect(-2f / k, 2f / k, PAGE_W + 2f / k, p.height + 5f / k, shadow)
 
-        // При скролле и панорамировании (moving), а также при покадровой анимации окна наставника (isResizing)
+        // При скролле и панорамировании (moving), покадровой анимации окна наставника (isResizing),
+        // а также при рисовании стилусом/пальцем, стирании ластиком, выделении и трансформациях (isInteracting)
         // используем готовый растровый кэш (0.1 мс на кадр, 120 FPS).
-        // В покое (moving == false && !isResizing), а также при рисовании и стирании ластиком рисуем НАПРЯМУЮ ВЕКТОРОМ:
-        // это обеспечивает 100% максимальную чёткость и качество линий экрана планшета без размытия растра!
+        // В покое (когда перо поднято и экран статичен) отрисовываем напрямую вектором:
+        // это обеспечивает 100% максимальную чёткость и качество линий экрана планшета в покое.
         val isResizing = SystemClock.uptimeMillis() < resizingUntil
-        if (moving || isResizing) {
+        val isInteracting = moving || isResizing || current != null || mode != Mode.NONE || morph != null || shapePreview.isNotEmpty()
+        if (isInteracting) {
             val b = if (pageCacheValid && pageCache != null && !pageCache!!.isRecycled) pageCache else renderPageCache()
             if (b != null && !b.isRecycled) {
                 pageSrcRect.set(0, 0, b.width, b.height)

@@ -256,6 +256,13 @@ class SettingsRepo(private val context: Context) {
     fun debugBaseUrl(): String? = prefs.getString(K_DEBUG_BASE_URL, null)?.takeIf { it.isNotBlank() }
     fun setDebugBaseUrl(url: String?) = prefs.edit { putString(K_DEBUG_BASE_URL, url) }
 
+    fun telegramBotToken(): String = prefs.getString(K_TG_BOT_TOKEN, "").orEmpty()
+    fun telegramChatId(): String = prefs.getString(K_TG_CHAT_ID, "").orEmpty()
+    fun setTelegramTelemetry(token: String, chatId: String) = prefs.edit {
+        putString(K_TG_BOT_TOKEN, token)
+        putString(K_TG_CHAT_ID, chatId)
+    }
+
     // --- API-ключ ---
 
     /** false, если зашифрованное хранилище не открылось (тогда ключ живёт только до перезапуска). */
@@ -522,5 +529,7 @@ class SettingsRepo(private val context: Context) {
         private const val K_KEY_STAMP = "api_key_stamp"
         private const val K_DEBUG_BASE_URL = "debug_base_url"
         private const val K_ALLOW_INSECURE_LOCAL = "allow_insecure_local"
+        private const val K_TG_BOT_TOKEN = "tg_bot_token"
+        private const val K_TG_CHAT_ID = "tg_chat_id"
     }
 }

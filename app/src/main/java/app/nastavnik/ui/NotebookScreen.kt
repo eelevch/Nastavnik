@@ -180,7 +180,6 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
     if (pagesOpen) PagesOverview(ctl, onAdd = { ctl.addPage(ctl.page?.paper ?: Paper.GRID) }) { pagesOpen = false }
     TextDialog(ctl)
 
-    val isFullScreen = ctl.fullScreen
     Box(
         Modifier
             .fillMaxSize()
@@ -188,9 +187,7 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
             .systemBarsPadding(),
     ) {
         Column(Modifier.fillMaxSize()) {
-            if (!isFullScreen) {
-                NotebookTopBar(ctl, panel, onBack = close, onTogglePanel = { panel = !panel }, onPages = { pagesOpen = true }, importers = importers)
-            }
+            NotebookTopBar(ctl, panel, onBack = close, onTogglePanel = { panel = !panel }, onPages = { pagesOpen = true }, importers = importers)
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -201,11 +198,11 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                         .weight(1f)
                         .fillMaxWidth()
                         .padding(
-                            start = if (isFullScreen) 0.dp else 12.dp,
-                            end = if (isFullScreen || (panel && wide)) 0.dp else 12.dp,
-                            bottom = if (isFullScreen) 0.dp else 12.dp,
+                            start = 12.dp,
+                            end = if (panel && wide) 0.dp else 12.dp,
+                            bottom = 12.dp,
                         )
-                        .clip(if (isFullScreen) RoundedCornerShape(0.dp) else RoundedCornerShape(24.dp)),
+                        .clip(RoundedCornerShape(24.dp)),
                 ) {
                     AndroidView(
                         factory = { ctx ->
@@ -215,7 +212,7 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                         modifier = Modifier.fillMaxSize(),
                     )
                     SelectionMenu(ctl)
-                    EditorHint(ctl, Modifier.align(Alignment.TopCenter).padding(top = if (isFullScreen) 72.dp else 14.dp))
+                    EditorHint(ctl, Modifier.align(Alignment.TopCenter).padding(top = 14.dp))
                     // Лист увеличен — маленькая плашка с масштабом; нажатие возвращает по ширине.
                     androidx.compose.animation.AnimatedVisibility(
                         visible = abs(ctl.zoom - 1f) > 0.04f,
@@ -234,54 +231,8 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                         )
                     }
 
-                    // В полноэкранном режиме: плавающие не прибитые к краям стеклянные островки управления
-                    if (isFullScreen) {
-                        // Плавающий левый верхний островок навигации
-                        Row(
-                            Modifier
-                                .align(Alignment.TopStart)
-                                .padding(start = 16.dp, top = 16.dp)
-                                .glass(CircleShape, 10.dp, strong = true)
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            BarIcon(R.drawable.ic_shrink, "Свернуть полноэкранный режим") { ctl.toggleFullScreen() }
-                            BarIcon(R.drawable.ic_chevron_left, "Предыдущая страница", enabled = ctl.index > 0) { ctl.showPage(ctl.index - 1) }
-                            Text("${ctl.index + 1} / ${ctl.pages.size.coerceAtLeast(1)}", style = MaterialTheme.typography.labelMedium)
-                            BarIcon(R.drawable.ic_chevron, "Следующая страница", enabled = ctl.index < ctl.pages.lastIndex) { ctl.showPage(ctl.index + 1) }
-                            BarIcon(R.drawable.ic_plus, "Новая страница") { ctl.addPage(ctl.page?.paper ?: Paper.GRID) }
-                        }
-
-                        // Плавающий правый верхний островок: фиксация + КНОПКА НАСТАВНИКА
-                        Row(
-                            Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(end = 16.dp, top = 16.dp)
-                                .glass(CircleShape, 10.dp, strong = true)
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            BarButton(
-                                if (ctl.lockMode) R.drawable.ic_lock else R.drawable.ic_unlock,
-                                if (ctl.lockMode) "Фиксация листа включена" else "Фиксация листа",
-                                active = ctl.lockMode,
-                                onClick = { ctl.toggleLockMode() },
-                            )
-                            BarButton(
-                                R.drawable.ic_sparkle,
-                                if (panel) "Скрыть наставника" else "Наставник",
-                                active = panel,
-                                onClick = { panel = !panel },
-                            )
-                        }
-                    }
-
                     // Страница задачи ДЗ — плашка с проверкой.
-                    if (!isFullScreen) {
-                        HomeworkBar(ctl, Modifier.align(Alignment.BottomCenter).padding(start = 72.dp, end = 16.dp, bottom = 56.dp))
-                    }
+                    HomeworkBar(ctl, Modifier.align(Alignment.BottomCenter).padding(start = 72.dp, end = 16.dp, bottom = 56.dp))
 
                     androidx.compose.animation.AnimatedVisibility(
                         visible = !ctl.loaded,
@@ -482,8 +433,6 @@ private fun NotebookTopBar(
             active = ctl.lockMode,
             onClick = { ctl.toggleLockMode() },
         )
-        // Полноэкранный режим просмотра конспекта без лишних панелей
-        BarButton(R.drawable.ic_expand, "На весь экран", onClick = { ctl.toggleFullScreen() })
         BarButton(R.drawable.ic_undo, "Отменить", enabled = ctl.canUndo) { ctl.undo() }
         BarButton(R.drawable.ic_redo, "Вернуть", enabled = ctl.canRedo) { ctl.redo() }
         // Всё остальное — в одном меню: страницы, бумага, контрольная, проверка.
@@ -498,7 +447,6 @@ private fun NotebookTopBar(
                     moreMenu = false
                     ctl.toggleLockMode()
                 }
-                MenuItem("Полноэкранный режим", R.drawable.ic_expand) { moreMenu = false; ctl.toggleFullScreen() }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 MenuItem("Новая страница", R.drawable.ic_plus) { moreMenu = false; ctl.addPage(ctl.page?.paper ?: Paper.GRID) }
                 MenuItem("Фото или PDF как страница", R.drawable.ic_camera) { moreMenu = false; addMenu = true }
