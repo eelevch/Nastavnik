@@ -13,6 +13,7 @@ import app.nastavnik.NastavnikApp
 import app.nastavnik.ai.NBox
 import app.nastavnik.ai.Prompts
 import app.nastavnik.capture.ImageUtils
+import app.nastavnik.data.DeviceProfile
 import app.nastavnik.geom.IRect
 import app.nastavnik.ink.InkPage
 import app.nastavnik.ink.InkView
@@ -299,8 +300,10 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
 
     /** Миниатюра страницы для обзора тетради. */
     suspend fun thumbnail(p: InkPage, widthPx: Int): Bitmap = withContext(Dispatchers.Default) {
+        val isWeak = DeviceProfile.isWeakDevice(app)
+        val cfg = if (isWeak) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888
         val bg = nbs.background(notebookId, p)
-        PageRenderer.render(p, bg, widthPx)
+        PageRenderer.render(p, bg, widthPx, cfg)
     }
 
     fun deletePage() {

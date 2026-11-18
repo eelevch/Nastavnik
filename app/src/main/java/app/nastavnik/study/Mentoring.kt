@@ -40,6 +40,13 @@ object MistakeMemory {
 
 /** Текст подсказки для озвучки: без разметки, формулы — словами, как их читают вслух. */
 object SpeakText {
+    private val regexFormula = Regex("""\$\$?([^$]+)\$\$?""")
+    private val regexMarkdown = Regex("""[*_`#>]+""")
+    private val regexSpaces = Regex("""\s+""")
+    private val regexPunctuation = Regex("""\s+([,.?!:;])""")
+    private val regexMinus = Regex("""(?<=\s|^)-""")
+    private val regexBrackets = Regex("""[{}()\\]""")
+
     private val replacements = listOf(
         Regex("""\\frac\{([^{}]*)\}\{([^{}]*)\}""") to "$1 делить на $2",
         Regex("""\\sqrt\{([^{}]*)\}""") to "корень из $1",
@@ -67,18 +74,18 @@ object SpeakText {
     fun from(markdown: String): String {
         var s = markdown
         // Формулы: сначала содержимое $…$, потом общая чистка.
-        s = s.replace(Regex("""\$\$?([^$]+)\$\$?""")) { m -> " " + mathToWords(m.groupValues[1]) + " " }
-        s = s.replace(Regex("""[*_`#>]+"""), "")
+        s = s.replace(regexFormula) { m -> " " + mathToWords(m.groupValues[1]) + " " }
+        s = s.replace(regexMarkdown, "")
         // Пробел перед знаком препинания — остаток от формулы.
-        return s.replace(Regex("""\s+"""), " ").replace(Regex("""\s+([,.?!:;])"""), "$1").trim()
+        return s.replace(regexSpaces, " ").replace(regexPunctuation, "$1").trim()
     }
 
     fun mathToWords(tex: String): String {
         var s = tex
         replacements.forEach { (re, to) -> s = s.replace(re, to) }
-        s = s.replace("=", " равно ").replace("+", " плюс ").replace("−", " минус ").replace(Regex("""(?<=\s|^)-"""), " минус ")
+        s = s.replace("=", " равно ").replace("+", " плюс ").replace("−", " минус ").replace(regexMinus, " минус ")
             .replace("<", " меньше ").replace(">", " больше ").replace("/", " делить на ")
-            .replace(Regex("""[{}()\\]"""), " ")
-        return s.replace(Regex("""\s+"""), " ").trim()
+            .replace(regexBrackets, " ")
+        return s.replace(regexSpaces, " ").trim()
     }
 }

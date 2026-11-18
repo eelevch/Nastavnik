@@ -445,10 +445,15 @@ object PageRenderer {
 
     /** Страница шириной [widthPx] пикселей (высота — по пропорциям страницы). */
     @Synchronized
-    fun render(page: InkPage, background: Bitmap?, widthPx: Int): Bitmap {
+    fun render(
+        page: InkPage,
+        background: Bitmap?,
+        widthPx: Int,
+        config: Bitmap.Config = Bitmap.Config.ARGB_8888,
+    ): Bitmap {
         val k = widthPx / PAGE_W
         val h = (page.height * k).toInt().coerceAtLeast(1)
-        val bmp = Bitmap.createBitmap(widthPx, h, Bitmap.Config.ARGB_8888)
+        val bmp = Bitmap.createBitmap(widthPx, h, config)
         val c = Canvas(bmp)
         c.scale(k, k)
         drawer.drawPage(c, page, background)

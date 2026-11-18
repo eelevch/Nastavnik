@@ -11,19 +11,27 @@ import kotlin.math.roundToInt
  */
 object DeviceProfile {
 
+    @Volatile
+    private var cachedIsWeak: Boolean? = null
+
     /**
      * Слабое устройство: мало оперативной памяти (isLowRamDevice или <= 3.5 ГБ),
      * старый/бюджетный процессор (<= 4 ядер).
+     * Результат кэшируется, чтобы исключить повторные IPC binder-вызовы к ActivityManagerService во время отрисовки.
      */
     fun isWeakDevice(context: Context): Boolean {
+        cachedIsWeak?.let { return it }
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-        if (am?.isLowRamDevice == true) return true
+        if (am?.isLowRamDevice == true) {
+            cachedIsWeak = true
+            return true
+        }
         val mem = ActivityManager.MemoryInfo()
         am?.getMemoryInfo(mem)
         val totalGb = mem.totalMem / (1024.0 * 1024.0 * 1024.0)
-        if (totalGb > 0 && totalGb <= 3.5) return true
-        if (Runtime.getRuntime().availableProcessors() <= 4) return true
-        return false
+        val weak = (totalGb > 0 && totalGb <= 3.5) || Runtime.getRuntime().availableProcessors() <= 4
+        cachedIsWeak = weak
+        return weak
     }
 
     /**

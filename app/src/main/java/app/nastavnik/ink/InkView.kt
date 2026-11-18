@@ -769,8 +769,10 @@ class InkView(context: Context) : View(context) {
 
     private fun snapshot(): Bitmap? {
         if (width <= 0 || height <= 0) return null
+        val isWeak = app.nastavnik.data.DeviceProfile.isWeakDevice(context)
+        val cfg = if (isWeak) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888
         return try {
-            val b = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val b = Bitmap.createBitmap(width, height, cfg)
             val c = Canvas(b)
             if (cacheValid && cacheMatrix == pageMatrix && cache != null && !cache!!.isRecycled) {
                 c.drawBitmap(cache!!, 0f, 0f, null)

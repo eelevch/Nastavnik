@@ -55,7 +55,11 @@ class Notebooks(private val context: Context) {
             BitmapFactory.decodeFile(f.path, opts)
             var sample = 1
             while (max(opts.outWidth, opts.outHeight) / (sample * 2) >= maxSide) sample *= 2
-            BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = sample })
+            val decodeOpts = BitmapFactory.Options().apply {
+                inSampleSize = sample
+                if (isWeakDevice) inPreferredConfig = Bitmap.Config.RGB_565
+            }
+            BitmapFactory.decodeFile(f.path, decodeOpts)
         }?.also { bgCache.put(key, it) }
     }
 
