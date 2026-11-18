@@ -76,6 +76,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableHighRefreshRate()
         // Фон всегда светлый — значки строки состояния тёмные и при тёмной теме системы.
         val bars = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
         enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
@@ -276,6 +277,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        enableHighRefreshRate()
         resumeTick++
         StudyWidget.refresh(this)
         app.sync.onForeground()
@@ -284,6 +286,35 @@ class MainActivity : ComponentActivity() {
         // Доступ к «Не беспокоить» могли только что выдать в настройках системы.
         app.appScope.launch { runCatching { LessonQuiet.update(this@MainActivity) } }
         TelegramMetrics.reportAppOpen(this)
+    }
+
+    /**
+     * Включение максимальной частоты экрана (120/144 Гц) для плавной анимации и мгновенного отклика пера.
+     */
+    private fun enableHighRefreshRate() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            runCatching {
+                val display = display
+                val modes = display?.supportedModes ?: emptyArray()
+                val maxMode = modes.maxByOrNull { it.refreshRate }
+                if (maxMode != null && maxMode.refreshRate > 60f) {
+                    val lp = window.attributes
+                    lp.preferredDisplayModeId = maxMode.modeId
+                    window.attributes = lp
+                }
+            }
+        } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            runCatching {
+                @Suppress("DEPRECATION")
+                val modes = window.windowManager.defaultDisplay.supportedModes
+                val maxMode = modes.maxByOrNull { it.refreshRate }
+                if (maxMode != null && maxMode.refreshRate > 60f) {
+                    val lp = window.attributes
+                    lp.preferredDisplayModeId = maxMode.modeId
+                    window.attributes = lp
+                }
+            }
+        }
     }
 
     override fun onStop() {

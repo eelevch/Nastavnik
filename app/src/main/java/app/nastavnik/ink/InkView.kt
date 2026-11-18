@@ -796,7 +796,7 @@ class InkView(context: Context) : View(context) {
 
     // ---------------- листание страниц ----------------
 
-    private class Turn(val old: Bitmap, val direction: Int, var t: Float = 0f)
+    private class Turn(val old: Bitmap, val next: Bitmap?, val direction: Int, var t: Float = 0f)
 
     private var turning: Turn? = null
     private var turnAnim: ValueAnimator? = null
@@ -804,7 +804,10 @@ class InkView(context: Context) : View(context) {
     private fun cancelTurn() {
         turnAnim?.cancel()
         turnAnim = null
-        turning?.old?.let { if (!it.isRecycled) it.recycle() }
+        turning?.let {
+            if (!it.old.isRecycled) it.old.recycle()
+            if (it.next != null && !it.next.isRecycled) it.next.recycle()
+        }
         turning = null
     }
 
@@ -824,10 +827,12 @@ class InkView(context: Context) : View(context) {
 
     private fun animatePageTurn(old: Bitmap, direction: Int) {
         cancelTurn()
-        val turn = Turn(old, direction)
+        // Снимок новой страницы делаем ровно ОДИН раз перед анимацией, а не на каждом кадре
+        val next = snapshot()
+        val turn = Turn(old, next, direction)
         turning = turn
         turnAnim = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 300
+            duration = 260
             interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
             addUpdateListener {
                 turn.t = it.animatedValue as Float
@@ -840,6 +845,7 @@ class InkView(context: Context) : View(context) {
                         turnAnim = null
                     }
                     if (!old.isRecycled) old.recycle()
+                    if (next != null && !next.isRecycled) next.recycle()
                     invalidate()
                 }
             })
@@ -852,8 +858,6 @@ class InkView(context: Context) : View(context) {
     /** Старая страница уходит в сторону, чуть уменьшаясь и тая; новая въезжает следом. */
     private fun drawTurn(canvas: Canvas, turn: Turn) {
         if (turn.old.isRecycled) return
-        val b = snapshot() ?: return
-        if (b.isRecycled) return
         val shift = width * 0.22f
         canvas.drawColor(desk)
         canvas.save()
@@ -862,8 +866,13 @@ class InkView(context: Context) : View(context) {
         turnPaint.alpha = ((1 - turn.t) * 255).toInt()
         canvas.drawBitmap(turn.old, -turn.direction * shift * turn.t, 0f, turnPaint)
         canvas.restore()
-        turnPaint.alpha = (turn.t * 255).toInt()
-        canvas.drawBitmap(b, turn.direction * shift * (1 - turn.t), 0f, turnPaint)
+        val next = turn.next
+        if (next != null && !next.isRecycled) {
+            turnPaint.alpha = (turn.t * 255).toInt()
+            canvas.drawBitmap(next, turn.direction * shift * (1 - turn.t), 0f, turnPaint)
+        } else {
+            drawScene(canvas)
+        }
     }
 
     // ---------------- курсор пера ----------------

@@ -193,13 +193,13 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                     .fillMaxWidth()
                     .weight(1f),
             ) {
-                BoxWithConstraints(
+                Box(
                     Modifier
                         .weight(1f)
-                        .fillMaxWidth()
+                        .fillMaxHeight()
                         .padding(
                             start = 12.dp,
-                            end = if (panel && wide) 0.dp else 12.dp,
+                            end = if (panel && wide) 4.dp else 12.dp,
                             bottom = 12.dp,
                         )
                         .clip(RoundedCornerShape(24.dp)),
