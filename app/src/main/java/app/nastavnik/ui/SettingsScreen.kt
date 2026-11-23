@@ -142,16 +142,35 @@ fun SettingsScreen(onBack: () -> Unit, onAppearance: () -> Unit = {}, onOnboardi
                     androidx.compose.runtime.LaunchedEffect(Unit) { speaker.prepare() }
                     val voices by speaker.voices.collectAsStateWithLifecycle()
                     var selectedVoice by remember { mutableStateOf(speaker.selectedVoice()) }
-                    FieldLabel("Голос наставника", "Русские голоса установленного синтезатора. Сетевые голоса требуют интернета. Тембр и интонация зависят от движка.")
-                    RadioRow(selectedVoice.isEmpty(), "Автоматически") {
-                        selectedVoice = ""
-                        speaker.selectVoice("")
+                    var neural by remember { mutableStateOf(speaker.neuralEnabled()) }
+                    var neuralVoice by remember { mutableStateOf(speaker.neuralVoice()) }
+                    val speechProblem by speaker.problem.collectAsStateWithLifecycle()
+                    FieldLabel("Нейронный женский голос", "Живая интонация и смысловые паузы. Текст отправляется Gemini; нужен интернет и API-ключ, возможна оплата по тарифу Google.")
+                    AppSwitch(neural) { neural = it; speaker.setNeural(it) }
+                    if (neural) {
+                        ApiKeyEditor(app.nastavnik.ai.AiProvider.GEMINI, onSaved = {})
+                        speaker.neuralVoices.forEach { (id, label) ->
+                            RadioRow(neuralVoice == id, label) {
+                                neuralVoice = id
+                                speaker.setNeuralVoice(id)
+                                speaker.speak("Привет! Я помогу тебе разобраться. Давай подумаем: с чего начнём? Всё получится!")
+                            }
+                        }
+                        SoftButton("Остановить прослушивание") { speaker.stop() }
+                        speechProblem?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     }
-                    voices.forEach { voice ->
-                        RadioRow(selectedVoice == voice.name, voice.name + if (voice.isNetworkConnectionRequired) " · онлайн" else " · офлайн") {
-                            selectedVoice = voice.name
-                            speaker.selectVoice(voice.name)
-                            speaker.speak("Привет! Давай разберёмся вместе. Что тебе хочется узнать?")
+                    if (!neural) {
+                        FieldLabel("Голос наставника", "Русские голоса установленного синтезатора. Сетевые голоса требуют интернета. Тембр и интонация зависят от движка.")
+                        RadioRow(selectedVoice.isEmpty(), "Автоматически") {
+                            selectedVoice = ""
+                            speaker.selectVoice("")
+                        }
+                        voices.forEach { voice ->
+                            RadioRow(selectedVoice == voice.name, voice.name + if (voice.isNetworkConnectionRequired) " · онлайн" else " · офлайн") {
+                                selectedVoice = voice.name
+                                speaker.selectVoice(voice.name)
+                                speaker.speak("Привет! Давай разберёмся вместе. Что тебе хочется узнать?")
+                            }
                         }
                     }
                     var speak by remember { mutableStateOf(repo.speakHints()) }

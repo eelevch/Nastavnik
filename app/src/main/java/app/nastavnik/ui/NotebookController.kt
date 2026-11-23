@@ -631,7 +631,7 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         val m = meta ?: return
         // Пользовательское требование: если в тетради ничего не было сделано — удаляем её, не захламляя список
         val isEmpty = pages.all { it.strokes.isEmpty() && it.texts.isEmpty() && it.background == null }
-        if (isEmpty && m.tasks.isEmpty()) {
+        if (isEmpty && m.tasks.isEmpty() && chatMessages.isEmpty() && mentor.state.value.conversationId == 0L) {
             app.appScope.launch(Dispatchers.IO) {
                 runCatching { nbs.store.delete(notebookId) }
             }
