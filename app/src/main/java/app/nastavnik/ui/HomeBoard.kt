@@ -63,7 +63,7 @@ private val WIDGETS = listOf(
 
 private fun defaults(tablet: Boolean) = if (tablet) listOf(
     Item("notebooks", Size.L),
-    Item("day", Size.S), Item("cards", Size.S), Item("exam", Size.S), Item("grades", Size.S),
+    Item("day", Size.M), Item("grades", Size.M),
     Item("mentor", Size.L),
     Item("sections", Size.L),
 ) else listOf(
@@ -94,7 +94,8 @@ fun HomeBoard(
         when {
             it.isNullOrBlank() -> null
             !tablet && it == "cards:S,exam:S,grades:L" -> null
-            tablet && it == "cards:S,exam:S,notebooks:L,mentor:M,sections:M" -> null
+            tablet && (it == "cards:S,exam:S,notebooks:L,mentor:M,sections:M" ||
+                it == "notebooks:L,day:S,cards:S,exam:S,grades:S,mentor:L,sections:L") -> null
             else -> it
         }
     }

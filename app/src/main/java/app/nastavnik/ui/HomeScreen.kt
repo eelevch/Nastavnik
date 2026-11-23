@@ -121,7 +121,6 @@ fun HomeScreen(resumeTick: Int, go: (String) -> Unit, openNotebook: (Long) -> Un
                     RoundIconButton(R.drawable.ic_tune, "Настройки") { go(MainActivity.SCREEN_SETTINGS) }
                 }
                 InAppUpdateBanner()
-                TabletQuickBar(resumeTick = resumeTick, go = go, openNotebook = openNotebook)
 
                 if (notReady != null) Banner("$notReady — без этого наставник не ответит.", "Настроить") { go(MainActivity.SCREEN_SETTINGS) }
                 // Блоки — из конструктора: порядок и размер правятся кнопкой «Изменить главную».
@@ -167,82 +166,6 @@ private fun SectionHeader(title: String, action: String? = null, onAction: () ->
     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
         if (action != null) LinkText(action, onClick = onAction)
-    }
-}
-
-/** Быстрые действия на главном экране планшета: новая тетрадь, продолжить последнюю, домашка, пары и карточки. */
-@Composable
-private fun TabletQuickBar(resumeTick: Int, go: (String) -> Unit, openNotebook: (Long) -> Unit) {
-    val context = LocalContext.current
-    val nbs = context.app.notebooks
-    val scope = rememberCoroutineScope()
-    val latest by produceState<NotebookMeta?>(null, resumeTick) {
-        value = withContext(Dispatchers.IO) { nbs.store.list().firstOrNull() }
-    }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        QuickBarChip(
-            icon = R.drawable.ic_plus,
-            label = "Новая тетрадь",
-            primary = true,
-            onClick = {
-                scope.launch {
-                    val (m, _) = withContext(Dispatchers.IO) { nbs.store.create(nbs.defaultTitle(), Paper.GRID) }
-                    openNotebook(m.id)
-                }
-            },
-        )
-        latest?.let { nb ->
-            QuickBarChip(
-                icon = R.drawable.ic_pen,
-                label = "Продолжить: ${nb.title}",
-                onClick = { openNotebook(nb.id) },
-            )
-        }
-        QuickBarChip(icon = R.drawable.ic_notebook, label = "Домашка", onClick = { go(MainActivity.SCREEN_HOMEWORK) })
-        QuickBarChip(icon = R.drawable.ic_calendar, label = "Расписание", onClick = { go(MainActivity.SCREEN_SCHEDULE) })
-        QuickBarChip(icon = R.drawable.ic_cards, label = "Карточки", onClick = { go(MainActivity.SCREEN_REVIEW) })
-    }
-}
-
-@Composable
-private fun QuickBarChip(icon: Int, label: String, primary: Boolean = false, onClick: () -> Unit) {
-    val shape = CircleShape
-    Row(
-        Modifier
-            .clip(shape)
-            .then(
-                if (primary) {
-                    Modifier.background(Brush.linearGradient(listOf(Brand.Accent, Brand.Accent.copy(alpha = 0.85f))))
-                } else {
-                    Modifier
-                        .glass(shape, 4.dp, strong = true)
-                        .border(0.8.dp, Brand.Line.copy(alpha = 0.5f), shape)
-                },
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(7.dp),
-    ) {
-        Icon(
-            painterResource(icon),
-            contentDescription = null,
-            tint = if (primary) Brand.OnInk else Brand.Accent,
-            modifier = Modifier.size(16.dp),
-        )
-        Text(
-            label,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (primary) Brand.OnInk else Brand.Ink,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }
 

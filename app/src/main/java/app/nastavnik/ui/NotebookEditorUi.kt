@@ -148,6 +148,7 @@ fun EditorRail(ctl: NotebookController, maxHeight: Dp) {
                     .graphicsLayer { this.alpha = alpha }
                     .width(RAIL_W)
                     .glass(RoundedCornerShape(28.dp), 14.dp, strong = true)
+                    .border(1.dp, Brand.Line.copy(alpha = 0.65f), RoundedCornerShape(28.dp))
                     .padding(vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -262,7 +263,8 @@ fun TopToolBar(ctl: NotebookController, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier
             .glass(CircleShape, 6.dp, strong = true)
-            .padding(horizontal = 8.dp, vertical = 2.dp),
+            .border(1.dp, Brand.Line.copy(alpha = 0.65f), CircleShape)
+            .padding(horizontal = 10.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -407,6 +409,22 @@ fun TopToolBar(ctl: NotebookController, modifier: Modifier = Modifier) {
                 painterResource(R.drawable.ic_hand),
                 contentDescription = null,
                 tint = if (ctl.fingerDraws) Brand.Accent else Brand.InkSoft,
+                modifier = Modifier.size(15.dp),
+            )
+        }
+        // 5. Перенести панель кистей сбоку
+        Box(
+            Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .clickable { ctl.toggleToolBarPosition() }
+                .semantics { contentDescription = "Перенести кисти сбоку" },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painterResource(R.drawable.ic_panel),
+                contentDescription = null,
+                tint = Brand.InkSoft,
                 modifier = Modifier.size(15.dp),
             )
         }

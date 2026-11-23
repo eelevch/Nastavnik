@@ -278,11 +278,10 @@ fun SectionsGrid(go: (String) -> Unit, columns: Int, items: List<Triple<Int, Str
     }
 }
 
-/** Разделы планшета для сетки (8 пунктов — ровная сетка 4×2). */
+/** Разделы планшета для сетки. */
 val TABLET_SECTIONS = listOf(
     Triple(R.drawable.ic_calendar, "Расписание", MainActivity.SCREEN_SCHEDULE),
     Triple(R.drawable.ic_chart, "Оценки", MainActivity.SCREEN_GRADES),
-    Triple(R.drawable.ic_notebook, "Домашка", MainActivity.SCREEN_HOMEWORK),
     Triple(R.drawable.ic_target, "Тренировка", MainActivity.SCREEN_TRAINING),
     Triple(R.drawable.ic_chart, "Прогресс", MainActivity.SCREEN_PROGRESS),
     Triple(R.drawable.ic_calendar, "Экзамены", MainActivity.SCREEN_EXAMS),
