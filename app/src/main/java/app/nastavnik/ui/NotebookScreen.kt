@@ -38,11 +38,13 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import androidx.compose.foundation.background
@@ -187,6 +189,11 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
     ) {
         Column(Modifier.fillMaxSize()) {
             NotebookTopBar(ctl, panel, onBack = close, onTogglePanel = { panel = !panel }, onPages = { pagesOpen = true }, importers = importers)
+            val panelSlideState = animateFloatAsState(
+                targetValue = if (panel && wide) 1f else 0f,
+                animationSpec = spring(dampingRatio = 0.92f, stiffness = 380f),
+                label = "panelSlide",
+            )
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -195,12 +202,7 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                 BoxWithConstraints(
                     Modifier
                         .fillMaxSize()
-                        .padding(
-                            start = 12.dp,
-                            end = if (panel && wide) effectivePanelWidth.dp + 16.dp else 12.dp,
-                            bottom = 12.dp,
-                        )
-                        .clip(RoundedCornerShape(24.dp)),
+                        .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
                 ) {
                     AndroidView(
                         factory = { ctx ->
@@ -214,7 +216,14 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                     // Лист увеличен — маленькая плашка с масштабом; нажатие возвращает по ширине.
                     androidx.compose.animation.AnimatedVisibility(
                         visible = abs(ctl.zoom - 1f) > 0.04f,
-                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 16.dp)
+                            .graphicsLayer {
+                                if (wide) {
+                                    translationX = -panelSlideState.value * (effectivePanelWidth.dp.toPx() + 16.dp.toPx()) * 0.5f
+                                }
+                            },
                         enter = fadeIn() + scaleIn(initialScale = 0.8f),
                         exit = fadeOut() + scaleOut(targetScale = 0.8f),
                     ) {
@@ -230,11 +239,32 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                     }
 
                     // Страница задачи ДЗ — плашка с проверкой.
-                    HomeworkBar(ctl, Modifier.align(Alignment.BottomCenter).padding(start = 72.dp, end = 16.dp, bottom = 56.dp))
+                    HomeworkBar(
+                        ctl,
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(start = 72.dp, end = 16.dp, bottom = 56.dp)
+                            .graphicsLayer {
+                                if (wide) {
+                                    translationX = -panelSlideState.value * (effectivePanelWidth.dp.toPx() + 16.dp.toPx()) * 0.5f
+                                }
+                            },
+                    )
 
                     // Плавающая боковая панель инструментов (когда выбрано «Панель кистей: сбоку»).
                     val railMaxHeight = maxHeight
-                    Box(Modifier.fillMaxSize().zIndex(2f)) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .zIndex(2f)
+                            .graphicsLayer {
+                                translationX = if (wide && ctl.railRight) {
+                                    -panelSlideState.value * (effectivePanelWidth.dp.toPx() + 16.dp.toPx())
+                                } else {
+                                    0f
+                                }
+                            },
+                    ) {
                         EditorRail(ctl, railMaxHeight)
                     }
 
@@ -244,12 +274,7 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                         exit = fadeOut(),
                     ) { CircularProgressIndicator(color = Brand.Accent) }
                 }
-                val panelSlide by animateFloatAsState(
-                    targetValue = if (panel && wide) 1f else 0f,
-                    animationSpec = tween(230, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)),
-                    label = "panelSlide",
-                )
-                if (panelSlide > 0.001f) {
+                if (wide) {
                     val fullPanelWidth = effectivePanelWidth.dp + 16.dp
                     Row(
                         Modifier
@@ -257,9 +282,16 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                             .fillMaxHeight()
                             .requiredWidth(fullPanelWidth)
                             .graphicsLayer {
-                                translationX = (1f - panelSlide) * fullPanelWidth.toPx()
-                                alpha = panelSlide.coerceIn(0f, 1f)
-                            },
+                                val s = panelSlideState.value
+                                translationX = (1f - s) * (size.width + 24.dp.toPx())
+                                alpha = (s * 1.4f).coerceIn(0f, 1f)
+                                compositingStrategy = if (s in 0.001f..0.999f) {
+                                    CompositingStrategy.Offscreen
+                                } else {
+                                    CompositingStrategy.Auto
+                                }
+                            }
+                            .then(if (!panel) Modifier.clearAndSetSemantics {} else Modifier),
                     ) {
                         PanelSplitter(
                             onDragDeltaDp = { deltaDp ->
@@ -281,12 +313,12 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                 }
             }
         }
-        val panelBottomSlide by animateFloatAsState(
-            targetValue = if (panel && !wide) 1f else 0f,
-            animationSpec = tween(230, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)),
-            label = "panelBottomSlide",
-        )
-        if (panelBottomSlide > 0.001f) {
+        if (!wide) {
+            val panelBottomSlideState = animateFloatAsState(
+                targetValue = if (panel) 1f else 0f,
+                animationSpec = spring(dampingRatio = 0.92f, stiffness = 380f),
+                label = "panelBottomSlide",
+            )
             val panelHeight = (LocalConfiguration.current.screenHeightDp * 0.65f).dp
             Box(
                 Modifier
@@ -296,9 +328,16 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                     .padding(12.dp)
                     .imePadding()
                     .graphicsLayer {
-                        translationY = (1f - panelBottomSlide) * panelHeight.toPx()
-                        alpha = panelBottomSlide.coerceIn(0f, 1f)
-                    },
+                        val s = panelBottomSlideState.value
+                        translationY = (1f - s) * (size.height + 24.dp.toPx())
+                        alpha = (s * 1.4f).coerceIn(0f, 1f)
+                        compositingStrategy = if (s in 0.001f..0.999f) {
+                            CompositingStrategy.Offscreen
+                        } else {
+                            CompositingStrategy.Auto
+                        }
+                    }
+                    .then(if (!panel) Modifier.clearAndSetSemantics {} else Modifier),
             ) {
                 MentorPanel(
                     ctl = ctl,

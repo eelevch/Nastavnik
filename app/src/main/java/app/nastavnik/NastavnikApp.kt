@@ -32,6 +32,7 @@ import app.nastavnik.study.Speaker
 import app.nastavnik.study.StudyRepo
 import app.nastavnik.study.Trainer
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -163,11 +164,14 @@ class NastavnikApp : Application() {
         settings.forgetLksPassword()
         settings.migrateToParentDesign()
         Palettes.installWallpaper(this)
-        Alarms.cancelRemovedReminders(this)
-        Alarms.rescheduleAll(this)
-        GradesJob.schedule(this)
+        // Фоновая инициализация будильников, планировщика и телеметрии — первый кадр открывается сразу без рывков.
+        appScope.launch(Dispatchers.IO) {
+            runCatching { Alarms.cancelRemovedReminders(this@NastavnikApp) }
+            runCatching { Alarms.rescheduleAll(this@NastavnikApp) }
+            runCatching { GradesJob.schedule(this@NastavnikApp) }
+            runCatching { TelegramMetrics.reportAppOpen(this@NastavnikApp) }
+        }
         checkUpdateInBackground()
-        TelegramMetrics.reportAppOpen(this)
     }
 
     private fun createChannels() {

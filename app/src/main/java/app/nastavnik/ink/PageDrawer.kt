@@ -105,17 +105,30 @@ class PageDrawer {
      * [visible] — видимая часть страницы в её единицах: разлиновку рисуем только там.
      */
     fun drawPage(c: Canvas, page: InkPage, background: Bitmap?, visible: RectF? = null, exclude: Set<Any> = emptySet()) {
-        val h = page.height
-        c.drawRect(0f, 0f, PAGE_W, h, paperPaint)
+        drawPage(c, page.paper, page.height, page.strokes, page.texts, background, visible, exclude)
+    }
+
+    /** Отрисовка снимка страницы из потокобезопасных копий списков (для фонового кэша). */
+    fun drawPage(
+        c: Canvas,
+        paper: Paper,
+        pageHeight: Float,
+        strokes: List<Stroke>,
+        texts: List<TextBox>,
+        background: Bitmap?,
+        visible: RectF? = null,
+        exclude: Set<Any> = emptySet(),
+    ) {
+        c.drawRect(0f, 0f, PAGE_W, pageHeight, paperPaint)
         if (background != null && !background.isRecycled) {
-            bgRect.set(0f, 0f, PAGE_W, h)
+            bgRect.set(0f, 0f, PAGE_W, pageHeight)
             c.drawBitmap(background, null, bgRect, bitmapPaint)
         }
-        drawPaper(c, page.paper, h, visible)
+        drawPaper(c, paper, pageHeight, visible)
         val hasExclude = exclude.isNotEmpty()
-        for (s in page.strokes) if (s.tool == Tool.HIGHLIGHTER && (!hasExclude || s !in exclude) && visibleStroke(s, visible)) drawStroke(c, s)
-        for (t in page.texts) if (!hasExclude || t !in exclude) drawText(c, t)
-        for (s in page.strokes) if (s.tool != Tool.HIGHLIGHTER && (!hasExclude || s !in exclude) && visibleStroke(s, visible)) drawStroke(c, s)
+        for (s in strokes) if (s.tool == Tool.HIGHLIGHTER && (!hasExclude || s !in exclude) && visibleStroke(s, visible)) drawStroke(c, s)
+        for (t in texts) if (!hasExclude || t !in exclude) drawText(c, t)
+        for (s in strokes) if (s.tool != Tool.HIGHLIGHTER && (!hasExclude || s !in exclude) && visibleStroke(s, visible)) drawStroke(c, s)
     }
 
     // ---------------- текст ----------------
@@ -212,6 +225,7 @@ class PageDrawer {
         bucketSizes: IntArray,
         tailBuckets: Array<FloatArray?>,
         tailSizes: IntArray,
+        quantum: Float = 0.4f,
     ) {
         val dispColor = displayColor(color)
         if (hasDot) {
@@ -224,7 +238,7 @@ class PageDrawer {
             val fSize = bucketSizes[b]
             val tSize = tailSizes[b]
             if (fSize == 0 && tSize == 0) continue
-            inkPaint.strokeWidth = b * 0.4f
+            inkPaint.strokeWidth = b * quantum
             if (fSize > 0) {
                 val arr = buckets[b]
                 if (arr != null) c.drawLines(arr, 0, fSize, inkPaint)

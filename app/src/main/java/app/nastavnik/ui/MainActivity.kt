@@ -47,6 +47,7 @@ import androidx.lifecycle.lifecycleScope
 import app.nastavnik.app
 import app.nastavnik.study.StudyWidget
 import app.nastavnik.study.LessonQuiet
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import app.nastavnik.overlay.BubbleService
 
@@ -144,13 +145,18 @@ class MainActivity : ComponentActivity() {
                     ImportingScreen()
                     return@NastavnikTheme
                 }
-                // Экраны сменяются мягко: новый проявляется и чуть «подъезжает», старый тает.
+                // Экраны сменяются мягко: для тетради — чистый GPU fade без масштабирования AndroidView,
+                // для остальных — мягкое «сквозное проявление» без рывков.
                 AnimatedContent(
                     targetState = screen,
                     transitionSpec = {
-                        // «Сквозное проявление» Material 3: старый экран мягко гаснет, новый проявляется с лёгким приближением.
-                        (fadeIn(tween(260, easing = Motion.Decelerate)) + scaleIn(spring(dampingRatio = 0.88f, stiffness = 450f), initialScale = 0.97f))
-                            .togetherWith(fadeOut(tween(160, easing = Motion.Accelerate)))
+                        if (targetState == SCREEN_NOTEBOOK || initialState == SCREEN_NOTEBOOK) {
+                            fadeIn(tween(190, easing = Motion.Decelerate))
+                                .togetherWith(fadeOut(tween(130, easing = Motion.Accelerate)))
+                        } else {
+                            (fadeIn(tween(220, easing = Motion.Decelerate)) + scaleIn(tween(220, easing = Motion.Decelerate), initialScale = 0.985f))
+                                .togetherWith(fadeOut(tween(140, easing = Motion.Accelerate)))
+                        }
                     },
                     label = "screen",
                 ) { target ->
@@ -279,14 +285,15 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         enableHighRefreshRate()
         resumeTick++
-        StudyWidget.refresh(this)
         app.sync.onForeground()
-        // Оценки — не чаще раза в час; новые придут уведомлением.
-        app.appScope.launch { app.grades.refresh(); app.grades.refreshLks() }
-        // Доступ к «Не беспокоить» могли только что выдать в настройках системы.
-        app.appScope.launch { runCatching { LessonQuiet.update(this@MainActivity) } }
+        // Оценки, виджет и телеметрия — в фоне, чтобы первый кадр при возврате открывался плавно.
+        app.appScope.launch(Dispatchers.IO) {
+            runCatching { StudyWidget.refresh(this@MainActivity) }
+            runCatching { app.grades.refresh(); app.grades.refreshLks() }
+            runCatching { LessonQuiet.update(this@MainActivity) }
+            runCatching { TelegramMetrics.reportAppOpen(this@MainActivity) }
+        }
         app.checkUpdateInBackground()
-        TelegramMetrics.reportAppOpen(this)
     }
 
     /**

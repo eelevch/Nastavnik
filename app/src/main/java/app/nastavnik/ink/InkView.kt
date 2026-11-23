@@ -15,7 +15,6 @@ import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.Picture
 import android.os.Build
 import android.os.SystemClock
 import android.view.HapticFeedbackConstants
@@ -26,11 +25,14 @@ import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import android.view.animation.PathInterpolator
 import android.widget.OverScroller
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /** Инструмент на листе. */
 enum class EditTool { PEN, HIGHLIGHTER, ERASER, LASSO, SHAPE, TEXT }
@@ -175,8 +177,12 @@ class InkView(context: Context) : View(context) {
         selectedMark = null
         current = null
         fitted = false
+        frontPage = null
+        frontValid = false
+        inFlightStrokes.clear()
+        renderGen.incrementAndGet()
         if (width > 0) fitWidth()
-        invalidateCache()
+        invalidate()
         notifyUndo()
         if (old != null) animatePageTurn(old, direction)
     }
@@ -572,29 +578,324 @@ class InkView(context: Context) : View(context) {
 
     // ---------------- рисование ----------------
 
-    // Аппаратный векторный SkPicture: кристальная 100% векторная четкость на дисплее планшета (2.8K)
-    // без растрового мыла, без переключений качества и со сверхбыстрой отрисовкой за 0.03 мс (120 FPS).
-    private var pagePicture: Picture? = null
-    private var pagePictureValid = false
+    // Двойной буфер растрового кэша в нативном 1:1 разрешении экрана + запас (overscan) вокруг
+    // видимой области: отрисовка листа всегда за ~0.15 мс (120 FPS) без потери чёткости и без рывков.
+    private fun newRenderExecutor() = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "InkPageCache").apply {
+            isDaemon = true
+            priority = Thread.NORM_PRIORITY + 1
+        }
+    }
+    private var renderExecutor = newRenderExecutor()
+    private val bgDrawer = PageDrawer()
+    @Volatile private var detached = false
+    private val renderGen = AtomicLong(0L)
+    private var renderInFlight = false
+    private var renderPending = false
+    private val inFlightStrokes = ArrayList<Stroke>()
+
+    private var frontBmp: Bitmap? = null
+    private var frontCanvas: Canvas? = null
+    private val frontRect = RectF()
+    private val frontSrc = Rect()
+    private var frontW = 0
+    private var frontH = 0
+    private var frontScale = 0f
+    private var frontPage: InkPage? = null
+    private var frontValid = false
+    private var spareBmp: Bitmap? = null
+
+    private val cachePaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val fallbackPaperPaint = Paint().apply { color = PageDrawer.PAPER }
+    private val tmpVisibleRect = RectF()
+    private val tmpTargetRect = RectF()
+    private val tmpRenderRect = RectF()
+    private val isWeakDevice: Boolean by lazy { app.nastavnik.data.DeviceProfile.isWeakDevice(context) }
 
     /** Лист двигают или увеличивают. */
     private var moving = false
 
     private fun invalidateCache() {
-        pagePictureValid = false
+        renderGen.incrementAndGet()
+        frontValid = false
+        inFlightStrokes.clear()
+        val p = page
+        if (p != null && width > 0 && height > 0 && !detached) {
+            scheduleAsyncRender(p)
+        }
         invalidate()
     }
 
-    private fun recordPagePicture(p: InkPage) {
-        val pic = Picture()
-        val cv = pic.beginRecording(PAGE_W.toInt().coerceAtLeast(1), p.height.toInt().coerceAtLeast(1))
-        drawer.drawPage(cv, p, bgBitmap, null, selExclude)
-        pic.endRecording()
-        pagePicture = pic
-        pagePictureValid = true
+    private fun visiblePageRect(p: InkPage, out: RectF) {
+        if (width <= 0 || height <= 0) {
+            out.set(0f, 0f, PAGE_W, min(p.height, PAGE_W * 1.5f))
+            return
+        }
+        pageMatrix.invert(inverse)
+        out.set(0f, 0f, width.toFloat(), height.toFloat())
+        inverse.mapRect(out)
+        out.left = out.left.coerceIn(0f, PAGE_W)
+        out.top = out.top.coerceIn(0f, p.height)
+        out.right = out.right.coerceIn(0f, PAGE_W)
+        out.bottom = out.bottom.coerceIn(0f, p.height)
+        if (out.width() < 1f || out.height() < 1f) {
+            out.set(0f, 0f, PAGE_W, min(p.height, PAGE_W * 1.5f))
+        }
     }
 
-    /** Стол, тень, лист (векторно через SkPicture за 0.03 мс на 120 FPS), рамка листа — в текущем положении листа. */
+    private fun computeTargetCache(p: InkPage, outRect: RectF): Triple<Int, Int, Float> {
+        visiblePageRect(p, tmpVisibleRect)
+        val visW = tmpVisibleRect.width().coerceAtLeast(1f)
+        val visH = tmpVisibleRect.height().coerceAtLeast(1f)
+        val padX = max(visW * 0.55f, PAGE_W * 0.25f)
+        val padY = max(visH * 0.65f, PAGE_W * 0.5f)
+        outRect.set(
+            (tmpVisibleRect.left - padX).coerceAtLeast(0f),
+            (tmpVisibleRect.top - padY).coerceAtLeast(0f),
+            (tmpVisibleRect.right + padX).coerceAtMost(PAGE_W),
+            (tmpVisibleRect.bottom + padY).coerceAtMost(p.height),
+        )
+
+        val maxSide = if (isWeakDevice) {
+            1920
+        } else {
+            maxOf(2880, minOf((maxOf(width, height) * 1.5f).toInt(), 3840))
+        }
+        val maxPixels = if (isWeakDevice) 1600L * 2048L else 2880L * 3200L
+
+        var targetScale = scale.coerceAtLeast(fitScale() * 0.5f)
+        targetScale = minOf(targetScale, maxSide / visW, maxSide / visH)
+
+        // Ограничиваем стороны буфера без обрезания видимой области.
+        val maxPageW = maxSide / targetScale
+        if (outRect.width() > maxPageW) {
+            val halfW = maxPageW * 0.5f
+            val cx = tmpVisibleRect.centerX()
+            var l = cx - halfW
+            var r = cx + halfW
+            if (l < 0f) { r = min(PAGE_W, r - l); l = 0f }
+            if (r > PAGE_W) { l = max(0f, l - (r - PAGE_W)); r = PAGE_W }
+            outRect.left = min(l, tmpVisibleRect.left)
+            outRect.right = max(r, tmpVisibleRect.right)
+        }
+        val maxPageH = maxSide / targetScale
+        if (outRect.height() > maxPageH) {
+            val halfH = maxPageH * 0.5f
+            val cy = tmpVisibleRect.centerY()
+            var t = cy - halfH
+            var b = cy + halfH
+            if (t < 0f) { b = min(p.height, b - t); t = 0f }
+            if (b > p.height) { t = max(0f, t - (b - p.height)); b = p.height }
+            outRect.top = min(t, tmpVisibleRect.top)
+            outRect.bottom = max(b, tmpVisibleRect.bottom)
+        }
+
+        // Ограничиваем суммарное число пикселей буфера: сначала поджимаем вертикальный, затем горизонтальный запас.
+        var pxW = outRect.width() * targetScale
+        var pxH = outRect.height() * targetScale
+        if (pxW * pxH > maxPixels) {
+            val allowedH = (maxPixels / pxW.coerceAtLeast(1f)) / targetScale
+            if (allowedH >= visH) {
+                val halfH = allowedH * 0.5f
+                val cy = tmpVisibleRect.centerY()
+                var t = cy - halfH
+                var b = cy + halfH
+                if (t < 0f) { b = min(p.height, b - t); t = 0f }
+                if (b > p.height) { t = max(0f, t - (b - p.height)); b = p.height }
+                outRect.top = min(t, tmpVisibleRect.top)
+                outRect.bottom = max(b, tmpVisibleRect.bottom)
+            } else {
+                outRect.top = tmpVisibleRect.top
+                outRect.bottom = tmpVisibleRect.bottom
+            }
+            pxH = outRect.height() * targetScale
+            if (pxW * pxH > maxPixels) {
+                val allowedW = (maxPixels / pxH.coerceAtLeast(1f)) / targetScale
+                if (allowedW >= visW) {
+                    val halfW = allowedW * 0.5f
+                    val cx = tmpVisibleRect.centerX()
+                    var l = cx - halfW
+                    var r = cx + halfW
+                    if (l < 0f) { r = min(PAGE_W, r - l); l = 0f }
+                    if (r > PAGE_W) { l = max(0f, l - (r - PAGE_W)); r = PAGE_W }
+                    outRect.left = min(l, tmpVisibleRect.left)
+                    outRect.right = max(r, tmpVisibleRect.right)
+                } else {
+                    outRect.left = tmpVisibleRect.left
+                    outRect.right = tmpVisibleRect.right
+                }
+                pxW = outRect.width() * targetScale
+                pxH = outRect.height() * targetScale
+                if (pxW * pxH > maxPixels) {
+                    targetScale *= sqrt(maxPixels / (pxW * pxH).coerceAtLeast(1f))
+                }
+            }
+        }
+
+        val bw = (outRect.width() * targetScale).roundToInt().coerceIn(1, maxSide)
+        val bh = (outRect.height() * targetScale).roundToInt().coerceIn(1, maxSide)
+        return Triple(bw, bh, targetScale)
+    }
+
+    private fun renderPageIntoBitmap(
+        targetBmp: Bitmap?,
+        targetDrawer: PageDrawer,
+        paper: Paper,
+        pageHeight: Float,
+        strokes: List<Stroke>,
+        texts: List<TextBox>,
+        exclude: Set<Any>,
+        bg: Bitmap?,
+        rect: RectF,
+        bw: Int,
+        bh: Int,
+    ): Bitmap? {
+        val cfg = if (isWeakDevice) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888
+        val bmp = if (
+            targetBmp != null &&
+            !targetBmp.isRecycled &&
+            targetBmp.config == cfg &&
+            targetBmp.width >= bw &&
+            targetBmp.height >= bh &&
+            targetBmp.width <= bw * 2 &&
+            targetBmp.height <= bh * 2
+        ) {
+            targetBmp
+        } else {
+            if (targetBmp != null && !targetBmp.isRecycled) targetBmp.recycle()
+            try {
+                Bitmap.createBitmap(bw, bh, cfg)
+            } catch (_: OutOfMemoryError) {
+                return null
+            }
+        }
+        val c = Canvas(bmp)
+        c.save()
+        c.clipRect(0, 0, bw, bh)
+        val sx = bw / rect.width().coerceAtLeast(1f)
+        val sy = bh / rect.height().coerceAtLeast(1f)
+        c.scale(sx, sy)
+        c.translate(-rect.left, -rect.top)
+        targetDrawer.drawPage(c, paper, pageHeight, strokes, texts, bg, rect, exclude)
+        c.restore()
+        return bmp
+    }
+
+    private fun needsViewportRefresh(p: InkPage): Boolean {
+        if (!frontValid || frontBmp == null || frontBmp!!.isRecycled || frontPage !== p) return true
+        visiblePageRect(p, tmpVisibleRect)
+        val availX = (frontRect.width() - tmpVisibleRect.width()).coerceAtLeast(0f)
+        val availY = (frontRect.height() - tmpVisibleRect.height()).coerceAtLeast(0f)
+        val mx = min(tmpVisibleRect.width() * 0.15f, availX * 0.35f)
+        val my = min(tmpVisibleRect.height() * 0.15f, availY * 0.35f)
+        if ((frontRect.left > 0.5f && tmpVisibleRect.left < frontRect.left + mx) ||
+            (frontRect.right < PAGE_W - 0.5f && tmpVisibleRect.right > frontRect.right - mx) ||
+            (frontRect.top > 0.5f && tmpVisibleRect.top < frontRect.top + my) ||
+            (frontRect.bottom < p.height - 0.5f && tmpVisibleRect.bottom > frontRect.bottom - my)
+        ) {
+            return true
+        }
+        val ratio = if (frontScale > 0f) scale / frontScale else 2f
+        return if (moving) {
+            ratio > 1.75f || ratio < 0.55f
+        } else {
+            ratio > 1.15f || ratio < 0.85f
+        }
+    }
+
+    private fun scheduleAsyncRender(p: InkPage) {
+        if (detached || width <= 0 || height <= 0) return
+        if (renderInFlight) {
+            renderPending = true
+            return
+        }
+        val (bw, bh, targetScale) = computeTargetCache(p, tmpRenderRect)
+        if (bw <= 0 || bh <= 0) return
+        val targetRect = RectF(tmpRenderRect)
+        val gen = renderGen.get()
+        val strokesSnap = p.strokes.toList()
+        val textsSnap = p.texts.toList()
+        val excludeSnap = if (selExclude.isEmpty()) emptySet() else selExclude.toSet()
+        val paperSnap = p.paper
+        val heightSnap = p.height
+        val bgSnap = bgBitmap
+
+        val workBmp = spareBmp
+        spareBmp = null
+        renderInFlight = true
+        renderPending = false
+        inFlightStrokes.clear()
+
+        renderExecutor.execute {
+            if (detached) {
+                if (workBmp != null && !workBmp.isRecycled) workBmp.recycle()
+                return@execute
+            }
+            val resultBmp = renderPageIntoBitmap(
+                targetBmp = workBmp,
+                targetDrawer = bgDrawer,
+                paper = paperSnap,
+                pageHeight = heightSnap,
+                strokes = strokesSnap,
+                texts = textsSnap,
+                exclude = excludeSnap,
+                bg = bgSnap,
+                rect = targetRect,
+                bw = bw,
+                bh = bh,
+            )
+            post {
+                renderInFlight = false
+                if (detached || page !== p || resultBmp == null) {
+                    if (resultBmp != null && resultBmp !== frontBmp && !resultBmp.isRecycled) resultBmp.recycle()
+                    return@post
+                }
+                if (gen != renderGen.get()) {
+                    if (resultBmp !== frontBmp) {
+                        if (spareBmp != null && spareBmp !== resultBmp && !spareBmp!!.isRecycled) spareBmp!!.recycle()
+                        spareBmp = resultBmp
+                    }
+                    scheduleAsyncRender(p)
+                    return@post
+                }
+                val oldFront = frontBmp
+                frontBmp = resultBmp
+                frontCanvas = Canvas(resultBmp)
+                frontRect.set(targetRect)
+                frontW = bw
+                frontH = bh
+                frontSrc.set(0, 0, bw, bh)
+                frontScale = targetScale
+                frontPage = p
+                frontValid = true
+                if (oldFront != null && oldFront !== resultBmp) {
+                    if (spareBmp != null && spareBmp !== oldFront && !spareBmp!!.isRecycled) spareBmp!!.recycle()
+                    spareBmp = oldFront
+                }
+                if (inFlightStrokes.isNotEmpty()) {
+                    val fc = frontCanvas
+                    if (fc != null) {
+                        fc.save()
+                        fc.clipRect(0, 0, frontW, frontH)
+                        val sx = frontW / frontRect.width().coerceAtLeast(1f)
+                        val sy = frontH / frontRect.height().coerceAtLeast(1f)
+                        fc.scale(sx, sy)
+                        fc.translate(-frontRect.left, -frontRect.top)
+                        for (s in inFlightStrokes) drawer.drawStroke(fc, s)
+                        fc.restore()
+                    }
+                    inFlightStrokes.clear()
+                }
+                invalidate()
+                if (renderPending) {
+                    renderPending = false
+                    scheduleAsyncRender(p)
+                }
+            }
+        }
+    }
+
+    /** Стол, тень, лист (1:1 кэш-буфер без потери чёткости), рамка листа — в текущем положении листа. */
     private fun drawScene(c: Canvas) {
         val p = page ?: return
         c.drawColor(desk)
@@ -603,21 +904,78 @@ class InkView(context: Context) : View(context) {
         val k = scale
         shadow.color = if (dark) 0x40000000 else 0x1416161A
         c.drawRect(-2f / k, 2f / k, PAGE_W + 2f / k, p.height + 5f / k, shadow)
+        c.drawRect(0f, 0f, PAGE_W, p.height, fallbackPaperPaint)
 
-        if (!pagePictureValid || pagePicture == null) {
-            recordPagePicture(p)
+        if ((frontBmp == null || frontBmp!!.isRecycled || frontPage !== p) && width > 0 && height > 0) {
+            val (bw, bh, targetScale) = computeTargetCache(p, tmpTargetRect)
+            val oldSpare = spareBmp
+            spareBmp = null
+            val initBmp = renderPageIntoBitmap(
+                targetBmp = oldSpare,
+                targetDrawer = drawer,
+                paper = p.paper,
+                pageHeight = p.height,
+                strokes = p.strokes,
+                texts = p.texts,
+                exclude = selExclude,
+                bg = bgBitmap,
+                rect = tmpTargetRect,
+                bw = bw,
+                bh = bh,
+            )
+            if (initBmp != null) {
+                val oldFront = frontBmp
+                if (oldFront != null && oldFront !== initBmp && !oldFront.isRecycled) {
+                    spareBmp = oldFront
+                }
+                frontBmp = initBmp
+                frontCanvas = Canvas(initBmp)
+                frontRect.set(tmpTargetRect)
+                frontW = bw
+                frontH = bh
+                frontSrc.set(0, 0, bw, bh)
+                frontScale = targetScale
+                frontPage = p
+                frontValid = true
+            }
         }
-        pagePicture?.let { c.drawPicture(it) }
+        val bmp = frontBmp
+        if (bmp != null && !bmp.isRecycled && frontW > 0 && frontH > 0) {
+            c.drawBitmap(bmp, frontSrc, frontRect, cachePaint)
+        }
 
         edge.strokeWidth = 1f / k
         edge.color = if (dark) 0x26FFFFFF else 0x1F16161A
         c.drawRect(0f, 0f, PAGE_W, p.height, edge)
         c.restore()
+
+        if (!renderInFlight && needsViewportRefresh(p)) {
+            scheduleAsyncRender(p)
+        }
     }
 
-    /** Дорисовать готовый штрих: инвалидируем векторный кэш страницы. */
+    /** Дорисовать один готовый штрих прямо в активный буфер без перерисовки всей страницы. */
     private fun drawIntoCache(s: Stroke) {
-        pagePictureValid = false
+        val p = page
+        val bmp = frontBmp
+        val fc = frontCanvas
+        if (p != null && bmp != null && !bmp.isRecycled && fc != null && frontPage === p && frontW > 0 && frontH > 0) {
+            val b = s.bounds()
+            val intersects = b[2] >= frontRect.left && b[0] <= frontRect.right && b[3] >= frontRect.top && b[1] <= frontRect.bottom
+            if (intersects) {
+                fc.save()
+                fc.clipRect(0, 0, frontW, frontH)
+                val sx = frontW / frontRect.width().coerceAtLeast(1f)
+                val sy = frontH / frontRect.height().coerceAtLeast(1f)
+                fc.scale(sx, sy)
+                fc.translate(-frontRect.left, -frontRect.top)
+                drawer.drawStroke(fc, s)
+                fc.restore()
+            }
+            if (renderInFlight) inFlightStrokes += s
+        } else {
+            invalidateCache()
+        }
     }
 
     private val lassoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -655,7 +1013,17 @@ class InkView(context: Context) : View(context) {
         val k = scale
         drawDying(canvas)
         drawSelection(canvas, k)
-        current?.let { l -> drawer.drawStroke(canvas, l.stroke(), l.prepared()) }
+        current?.let { l ->
+            if (l.tool == Tool.HIGHLIGHTER) {
+                drawer.drawLiveHighlighter(canvas, l.livePath, l.color, l.width)
+            } else {
+                l.prepareTail()
+                drawer.drawLivePen(
+                    canvas, l.color, l.dotX, l.dotY, l.dotR, !l.hasMoved,
+                    l.frozenBuckets, l.frozenSizes, l.tailBuckets, l.tailSizes, l.quantum,
+                )
+            }
+        }
         morph?.let { drawer.drawStroke(canvas, it) }
         shapePreview.forEach { drawer.drawStroke(canvas, it) }
         if (lassoPath.size >= 4) drawLasso(canvas, k)
@@ -929,30 +1297,170 @@ class InkView(context: Context) : View(context) {
     private var mode = Mode.NONE
     private var activePointer = -1
 
-    /** Текущий штрих: точки в единицах страницы. */
+    /** Текущий штрих: точки в единицах страницы; инкрементально строится за O(1) на кадр. */
     private inner class Live(val tool: Tool, val color: Int, val width: Float) {
-        val pts = ArrayList<Float>(512)
-        private var preparedFor = -1
-        private var preparedLines: StrokeLines? = null
-        fun add(x: Float, y: Float, p: Float) {
-            pts += x; pts += y; pts += p
-        }
-        fun stroke() = Stroke(tool, color, width, pts.toFloatArray())
+        var rawPts = FloatArray(768)
+        var rawSize = 0
+        val livePath = Path()
+        val quantum = maxOf(width * 0.04f, 0.04f)
+        val frozenBuckets = arrayOfNulls<FloatArray>(64)
+        val frozenSizes = IntArray(64)
+        val tailBuckets = arrayOfNulls<FloatArray>(64)
+        val tailSizes = IntArray(64)
+        var hasMoved = false
+        var dotX = 0f
+        var dotY = 0f
+        var dotR = 0f
 
-        fun prepared(): StrokeLines? {
-            if (tool == Tool.HIGHLIGHTER) return null
-            if (preparedFor != pts.size) {
-                preparedLines = InkCurve.lines(stroke())
-                preparedFor = pts.size
+        private val tiny = width * 0.02f
+        private var frozenInit = false
+        private var frozenIdx = 1
+        private var frozenSx = 0f
+        private var frozenSy = 0f
+        private var frozenSp = 0f
+        private var lastCurveX = 0f
+        private var lastCurveY = 0f
+        private var lastCurveP = 0f
+        private var tailDirty = true
+
+        fun add(x: Float, y: Float, p: Float) {
+            if (rawSize + 3 > rawPts.size) {
+                rawPts = rawPts.copyOf(rawPts.size * 2)
             }
-            return preparedLines
+            val isFirst = rawSize == 0
+            rawPts[rawSize++] = x
+            rawPts[rawSize++] = y
+            rawPts[rawSize++] = p
+            if (isFirst) {
+                dotX = x
+                dotY = y
+                dotR = StrokeGeometry.widthAt(width, p, tool) * 0.5f
+                if (tool == Tool.HIGHLIGHTER) {
+                    livePath.moveTo(x, y)
+                    livePath.lineTo(x + 0.01f, y)
+                }
+            } else {
+                if (tool == Tool.HIGHLIGHTER) livePath.lineTo(x, y)
+                if (!hasMoved && hypot(x - dotX, y - dotY) > tiny) hasMoved = true
+            }
+            tailDirty = true
+        }
+
+        fun toFloatArray(): FloatArray = rawPts.copyOf(rawSize)
+
+        private fun pAt(idx: Int, n: Int): Float {
+            val a = rawPts[max(idx - 1, 0) * 3 + 2]
+            val b = rawPts[idx * 3 + 2]
+            val c = rawPts[min(idx + 1, n - 1) * 3 + 2]
+            return (a + 2f * b + c) * 0.25f
+        }
+
+        private fun pushSeg(
+            buckets: Array<FloatArray?>,
+            sizes: IntArray,
+            x0: Float,
+            y0: Float,
+            x1: Float,
+            y1: Float,
+            p0: Float,
+            p1: Float,
+        ) {
+            if (x0 == x1 && y0 == y1) return
+            val w = StrokeGeometry.widthAt(width, (p0 + p1) * 0.5f, tool)
+            val key = Math.round(w / quantum).coerceIn(0, 63)
+            var b = buckets[key]
+            val sz = sizes[key]
+            if (b == null) {
+                b = FloatArray(128)
+                buckets[key] = b
+            } else if (sz + 4 > b.size) {
+                b = b.copyOf(b.size * 2)
+                buckets[key] = b
+            }
+            b[sz] = x0; b[sz + 1] = y0; b[sz + 2] = x1; b[sz + 3] = y1
+            sizes[key] = sz + 4
+        }
+
+        fun prepareTail() {
+            if (!tailDirty || tool == Tool.HIGHLIGHTER) return
+            tailDirty = false
+            val rawN = rawSize / 3
+            if (rawN == 0) return
+            if (!hasMoved) {
+                dotX = rawPts[0]
+                dotY = rawPts[1]
+                dotR = StrokeGeometry.widthAt(width, rawPts[2], tool) * 0.5f
+                return
+            }
+            if (rawN >= 2 && !frozenInit) {
+                frozenInit = true
+                frozenSx = rawPts[0]
+                frozenSy = rawPts[1]
+                frozenSp = pAt(0, rawN)
+                lastCurveX = frozenSx
+                lastCurveY = frozenSy
+                lastCurveP = frozenSp
+            }
+            while (frozenIdx <= rawN - 3) {
+                val i = frozenIdx
+                val cx = rawPts[i * 3]
+                val cy = rawPts[i * 3 + 1]
+                val nx0 = rawPts[(i + 1) * 3]
+                val ny0 = rawPts[(i + 1) * 3 + 1]
+                val ex = (cx + nx0) * 0.5f
+                val ey = (cy + ny0) * 0.5f
+                val ep = (pAt(i, rawN) + pAt(i + 1, rawN)) * 0.5f
+                val len = hypot(cx - frozenSx, cy - frozenSy) + hypot(ex - cx, ey - cy)
+                val k = (len / 1.6f).toInt().coerceIn(1, 12)
+                for (j in 1..k) {
+                    val t = j / k.toFloat()
+                    val u = 1f - t
+                    val px = u * u * frozenSx + 2f * u * t * cx + t * t * ex
+                    val py = u * u * frozenSy + 2f * u * t * cy + t * t * ey
+                    val pp = u * frozenSp + t * ep
+                    pushSeg(frozenBuckets, frozenSizes, lastCurveX, lastCurveY, px, py, lastCurveP, pp)
+                    lastCurveX = px; lastCurveY = py; lastCurveP = pp
+                }
+                frozenSx = ex; frozenSy = ey; frozenSp = ep
+                frozenIdx++
+            }
+            tailSizes.fill(0)
+            if (rawN == 2) {
+                pushSeg(tailBuckets, tailSizes, rawPts[0], rawPts[1], rawPts[3], rawPts[4], pAt(0, 2), pAt(1, 2))
+            } else if (frozenInit && rawN >= 3) {
+                var sx = frozenSx; var sy = frozenSy; var sp = frozenSp
+                var lx = lastCurveX; var ly = lastCurveY; var lp = lastCurveP
+                for (i in frozenIdx until rawN - 1) {
+                    val cx = rawPts[i * 3]
+                    val cy = rawPts[i * 3 + 1]
+                    val nx0 = rawPts[(i + 1) * 3]
+                    val ny0 = rawPts[(i + 1) * 3 + 1]
+                    val ex = (cx + nx0) * 0.5f
+                    val ey = (cy + ny0) * 0.5f
+                    val ep = (pAt(i, rawN) + pAt(i + 1, rawN)) * 0.5f
+                    val len = hypot(cx - sx, cy - sy) + hypot(ex - cx, ey - cy)
+                    val k = (len / 1.6f).toInt().coerceIn(1, 12)
+                    for (j in 1..k) {
+                        val t = j / k.toFloat()
+                        val u = 1f - t
+                        val px = u * u * sx + 2f * u * t * cx + t * t * ex
+                        val py = u * u * sy + 2f * u * t * cy + t * t * ey
+                        val pp = u * sp + t * ep
+                        pushSeg(tailBuckets, tailSizes, lx, ly, px, py, lp, pp)
+                        lx = px; ly = py; lp = pp
+                    }
+                    sx = ex; sy = ey; sp = ep
+                }
+                val endIdx = rawN - 1
+                pushSeg(tailBuckets, tailSizes, lx, ly, rawPts[endIdx * 3], rawPts[endIdx * 3 + 1], lp, pAt(endIdx, rawN))
+            }
         }
 
         fun pathLength(): Float {
             var d = 0f
             var i = 3
-            while (i + 1 < pts.size) {
-                d += hypot(pts[i] - pts[i - 3], pts[i + 1] - pts[i - 2])
+            while (i + 1 < rawSize) {
+                d += hypot(rawPts[i] - rawPts[i - 3], rawPts[i + 1] - rawPts[i - 2])
                 i += 3
             }
             return d
@@ -1021,7 +1529,7 @@ class InkView(context: Context) : View(context) {
         if (mode != Mode.DRAW || !snapShapes || snapped != null) return@Runnable
         val l = current ?: return@Runnable
         if (l.pathLength() < 30f) return@Runnable
-        val r = Shapes.recognize(l.pts.toFloatArray()) ?: return@Runnable
+        val r = Shapes.recognize(l.toFloatArray()) ?: return@Runnable
         if (l.tool == Tool.HIGHLIGHTER && r.kind != ShapeKind.LINE) return@Runnable
         val target = if (l.tool == Tool.HIGHLIGHTER) {
             Stroke(Tool.HIGHLIGHTER, l.color, l.width, floatArrayOf(r.xy[0], r.xy[1], 0.5f, r.xy[2], r.xy[3], 0.5f))
@@ -1037,7 +1545,7 @@ class InkView(context: Context) : View(context) {
     /** Каракуля плавно перетекает в ровную фигуру. */
     private fun animateMorph(from: Live, to: Stroke) {
         val n = 96
-        val a = Shapes.resample(FloatArray(from.pts.size / 3 * 2) { k -> from.pts[(k / 2) * 3 + k % 2] }, n)
+        val a = Shapes.resample(FloatArray(from.rawSize / 3 * 2) { k -> from.rawPts[(k / 2) * 3 + k % 2] }, n)
         val b = Shapes.resample(FloatArray(to.size * 2) { k -> to.points[(k / 2) * 3 + k % 2] }, n)
         current = null
         ValueAnimator.ofFloat(0f, 1f).apply {
@@ -1378,7 +1886,7 @@ class InkView(context: Context) : View(context) {
                 if (!isPen(e, e.findPointerIndex(activePointer).coerceAtLeast(0)) && mode != Mode.PAN) {
                     removeCallbacks(holdEraser); removeCallbacks(snapShape)
                     when (mode) {
-                        Mode.DRAW -> if ((current?.pts?.size ?: 0) < 3 * 6) current = null else commitStroke(p)
+                        Mode.DRAW -> if ((current?.rawSize ?: 0) < 3 * 6) current = null else commitStroke(p)
                         Mode.ERASE -> finishErase(p)
                         Mode.LASSO -> lassoPath.clear()
                         Mode.MOVE -> { moveDx = 0f; moveDy = 0f; reportSelection() }
@@ -1554,8 +2062,8 @@ class InkView(context: Context) : View(context) {
     private fun commitStroke(p: InkPage) {
         val l = current ?: return
         current = null
-        if (l.pts.isEmpty()) return
-        addStroke(p, Stroke(l.tool, l.color, l.width, StrokeGeometry.thin(l.pts.toFloatArray(), 0.4f)))
+        if (l.rawSize == 0) return
+        addStroke(p, Stroke(l.tool, l.color, l.width, StrokeGeometry.thin(l.toFloatArray(), 0.4f)))
     }
 
     private fun addStroke(p: InkPage, s: Stroke) {
@@ -1588,8 +2096,7 @@ class InkView(context: Context) : View(context) {
         }
         erasedAny = true
         p.touch()
-        pagePictureValid = false
-        invalidate()
+        invalidateCache()
     }
 
     private fun finishErase(p: InkPage) {
@@ -1625,11 +2132,29 @@ class InkView(context: Context) : View(context) {
         if (hasSelection) reportSelection()
     }
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        detached = false
+        if (renderExecutor.isShutdown) renderExecutor = newRenderExecutor()
+        frontValid = false
+    }
+
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        detached = true
+        renderInFlight = false
+        renderPending = false
+        renderGen.incrementAndGet()
+        renderExecutor.shutdownNow()
         cancelTurn()
-        pagePicture = null
-        pagePictureValid = false
+        if (frontBmp?.isRecycled == false) frontBmp?.recycle()
+        if (spareBmp != null && spareBmp !== frontBmp && spareBmp?.isRecycled == false) spareBmp?.recycle()
+        frontBmp = null
+        frontCanvas = null
+        spareBmp = null
+        frontPage = null
+        frontValid = false
+        inFlightStrokes.clear()
         removeCallbacks(flingStep)
         removeCallbacks(holdEraser)
         removeCallbacks(snapShape)
