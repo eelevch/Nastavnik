@@ -194,6 +194,9 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                 animationSpec = spring(dampingRatio = 0.92f, stiffness = 380f),
                 label = "panelSlide",
             )
+            // Наставник не закрывает лист, а сдвигает его: лист вписывается в оставшуюся слева часть.
+            val insetPx = with(LocalDensity.current) { if (panel && wide) (effectivePanelWidth.dp + 12.dp).toPx() else 0f }
+            LaunchedEffect(insetPx) { ctl.ink.setRightInset(insetPx) }
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -449,13 +452,13 @@ private fun NotebookTopBar(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
-                    .widthIn(max = 220.dp)
+                    .widthIn(max = if (ctl.toolBarTop) 150.dp else 220.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .clickable { renaming = true }
                     .padding(horizontal = 4.dp, vertical = 2.dp),
             )
             val subj = meta?.subject?.trim().orEmpty()
-            if (subj.isNotEmpty()) {
+            if (subj.isNotEmpty() && !ctl.toolBarTop) {
                 Text(
                     subj,
                     style = MaterialTheme.typography.labelSmall,
@@ -469,7 +472,19 @@ private fun NotebookTopBar(
                         .padding(horizontal = 6.dp, vertical = 2.dp),
                 )
             }
-            Spacer(Modifier.weight(1f))
+            if (ctl.toolBarTop) {
+                // Кисти — в одной строке со всеми кнопками: шторка сверху в одну строку и ниже.
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .padding(horizontal = 4.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    TopToolBar(ctl, Modifier.horizontalScroll(rememberScrollState()))
+                }
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
             // Страницы: стрелки, номер и кнопка быстрого удаления страницы
             Row(
                 Modifier.glass(CircleShape, 4.dp, strong = true).padding(horizontal = 2.dp),
@@ -531,16 +546,6 @@ private fun NotebookTopBar(
             }
             val mentorAction = if (panel) "Скрыть наставника" else "Показать наставника"
             BarButton(R.drawable.ic_sparkle, mentorAction, active = panel, onClick = onTogglePanel)
-        }
-        if (ctl.toolBarTop) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 6.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                TopToolBar(ctl, Modifier.horizontalScroll(rememberScrollState()))
-            }
         }
     }
     if (deletePageConfirm) {

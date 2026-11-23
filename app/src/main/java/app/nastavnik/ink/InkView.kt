@@ -470,7 +470,35 @@ class InkView(context: Context) : View(context) {
     private val values = FloatArray(9)
     private val scale: Float get() = values.also { pageMatrix.getValues(it) }[Matrix.MSCALE_X]
 
-    private fun fitScale(): Float = ((width - 2 * MARGIN * density) / PAGE_W).coerceAtLeast(0.01f)
+    /**
+     * Справа лист закрыт панелью (наставник) на столько пикселей: лист вписывается в оставшуюся часть
+     * и плавно сдвигается, а не прячется под панелью.
+     */
+    var rightInset = 0f
+        private set
+
+    /** Ширина видимой части вида (без закрытого панелью края). */
+    private val viewW: Float get() = (width - rightInset).coerceAtLeast(1f)
+
+    fun setRightInset(px: Float) {
+        val v = px.coerceAtLeast(0f)
+        if (abs(v - rightInset) < 0.5f) return
+        val oldFit = fitScale()
+        val wasFitted = abs(scale / oldFit - 1f) < 0.04f
+        rightInset = v
+        if (page == null || width <= 0 || height <= 0) return
+        val target = Matrix(pageMatrix)
+        if (wasFitted) {
+            val k = fitScale()
+            val ty = values.also { pageMatrix.getValues(it) }[Matrix.MTRANS_Y] / scale * k
+            target.setScale(k, k)
+            target.postTranslate(MARGIN * density, ty)
+        }
+        clamp(target)
+        animateMatrix(target)
+    }
+
+    private fun fitScale(): Float = ((viewW - 2 * MARGIN * density) / PAGE_W).coerceAtLeast(0.01f)
 
     /** Лист по ширине экрана, сверху небольшой отступ. */
     fun fitWidth() {
@@ -524,7 +552,7 @@ class InkView(context: Context) : View(context) {
         val v = FloatArray(9).also { target.getValues(it) }
         val cx = r.centerX() * k + v[Matrix.MTRANS_X]
         val cy = r.centerY() * k + v[Matrix.MTRANS_Y]
-        val dx = if (cx in 0f..width.toFloat()) 0f else width / 2f - cx
+        val dx = if (cx in 0f..viewW) 0f else viewW / 2f - cx
         val dy = height * 0.4f - cy
         target.postTranslate(dx, dy)
         clamp(target)
@@ -569,7 +597,7 @@ class InkView(context: Context) : View(context) {
         val mg = MARGIN * density
         var tx = v[Matrix.MTRANS_X]
         var ty = v[Matrix.MTRANS_Y]
-        tx = if (pw + 2 * mg <= width) (width - pw) / 2 else tx.coerceIn(width - pw - mg, mg)
+        tx = if (pw + 2 * mg <= viewW) (viewW - pw) / 2 else tx.coerceIn(viewW - pw - mg, mg)
         ty = if (ph + 2 * mg <= height) ty.coerceIn(mg, height - ph - mg) else ty.coerceIn(height - ph - mg * 4, mg)
         m.postTranslate(tx - v[Matrix.MTRANS_X], ty - v[Matrix.MTRANS_Y])
     }
@@ -2023,11 +2051,11 @@ class InkView(context: Context) : View(context) {
         val mg = MARGIN * density
         val pw = PAGE_W * k
         val ph = p.height * k
-        if (pw + 2 * mg <= width && ph + 2 * mg <= height) {
+        if (pw + 2 * mg <= viewW && ph + 2 * mg <= height) {
             return endMoving()
         }
-        val minX = if (pw + 2 * mg <= width) (width - pw) / 2f else width - pw - mg
-        val maxX = if (pw + 2 * mg <= width) (width - pw) / 2f else mg
+        val minX = if (pw + 2 * mg <= viewW) (viewW - pw) / 2f else viewW - pw - mg
+        val maxX = if (pw + 2 * mg <= viewW) (viewW - pw) / 2f else mg
         val minY = if (ph + 2 * mg <= height) (height - ph) / 2f else height - ph - mg * 4
         val maxY = if (ph + 2 * mg <= height) (height - ph) / 2f else mg
         scroller.fling(
