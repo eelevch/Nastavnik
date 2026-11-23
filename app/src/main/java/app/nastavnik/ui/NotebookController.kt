@@ -22,6 +22,8 @@ import app.nastavnik.ink.NotebookStore
 import app.nastavnik.ink.PageRenderer
 import android.graphics.Bitmap
 import app.nastavnik.ink.PAGE_W
+import app.nastavnik.ai.Mark
+import app.nastavnik.ai.MarkKind
 import app.nastavnik.ink.PageMark
 import app.nastavnik.ink.Paper
 import app.nastavnik.ink.Tool
@@ -234,12 +236,24 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         val ps = withContext(Dispatchers.IO) { nbs.store.loadPages(m) }
         meta = m
         pages = ps
-        // Чат только в рамках текущей сессии: при входе в тетрадь всегда новый чистый диалог
-        mentor.newTask()
+        mentor.useConversation(app.getSharedPreferences("notebook_chats", 0).getLong(notebookId.toString(), m.conversationId))
+        chatMessages.clear()
+        var lastQuestion = ""
+        app.db.messages().forConversation(mentor.state.value.conversationId).forEach { message ->
+            val user = message.role == "user"
+            if (user) lastQuestion = message.text
+            chatMessages.add(MentorChatMessage(
+                id = message.id, isUser = user, text = message.text, timestamp = message.createdAt,
+                answer = if (user) null else AnswerUi(
+                    seq = message.id, kind = AskKind.USER, question = lastQuestion,
+                    streaming = false,
+                    marks = listOf(Mark(MarkKind.NOTE, null, message.text)),
+                ),
+            ))
+        }
         answerPageId = 0L
         ink.marks = emptyList()
         rejectedMarks.clear()
-        clearChat()
         mentor.extraSystem = PracticePrompts.variantForMentor(m.tasks)
         applyTool()
         // Открыли ради конкретной страницы (задача ДЗ) — сразу на ней.
@@ -631,7 +645,11 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
     }
 
     private fun rememberConversation(conv: Long) {
-        // Чат сохраняется только на время текущей сессии тетради, не персистим в метаданные на диск
+        app.getSharedPreferences("notebook_chats", 0).edit().putLong(notebookId.toString(), conv).commit()
+        val current = meta ?: return
+        val updated = current.copy(conversationId = conv)
+        nbs.store.saveMeta(updated)
+        meta = updated
     }
 
     /** null означает все страницы, включая добавленные позже. */

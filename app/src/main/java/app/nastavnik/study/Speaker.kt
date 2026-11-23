@@ -11,6 +11,15 @@ import java.util.Locale
 /** Читает подсказки вслух (системный синтез речи, русский язык). Формулы — словами, без разметки. */
 class Speaker(private val context: Context) {
     private var tts: TextToSpeech? = null
+    private val prefs = context.applicationContext.getSharedPreferences("speaker", Context.MODE_PRIVATE)
+    private val _voices = MutableStateFlow<List<Voice>>(emptyList())
+    val voices = _voices.asStateFlow()
+    fun prepare() { if (tts == null) initTts() }
+    fun selectVoice(name: String) {
+        prefs.edit().putString("voice", name).apply()
+        setupBestVoice()
+    }
+    fun selectedVoice(): String = prefs.getString("voice", "").orEmpty()
     private var ready = false
     private var pending: String? = null
 
@@ -81,6 +90,9 @@ class Speaker(private val context: Context) {
                 val loc = v.locale
                 loc.language.equals("ru", ignoreCase = true) || loc.toLanguageTag().startsWith("ru", ignoreCase = true)
             }
+            _voices.value = ruVoices.filter {
+                it.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) != true
+            }.sortedByDescending { it.quality }
             if (ruVoices.isNotEmpty()) {
                 // Ищем наиболее качественный и естественный русский голос (Google Neural / High Quality)
                 val bestVoice = ruVoices.maxWithOrNull(
@@ -99,7 +111,7 @@ class Speaker(private val context: Context) {
                     }
                 )
                 if (bestVoice != null && bestVoice.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) != true) {
-                    t.voice = bestVoice
+                    t.voice = _voices.value.firstOrNull { it.name == selectedVoice() } ?: bestVoice
                 }
             }
         }
@@ -115,6 +127,7 @@ class Speaker(private val context: Context) {
     }
 
     fun stop() {
+        pending = null
         tts?.stop()
         _isSpeaking.value = false
     }

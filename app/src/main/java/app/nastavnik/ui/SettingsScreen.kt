@@ -138,6 +138,22 @@ fun SettingsScreen(onBack: () -> Unit, onAppearance: () -> Unit = {}, onOnboardi
                         valueRange = 0.15f..0.8f,
                     )
                     HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                    val speaker = context.app.speaker
+                    androidx.compose.runtime.LaunchedEffect(Unit) { speaker.prepare() }
+                    val voices by speaker.voices.collectAsStateWithLifecycle()
+                    var selectedVoice by remember { mutableStateOf(speaker.selectedVoice()) }
+                    FieldLabel("Голос наставника", "Русские голоса установленного синтезатора. Сетевые голоса требуют интернета. Тембр и интонация зависят от движка.")
+                    RadioRow(selectedVoice.isEmpty(), "Автоматически") {
+                        selectedVoice = ""
+                        speaker.selectVoice("")
+                    }
+                    voices.forEach { voice ->
+                        RadioRow(selectedVoice == voice.name, voice.name + if (voice.isNetworkConnectionRequired) " · онлайн" else " · офлайн") {
+                            selectedVoice = voice.name
+                            speaker.selectVoice(voice.name)
+                            speaker.speak("Привет! Давай разберёмся вместе. Что тебе хочется узнать?")
+                        }
+                    }
                     var speak by remember { mutableStateOf(repo.speakHints()) }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
