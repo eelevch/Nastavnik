@@ -3,7 +3,6 @@ package app.nastavnik.ui
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -41,6 +40,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -50,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -57,6 +58,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -88,22 +90,24 @@ enum class PhoneTab(val title: String, val icon: Int) {
 @Composable
 fun PhoneShell(tab: PhoneTab, onTab: (PhoneTab) -> Unit, resumeTick: Int, go: (String) -> Unit) {
     Box(Modifier.fillMaxSize().paperBackdrop()) {
-        AnimatedContent(
-            targetState = tab,
-            transitionSpec = {
-                // Вкладки — плавный сдвиг и мягкое проявление без скачков и пауз.
-                val dir = if (targetState.ordinal > initialState.ordinal) 1 else -1
-                (fadeIn(tween(260, easing = Motion.Decelerate)) + slideInHorizontally(tween(300, easing = Motion.Emphasized)) { (it * 0.18f * dir).toInt() })
-                    .togetherWith(fadeOut(tween(180, easing = Motion.Accelerate)) + slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { (-it * 0.18f * dir).toInt() })
-            },
-            label = "tab",
-            modifier = Modifier.fillMaxSize().navigationBarsPadding().padding(bottom = 80.dp),
-        ) { t ->
-            when (t) {
-                PhoneTab.TODAY -> TodayTab(resumeTick, go, onTab = onTab)
-                PhoneTab.SCHEDULE -> ScheduleScreen(onBack = null)
-                PhoneTab.GRADES -> GradesScreen(onBack = null, onSettings = { go(MainActivity.SCREEN_SETTINGS) }, onLks = { go(MainActivity.SCREEN_LKS) })
-                PhoneTab.STUDY -> StudyTab(resumeTick, go)
+        CompositionLocalProvider(LocalBottomBarInset provides 72.dp) {
+            AnimatedContent(
+                targetState = tab,
+                transitionSpec = {
+                    // Вкладки — плавный сдвиг и мягкое проявление без скачков и пауз.
+                    val dir = if (targetState.ordinal > initialState.ordinal) 1 else -1
+                    (fadeIn(tween(260, easing = Motion.Decelerate)) + slideInHorizontally(tween(300, easing = Motion.Emphasized)) { (it * 0.18f * dir).toInt() })
+                        .togetherWith(fadeOut(tween(180, easing = Motion.Accelerate)) + slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { (-it * 0.18f * dir).toInt() })
+                },
+                label = "tab",
+                modifier = Modifier.fillMaxSize(),
+            ) { t ->
+                when (t) {
+                    PhoneTab.TODAY -> TodayTab(resumeTick, go, onTab = onTab)
+                    PhoneTab.SCHEDULE -> ScheduleScreen(onBack = null)
+                    PhoneTab.GRADES -> GradesScreen(onBack = null, onSettings = { go(MainActivity.SCREEN_SETTINGS) }, onLks = { go(MainActivity.SCREEN_LKS) })
+                    PhoneTab.STUDY -> StudyTab(resumeTick, go)
+                }
             }
         }
         TabBar(tab, onTab, Modifier.align(Alignment.BottomCenter))
@@ -111,8 +115,8 @@ fun PhoneShell(tab: PhoneTab, onTab: (PhoneTab) -> Unit, resumeTick: Int, go: (S
 }
 
 /**
- * Нижняя панель, как в приложении для родителя: во всю ширину, цвета карточки; у выбранной вкладки — подложка
- * под значком и цвет акцента.
+ * Нижняя панель без подложки сзади (как в Яндекс Музыке): значки и подписи парят поверх контента
+ * на мягком вертикальном затухании без сплошной карточки и пилюли.
  */
 @Composable
 private fun TabBar(tab: PhoneTab, onTab: (PhoneTab) -> Unit, modifier: Modifier) {
@@ -123,28 +127,57 @@ private fun TabBar(tab: PhoneTab, onTab: (PhoneTab) -> Unit, modifier: Modifier)
     )
 }
 
-/** Панель вкладок: подпись, значок, выбрана ли; [onClick] — номер вкладки. */
+/** Панель вкладок без подложки: подпись, значок, выбрана ли; [onClick] — номер вкладки. */
 @Composable
 fun TabRowBar(items: List<Triple<String, Int, Boolean>>, onClick: (Int) -> Unit, modifier: Modifier) {
-    Row(modifier.fillMaxWidth().background(Brand.Glass).navigationBarsPadding().height(80.dp)) {
-        items.forEachIndexed { i, (title, icon, sel) ->
-            val fg by animateColorAsState(if (sel) Brand.Accent else Brand.InkSoft, tween(240, easing = Motion.Emphasized), label = "tabColor")
-            val pill by animateColorAsState(if (sel) Brand.Accent.copy(alpha = 0.14f) else Color.Transparent, tween(240, easing = Motion.Emphasized), label = "tabPill")
-            val iconScale by animateFloatAsState(if (sel) 1.08f else 1f, spring(dampingRatio = 0.88f, stiffness = 500f), label = "tabIconScale")
-            val pillWidth by animateDpAsState(if (sel) 56.dp else 44.dp, spring(dampingRatio = 0.88f, stiffness = 450f), label = "pillWidth")
-            val source = remember { MutableInteractionSource() }
-            Column(
-                Modifier.weight(1f).fillMaxHeight()
-                    .pressable(source)
-                    .clickable(source, indication = null) { onClick(i) }
-                    .semantics { contentDescription = title; selected = sel },
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Box(Modifier.size(width = pillWidth, height = 30.dp).clip(RoundedCornerShape(15.dp)).background(pill), contentAlignment = Alignment.Center) {
-                    Icon(painterResource(icon), contentDescription = null, tint = fg, modifier = Modifier.size(22.dp).graphicsLayer { scaleX = iconScale; scaleY = iconScale })
+    val fade = Brush.verticalGradient(
+        0f to Color.Transparent,
+        0.35f to Brand.Paper.copy(alpha = 0.72f),
+        1f to Brand.Paper.copy(alpha = 0.94f),
+    )
+    Box(
+        modifier
+            .fillMaxWidth()
+            .background(fade)
+            .navigationBarsPadding(),
+    ) {
+        Row(Modifier.fillMaxWidth().height(64.dp)) {
+            items.forEachIndexed { i, (title, icon, sel) ->
+                val fg by animateColorAsState(
+                    if (sel) Brand.Accent else Brand.InkSoft.copy(alpha = 0.68f),
+                    tween(240, easing = Motion.Emphasized),
+                    label = "tabColor",
+                )
+                val iconScale by animateFloatAsState(
+                    if (sel) 1.08f else 1f,
+                    spring(dampingRatio = 0.88f, stiffness = 500f),
+                    label = "tabIconScale",
+                )
+                val source = remember { MutableInteractionSource() }
+                Column(
+                    Modifier.weight(1f).fillMaxHeight()
+                        .pressable(source)
+                        .clickable(source, indication = null) { onClick(i) }
+                        .semantics { contentDescription = title; selected = sel },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Icon(
+                        painterResource(icon),
+                        contentDescription = null,
+                        tint = fg,
+                        modifier = Modifier.size(24.dp).graphicsLayer { scaleX = iconScale; scaleY = iconScale },
+                    )
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Medium,
+                        ),
+                        color = fg,
+                        maxLines = 1,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
                 }
-                Text(title, style = MaterialTheme.typography.labelMedium, color = fg, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
             }
         }
     }
@@ -173,6 +206,7 @@ private fun TodayTab(resumeTick: Int, go: (String) -> Unit, onTab: (PhoneTab) ->
             if (app.sync.configured) SyncDot(sync.running, sync.ok) { app.sync.soon(0) }
             RoundIconButton(R.drawable.ic_tune, "Настройки") { go(MainActivity.SCREEN_SETTINGS) }
         }
+        InAppUpdateBanner()
         QuickActionsStrip(
             onSchedule = { onTab(PhoneTab.SCHEDULE) },
             onGrades = { onTab(PhoneTab.GRADES) },

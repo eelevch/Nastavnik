@@ -60,5 +60,17 @@ class BackupAndUpdateTest {
         val bodyWithSha = """{"tag_name":"v1.1.11","body":"Хеши:\n11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff  nastavnik.apk\naabbccddeeff11223344556677889900aabbccddeeff11223344556677889900  student.apk","assets":[{"name":"nastavnik.apk","size":5,"browser_download_url":"https://github.com/Ee1evch/touchnotes/releases/download/v1.1.11/nastavnik.apk"}]}"""
         val parsedWithSha = UpdateCheck.parse(bodyWithSha, currentBuild = 10110)!!
         assertEquals("11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff", parsedWithSha.sha256)
+
+        // Актуальный репозиторий eelevch/Nastavnik и парсинг релиза v1.5.0 с SHA-256
+        assertEquals("eelevch/Nastavnik", UpdateCheck.REPO)
+        assertEquals("https://api.github.com/repos/eelevch/Nastavnik/releases/latest", UpdateCheck.LATEST_URL)
+        val sha150 = "d702dc0ab95a72fcd6baef38dcc17d8ae009a4b0247be02d252c178f20356c03"
+        val release150 = """{"tag_name":"v1.5.0","name":"Наставник v1.5.0","body":"Релиз\n\n$sha150  nastavnik.apk","assets":[{"name":"nastavnik.apk","size":7400000,"browser_download_url":"https://github.com/eelevch/Nastavnik/releases/download/v1.5.0/nastavnik.apk"}]}"""
+        val u150 = UpdateCheck.parse(release150, currentBuild = 10409, currentVersionName = "1.4.9")!!
+        assertEquals(10500, u150.build)
+        assertEquals("https://github.com/eelevch/Nastavnik/releases/download/v1.5.0/nastavnik.apk", u150.apkUrl)
+        assertEquals(sha150, u150.sha256)
+        assertNull(UpdateCheck.parse(release150, currentBuild = 10500))
+        assertNull(UpdateCheck.parse(release150, currentBuild = 10409, currentVersionName = "1.5.0"))
     }
 }

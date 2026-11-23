@@ -96,8 +96,12 @@ class NastavnikApp : Application() {
     /** Обновление приложения прямо из интерфейса. */
     val updater: Updater by lazy { Updater(this) }
     val availableUpdate = MutableStateFlow<UpdateInfo?>(null)
+    @Volatile private var lastUpdateCheckAt = 0L
 
-    fun checkUpdateInBackground() {
+    fun checkUpdateInBackground(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastUpdateCheckAt < 30 * 60_000L) return
+        lastUpdateCheckAt = now
         appScope.launch {
             runCatching {
                 val info = updater.check()

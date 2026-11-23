@@ -144,6 +144,9 @@ object Motion {
 /** Счётчик появлений на экране: каждая следующая карточка появляется чуть позже — каскадом. */
 val LocalEnterOrder = androidx.compose.runtime.staticCompositionLocalOf<java.util.concurrent.atomic.AtomicInteger?> { null }
 
+/** Нижний отступ под прозрачной панелью вкладок на телефоне (0 dp на остальных экранах). */
+val LocalBottomBarInset = androidx.compose.runtime.staticCompositionLocalOf { 0.dp }
+
 /**
  * Появление: карточка проявляется и чуть поднимается (12 dp) по кривой Material 3. На одном экране — каскадом
  * (по 30 мс, не дольше 0,2 с), чтобы взгляд шёл сверху вниз. Только при первом показе.
@@ -195,7 +198,7 @@ fun ScreenScaffold(
             .padding(inner)
         Column(
             modifier = (if (scrollable) base.verticalScroll(rememberScrollState()) else base)
-                .padding(PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 32.dp)),
+                .padding(PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 32.dp + LocalBottomBarInset.current)),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(

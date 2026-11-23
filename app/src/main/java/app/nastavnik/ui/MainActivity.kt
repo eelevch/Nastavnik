@@ -285,6 +285,7 @@ class MainActivity : ComponentActivity() {
         app.appScope.launch { app.grades.refresh(); app.grades.refreshLks() }
         // Доступ к «Не беспокоить» могли только что выдать в настройках системы.
         app.appScope.launch { runCatching { LessonQuiet.update(this@MainActivity) } }
+        app.checkUpdateInBackground()
         TelegramMetrics.reportAppOpen(this)
     }
 
