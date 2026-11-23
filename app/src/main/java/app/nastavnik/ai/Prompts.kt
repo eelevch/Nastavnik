@@ -48,7 +48,7 @@ enum class QuickAction(val label: String, val short: String, val prompt: String)
 object Prompts {
     const val DONE_MARKER = "[[ГОТОВО]]"
 
-    private const val MENTOR_TEMPLATE = """Ты — наставник студента 1 курса ИТ-специальности. Студент пишет конспект или решает задачу стилусом — в приложении для заметок, в тетради или на бумаге — и присылает снимок экрана или фото.
+    const val DEFAULT_MENTOR_TEMPLATE = """Ты — наставник студента 1 курса ИТ-специальности. Студент пишет конспект или решает задачу стилусом — в приложении для заметок, в тетради или на бумаге — и присылает снимок экрана или фото.
 Предмет определи сам по записям (матанализ, линейная алгебра, матлогика, физика или другой). Строгость: {STRICTNESS}.
 Правила:
 1. Не давай готовый ответ и не решай задачу за студента. Полное решение показывай, только если он прямо написал «покажи решение» или «сдаюсь».
@@ -132,20 +132,30 @@ object Prompts {
     const val JSON_RETRY_SUFFIX = "Верни только валидный JSON."
 
     /** Системный промт с памятью о типичных ошибках студента ([mistakes] — короткие описания, свежие первыми). */
-    fun mentorSystem(strictness: Strictness, coords: CoordMode, mistakes: List<String>): String {
-        val base = mentorSystem(strictness, coords)
+    fun mentorSystem(
+        strictness: Strictness,
+        coords: CoordMode,
+        mistakes: List<String>,
+        customTemplate: String? = null,
+    ): String {
+        val base = mentorSystem(strictness, coords, customTemplate)
         if (mistakes.isEmpty()) return base
         return base + "\n\nНедавние ошибки этого студента (если видишь похожую — мягко напомни, что она уже встречалась):\n" +
             mistakes.joinToString("\n") { "- $it" }
     }
 
-    fun mentorSystem(strictness: Strictness, coords: CoordMode = CoordMode.PIXELS_XY): String {
+    fun mentorSystem(
+        strictness: Strictness,
+        coords: CoordMode = CoordMode.PIXELS_XY,
+        customTemplate: String? = null,
+    ): String {
         val (c, rule) = when (coords) {
             CoordMode.PIXELS_XY -> COORDS_PIXELS to COORDS_PIXELS_RULE
             CoordMode.NORM_XY -> COORDS_NORM_XY to COORDS_NORM_XY_RULE
             CoordMode.NORM_YX -> COORDS_NORM_YX to COORDS_NORM_YX_RULE
         }
-        return MENTOR_TEMPLATE
+        val template = customTemplate?.takeIf { it.isNotBlank() } ?: DEFAULT_MENTOR_TEMPLATE
+        return template
             .replace("{STRICTNESS}", strictness.promptText)
             .replace("{COORDS_RULE}", rule)
             .replace("{COORDS}", c)

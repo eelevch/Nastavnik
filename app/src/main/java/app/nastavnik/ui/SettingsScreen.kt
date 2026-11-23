@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,6 +24,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -38,9 +41,11 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.nastavnik.R
 import app.nastavnik.ai.ModelPresets
+import app.nastavnik.ai.Prompts
 import app.nastavnik.ai.Strictness
 import app.nastavnik.app
 import app.nastavnik.data.BubbleSide
@@ -164,6 +169,76 @@ fun SettingsScreen(onBack: () -> Unit, onAppearance: () -> Unit = {}, onOnboardi
             UpdateSection()
             AboutSection(tablet, onOnboarding)
         }
+
+        SystemPromptSection(s.customSystemPrompt) { repo.setCustomSystemPrompt(it) }
+    }
+}
+
+@Composable
+private fun SystemPromptSection(current: String, onSave: (String) -> Unit) {
+    val isCustom = current.isNotBlank()
+    var editing by remember { mutableStateOf(false) }
+    SectionCard("Системный промт") {
+        FieldLabel(
+            "Промт наставника",
+            if (isCustom) "Используется свой промт (${current.length} симв.)."
+            else "По умолчанию — задаёт стиль, строгость и правила ответов наставника.",
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SoftButton(if (isCustom) "Изменить промт" else "Настроить промт") { editing = true }
+            if (isCustom) {
+                LinkText("Сбросить") { onSave("") }
+            }
+        }
+    }
+    if (editing) {
+        var draft by remember(current) { mutableStateOf(current.ifBlank { Prompts.DEFAULT_MENTOR_TEMPLATE }) }
+        AlertDialog(
+            onDismissRequest = { editing = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+            modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 680.dp),
+            title = { Text("Системный промт") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Можно использовать подстановки {STRICTNESS}, {COORDS}, {COORDS_RULE}. Пустой текст вернёт стандартный промт.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        minLines = 8,
+                        maxLines = 16,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        ),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 200.dp, max = 420.dp),
+                    )
+                    LinkText("Вернуть стандартный") { draft = Prompts.DEFAULT_MENTOR_TEMPLATE }
+                }
+            },
+            confirmButton = {
+                InkButton("Сохранить") {
+                    val trimmed = draft.trim()
+                    if (trimmed.isEmpty() || trimmed == Prompts.DEFAULT_MENTOR_TEMPLATE.trim()) {
+                        onSave("")
+                    } else {
+                        onSave(trimmed)
+                    }
+                    editing = false
+                }
+            },
+            dismissButton = { SoftButton("Отмена") { editing = false } },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(24.dp),
+        )
     }
 }
 

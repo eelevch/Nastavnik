@@ -146,4 +146,28 @@ class RequestBuilderTest {
         val headers = RequestBuilder.headers("sk-test", req)
         assertTrue(headers["anthropic-beta"]!!.contains(RequestBuilder.PROMPT_CACHE_BETA))
     }
+
+    @Test
+    fun customSystemPromptOverridesTemplateAndSubstitutesPlaceholders() {
+        val defaultPrompt = Prompts.mentorSystem(Strictness.HINTS, CoordMode.PIXELS_XY)
+        assertEquals(defaultPrompt, Prompts.mentorSystem(Strictness.HINTS, CoordMode.PIXELS_XY, customTemplate = "   "))
+        assertEquals(defaultPrompt, Prompts.mentorSystem(Strictness.HINTS, CoordMode.PIXELS_XY, customTemplate = null))
+
+        val withPlaceholders = Prompts.mentorSystem(
+            Strictness.DETAILED,
+            CoordMode.PIXELS_XY,
+            customTemplate = "Стиль: {STRICTNESS}. Координаты: {COORDS}.",
+        )
+        assertTrue(withPlaceholders.startsWith("Стиль: подробные подсказки"))
+        assertTrue(withPlaceholders.endsWith("Координаты: <x1> <y1> <x2> <y2>."))
+
+        val plainWithMistakes = Prompts.mentorSystem(
+            Strictness.HINTS,
+            CoordMode.PIXELS_XY,
+            mistakes = listOf("знак в интеграле"),
+            customTemplate = "Отвечай кратко",
+        )
+        assertTrue(plainWithMistakes.startsWith("Отвечай кратко"))
+        assertTrue(plainWithMistakes.contains("знак в интеграле"))
+    }
 }

@@ -61,6 +61,8 @@ data class AppSettings(
     val textScale: Float = 1f,
     /** Режим устройства (auto / phone / tablet) — здесь, чтобы смена сразу перестраивала экраны. */
     val deviceRole: String = "auto",
+    /** Пользовательский системный промт наставника (пусто — стандартный шаблон). */
+    val customSystemPrompt: String = "",
 )
 
 /**
@@ -113,6 +115,7 @@ class SettingsRepo(private val context: Context) {
         backdrop = prefs.getString(K_BACKDROP, "PLAIN").orEmpty(),
         textScale = prefs.getFloat(K_TEXT_SCALE, 1f),
         deviceRole = prefs.getString(K_ROLE, "auto").orEmpty(),
+        customSystemPrompt = customSystemPrompt(),
     )
 
     /**
@@ -145,6 +148,12 @@ class SettingsRepo(private val context: Context) {
     fun setEditorTipsShown() = prefs.edit { putBoolean(K_TIPS, true) }
 
     fun setFastAnswers(on: Boolean) = prefs.edit { putBoolean(K_FAST, on) }
+
+    fun customSystemPrompt(): String = prefs.getString(K_SYSTEM_PROMPT, "").orEmpty()
+    fun setCustomSystemPrompt(prompt: String) = prefs.edit {
+        val clean = prompt.trim()
+        if (clean.isEmpty()) remove(K_SYSTEM_PROMPT) else putString(K_SYSTEM_PROMPT, clean)
+    }
 
     /** Поток настроек: выдаёт текущее значение и каждое изменение. */
     fun flow(): Flow<AppSettings> = callbackFlow {
@@ -531,5 +540,6 @@ class SettingsRepo(private val context: Context) {
         private const val K_ALLOW_INSECURE_LOCAL = "allow_insecure_local"
         private const val K_TG_BOT_TOKEN = "tg_bot_token"
         private const val K_TG_CHAT_ID = "tg_chat_id"
+        private const val K_SYSTEM_PROMPT = "custom_system_prompt"
     }
 }

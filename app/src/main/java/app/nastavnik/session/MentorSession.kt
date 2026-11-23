@@ -304,8 +304,12 @@ class MentorSession(
         try {
             val request = ChatRequest(
                 modelId = settings.model,
-                system = Prompts.mentorSystem(settings.strictness, mode, MistakeMemory.forPrompt(MistakeMemory.decode(app.settings.mistakesJson())))
-                    .let { base -> extraSystem?.takeIf { it.isNotBlank() }?.let { "$base\n\n$it" } ?: base },
+                system = Prompts.mentorSystem(
+                    settings.strictness,
+                    mode,
+                    MistakeMemory.forPrompt(MistakeMemory.decode(app.settings.mistakesJson())),
+                    settings.customSystemPrompt,
+                ).let { base -> extraSystem?.takeIf { it.isNotBlank() }?.let { "$base\n\n$it" } ?: base },
                 turns = turns,
                 // Сначала страницы всего конспекта, последним — текущий экран с номерами строк.
                 images = shot.context.map { ImagePart(it) } + ImagePart(shot.jpeg),
