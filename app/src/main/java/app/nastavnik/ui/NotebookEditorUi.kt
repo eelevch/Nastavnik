@@ -292,103 +292,119 @@ fun TopToolBar(ctl: NotebookController, modifier: Modifier = Modifier) {
         // Разделитель
         Box(Modifier.width(1.dp).height(18.dp).background(Brand.Line.copy(alpha = 0.5f)))
 
-        // 2. Быстрые цвета (для ручки, маркера и фигур)
+        // 2–3. Быстрые настройки в контейнере фиксированной ширины: панель никогда не сжимается и не скачет.
         val isHighlighter = ctl.editTool == EditTool.HIGHLIGHTER
-        val isPenOrShape = ctl.editTool == EditTool.PEN || ctl.editTool == EditTool.SHAPE || ctl.editTool == EditTool.TEXT
-        if (isPenOrShape || isHighlighter) {
-            val quickColors = if (isHighlighter) {
-                listOf(0xFFFFF59D.toInt(), 0xFFA5D6A7.toInt(), 0xFFF48FB1.toInt(), 0xFF90CAF9.toInt())
+        val isEraser = ctl.editTool == EditTool.ERASER
+        val isLasso = ctl.editTool == EditTool.LASSO
+        Row(
+            Modifier
+                .width(188.dp)
+                .graphicsLayer { alpha = if (isLasso) 0.55f else 1f },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+        ) {
+            if (isEraser) {
+                Row(
+                    Modifier
+                        .clip(CircleShape)
+                        .background(Brand.Glass.copy(alpha = 0.6f))
+                        .border(0.6.dp, Brand.Line, CircleShape)
+                        .clickable { ctl.choosePartialEraser(!ctl.partialEraser) }
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Text(
+                        if (ctl.partialEraser) "Часть" else "Линия",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Brand.Accent,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+                Box(
+                    Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .clickable { ctl.clearPage() }
+                        .semantics { contentDescription = "Очистить страницу" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(painterResource(R.drawable.ic_trash), contentDescription = null, tint = Brand.Error, modifier = Modifier.size(14.dp))
+                }
             } else {
-                listOf(0xFF1F1F1F.toInt(), 0xFF1E88E5.toInt(), 0xFFE53935.toInt(), 0xFF43A047.toInt())
-            }
-            val currentColor = if (isHighlighter) ctl.markerColor else ctl.penColor
-            quickColors.forEach { col ->
-                val selected = currentColor == col
+                val quickColors = if (isHighlighter) {
+                    listOf(0xFFFFF59D.toInt(), 0xFFA5D6A7.toInt(), 0xFFF48FB1.toInt(), 0xFF90CAF9.toInt())
+                } else {
+                    listOf(0xFF1F1F1F.toInt(), 0xFF1E88E5.toInt(), 0xFFE53935.toInt(), 0xFF43A047.toInt())
+                }
+                val currentColor = if (isHighlighter) ctl.markerColor else ctl.penColor
+                quickColors.forEach { col ->
+                    val selected = currentColor == col
+                    Box(
+                        Modifier
+                            .size(18.dp)
+                            .clip(CircleShape)
+                            .background(Color(col))
+                            .then(if (selected) Modifier.border(2.dp, Brand.Accent, CircleShape) else Modifier.border(0.6.dp, Brand.Line, CircleShape))
+                            .clickable {
+                                when {
+                                    isLasso && ctl.ink.hasSelection -> ctl.recolorSelection(col)
+                                    isHighlighter -> ctl.pickMarker(col)
+                                    else -> ctl.pickPen(col)
+                                }
+                            },
+                    )
+                }
+                val activeColor = Color(currentColor)
                 Box(
                     Modifier
-                        .size(18.dp)
+                        .size(22.dp)
                         .clip(CircleShape)
-                        .background(Color(col))
-                        .then(if (selected) Modifier.border(2.dp, Brand.Accent, CircleShape) else Modifier.border(0.6.dp, Brand.Line, CircleShape))
+                        .background(activeColor)
+                        .border(1.5.dp, Brand.Accent, CircleShape)
                         .clickable {
-                            if (isHighlighter) ctl.pickMarker(col) else ctl.pickPen(col)
-                        },
-                )
-            }
-            // Точка текущего/произвольного цвета с вызовом диалога
-            val activeColor = Color(currentColor)
-            Box(
-                Modifier
-                    .size(22.dp)
-                    .clip(CircleShape)
-                    .background(activeColor)
-                    .border(1.5.dp, Brand.Accent, CircleShape)
-                    .clickable { openSettings = true }
-                    .semantics { contentDescription = "Палитра и толщина" },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(painterResource(R.drawable.ic_panel), contentDescription = null, tint = if (isHighlighter) Brand.Ink else Color.White, modifier = Modifier.size(11.dp))
-            }
-        }
-
-        // 3. Быстрая толщина (для ручки, маркера или режим ластика)
-        if (ctl.editTool == EditTool.PEN) {
-            val widths = listOf(1.6f to 3.dp, 3.0f to 6.dp, 5.5f to 9.dp)
-            widths.forEach { (w, dotSize) ->
-                val sel = kotlin.math.abs(ctl.penWidth - w) < 0.8f
-                Box(
-                    Modifier
-                        .size(20.dp)
-                        .clip(CircleShape)
-                        .then(if (sel) Modifier.background(Brand.Accent.copy(alpha = 0.15f)) else Modifier)
-                        .clickable { ctl.changePenWidth(w) },
+                            if (isLasso) ctl.pickTool(EditTool.PEN)
+                            openSettings = true
+                        }
+                        .semantics { contentDescription = "Палитра и толщина" },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Box(Modifier.size(dotSize).clip(CircleShape).background(if (sel) Brand.Accent else Brand.Ink))
+                    Icon(painterResource(R.drawable.ic_panel), contentDescription = null, tint = if (isHighlighter) Brand.Ink else Color.White, modifier = Modifier.size(11.dp))
                 }
-            }
-        } else if (ctl.editTool == EditTool.HIGHLIGHTER) {
-            val widths = listOf(14f to "S", 22f to "M", 32f to "L")
-            widths.forEach { (w, label) ->
-                val sel = kotlin.math.abs(ctl.markerWidth - w) < 5f
-                Box(
-                    Modifier
-                        .size(20.dp)
-                        .clip(CircleShape)
-                        .then(if (sel) Modifier.background(Brand.Accent.copy(alpha = 0.15f)) else Modifier)
-                        .clickable { ctl.changeMarkerWidth(w) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(label, style = MaterialTheme.typography.labelSmall, color = if (sel) Brand.Accent else Brand.Ink, fontWeight = FontWeight.Bold)
+                if (isHighlighter) {
+                    val widths = listOf(14f to "S", 22f to "M", 32f to "L")
+                    widths.forEach { (w, label) ->
+                        val sel = kotlin.math.abs(ctl.markerWidth - w) < 5f
+                        Box(
+                            Modifier
+                                .size(20.dp)
+                                .clip(CircleShape)
+                                .then(if (sel) Modifier.background(Brand.Accent.copy(alpha = 0.15f)) else Modifier)
+                                .clickable { ctl.changeMarkerWidth(w) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(label, style = MaterialTheme.typography.labelSmall, color = if (sel) Brand.Accent else Brand.Ink, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                } else if (ctl.editTool == EditTool.PEN || isLasso) {
+                    val widths = listOf(1.6f to 3.dp, 3.0f to 6.dp, 5.5f to 9.dp)
+                    widths.forEach { (w, dotSize) ->
+                        val sel = kotlin.math.abs(ctl.penWidth - w) < 0.8f
+                        Box(
+                            Modifier
+                                .size(20.dp)
+                                .clip(CircleShape)
+                                .then(if (sel) Modifier.background(Brand.Accent.copy(alpha = 0.15f)) else Modifier)
+                                .clickable {
+                                    if (isLasso) ctl.pickTool(EditTool.PEN)
+                                    ctl.changePenWidth(w)
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(Modifier.size(dotSize).clip(CircleShape).background(if (sel) Brand.Accent else Brand.Ink))
+                        }
+                    }
                 }
-            }
-        } else if (ctl.editTool == EditTool.ERASER) {
-            Row(
-                Modifier
-                    .clip(CircleShape)
-                    .background(Brand.Glass.copy(alpha = 0.6f))
-                    .border(0.6.dp, Brand.Line, CircleShape)
-                    .clickable { ctl.choosePartialEraser(!ctl.partialEraser) }
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                Text(
-                    if (ctl.partialEraser) "Часть" else "Линия",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Brand.Accent,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-            Box(
-                Modifier
-                    .size(24.dp)
-                    .clip(CircleShape)
-                    .clickable { ctl.clearPage() }
-                    .semantics { contentDescription = "Очистить страницу" },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(painterResource(R.drawable.ic_trash), contentDescription = null, tint = Brand.Error, modifier = Modifier.size(14.dp))
             }
         }
 
