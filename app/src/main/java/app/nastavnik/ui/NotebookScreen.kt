@@ -544,8 +544,15 @@ private fun NotebookTopBar(
                     MenuItem("Страницы из PDF", R.drawable.ic_pdf) { addMenu = false; importers.pdf() }
                 }
             }
+            val mentorState by ctl.mentor.state.collectAsState()
             val mentorAction = if (panel) "Скрыть наставника" else "Показать наставника"
-            BarButton(R.drawable.ic_sparkle, mentorAction, active = panel, onClick = onTogglePanel)
+            MascotBarButton(
+                writing = ctl.writing,
+                thinking = mentorState.busy,
+                description = mentorAction,
+                active = panel,
+                onClick = onTogglePanel,
+            )
         }
     }
     if (deletePageConfirm) {
@@ -626,6 +633,30 @@ private fun MenuItem(text: String, icon: Int, onClick: () -> Unit) {
         leadingIcon = { Icon(painterResource(icon), contentDescription = null, tint = Brand.Ink, modifier = Modifier.size(20.dp)) },
         onClick = onClick,
     )
+}
+
+/** Круглая стеклянная кнопка вызова наставника с живым маскотом (машет при письме, думает и пишет при ответе). */
+@Composable
+private fun MascotBarButton(
+    writing: Boolean,
+    thinking: Boolean,
+    description: String,
+    active: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .size(34.dp)
+            .then(
+                if (active) Modifier.clip(CircleShape).background(Brand.Accent.copy(alpha = 0.22f))
+                else Modifier.glass(CircleShape, 4.dp, strong = true)
+            )
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        MascotIcon(writing = writing, thinking = thinking, sizeDp = 24.dp)
+    }
 }
 
 /** Круглая стеклянная кнопка панели; [active] — включённое состояние (графитовая). */
@@ -826,7 +857,8 @@ private fun MentorPanel(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                IconBadge(R.drawable.ic_sparkle, 26)
+                val mentorState by ctl.mentor.state.collectAsState()
+                MascotBadge(writing = ctl.writing, thinking = mentorState.busy, size = 32.dp)
                 Column(Modifier.weight(1f)) {
                     Text("Наставник", style = MaterialTheme.typography.titleMedium)
                     if (ctl.chatMessages.isNotEmpty()) {
@@ -1533,10 +1565,11 @@ private fun ThinkingRow(seq: Long, status: String?) {
         Modifier
             .fillMaxWidth()
             .glass(RoundedCornerShape(20.dp), 4.dp, strong = true)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        MascotIcon(thinking = true, sizeDp = 28.dp)
         Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             repeat(3) { i ->
                 val a by pulse.animateFloat(

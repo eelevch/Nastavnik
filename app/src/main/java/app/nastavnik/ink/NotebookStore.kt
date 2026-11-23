@@ -109,8 +109,25 @@ class NotebookStore(private val root: File) {
 
     fun thumb(notebookId: Long): File = File(dir(notebookId), THUMB)
 
+    fun saveChat(notebookId: Long, jsonStr: String) {
+        val d = dir(notebookId).apply { mkdirs() }
+        val tmp = File(d, "$CHAT.tmp")
+        tmp.writeText(jsonStr)
+        tmp.renameTo(File(d, CHAT))
+    }
+
+    fun loadChat(notebookId: Long): String? = runCatching {
+        val f = File(dir(notebookId), CHAT)
+        if (f.exists()) f.readText() else null
+    }.getOrNull()
+
+    fun deleteChat(notebookId: Long) {
+        runCatching { File(dir(notebookId), CHAT).delete() }
+    }
+
     companion object {
         private const val META = "notebook.json"
+        private const val CHAT = "chat.json"
         private const val THUMB = "thumb.jpg"
         fun pageFile(id: Long) = "page_$id.ink"
         fun backgroundName(pageId: Long) = "bg_$pageId.jpg"

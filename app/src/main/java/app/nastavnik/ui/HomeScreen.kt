@@ -360,7 +360,7 @@ internal fun MentorStrip(resumeTick: Int, tick: Int, canStart: Boolean, changed:
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Box {
-                IconBadge(R.drawable.ic_sparkle, 46)
+                MascotBadge(thinking = running, size = 46.dp)
                 Box(
                     Modifier
                         .align(Alignment.BottomEnd)

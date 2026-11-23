@@ -1,6 +1,7 @@
 package app.nastavnik.ink
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -56,5 +57,60 @@ class NotebookStoreTest {
         assertEquals(tasks, store.meta(m.id)!!.tasks)
         // Старые тетради без поля tasks читаются как без варианта.
         assertTrue(store.meta(store.create("Обычная", Paper.LINED, now = 2_000).first.id)!!.tasks.isEmpty())
+    }
+
+    @Test
+    fun chatSaveLoadAndDelete() {
+        val root = Files.createTempDirectory("nbs_chat").toFile()
+        val store = NotebookStore(root)
+        val (m, _) = store.create("Физика", Paper.GRID)
+        assertNull(store.loadChat(m.id))
+
+        val messages = listOf(
+            app.nastavnik.ui.NotebookController.MentorChatMessage(
+                id = 100L,
+                isUser = true,
+                text = "Как найти производную?",
+                kind = app.nastavnik.session.AskKind.USER,
+                timestamp = 1000L,
+            ),
+            app.nastavnik.ui.NotebookController.MentorChatMessage(
+                id = 101L,
+                isUser = false,
+                text = "",
+                kind = app.nastavnik.session.AskKind.USER,
+                answer = app.nastavnik.session.AnswerUi(
+                    seq = 101L,
+                    kind = app.nastavnik.session.AskKind.USER,
+                    question = "Как найти производную?",
+                    marks = listOf(
+                        app.nastavnik.ai.Mark(
+                            kind = app.nastavnik.ai.MarkKind.HINT,
+                            box = app.nastavnik.ai.NBox(0.1f, 0.2f, 0.3f, 0.4f),
+                            text = "Используй правило дифференцирования произведения",
+                        )
+                    ),
+                    done = true,
+                ),
+                timestamp = 1005L,
+            ),
+        )
+
+        val encoded = SavedChatCodec.encode(messages)
+        store.saveChat(m.id, encoded)
+
+        val loadedRaw = store.loadChat(m.id)!!
+        val decoded = SavedChatCodec.decode(loadedRaw)
+        assertEquals(2, decoded.size)
+        assertEquals("Как найти производную?", decoded[0].text)
+        assertTrue(decoded[0].isUser)
+        assertFalse(decoded[1].isUser)
+        assertEquals(1, decoded[1].answer!!.marks.size)
+        assertEquals("Используй правило дифференцирования произведения", decoded[1].answer!!.marks[0].text)
+        assertTrue(decoded[1].answer!!.done)
+
+        store.deleteChat(m.id)
+        assertNull(store.loadChat(m.id))
+        root.deleteRecursively()
     }
 }

@@ -150,10 +150,17 @@ class Speaker(private val context: Context) {
         })
     }
 
+    fun refreshVoice() {
+        setupBestVoice()
+    }
+
     private fun setupBestVoice() {
         val t = tts ?: return
         val ruLocale = Locale.forLanguageTag("ru-RU")
         t.language = ruLocale
+
+        val app = context.applicationContext as? app.nastavnik.NastavnikApp
+        val prefGender = app?.settings?.ttsVoice() ?: "female"
 
         runCatching {
             val voices = t.voices ?: return@runCatching
@@ -165,19 +172,39 @@ class Speaker(private val context: Context) {
                 it.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) != true
             }.sortedByDescending { it.quality }
             if (ruVoices.isNotEmpty()) {
-                // Ищем наиболее качественный и естественный русский голос (Google Neural / High Quality)
+                // Ищем наиболее качественный, выразительный русский голос с учётом выбора (женский / мужской / система)
                 val bestVoice = ruVoices.maxWithOrNull(
                     compareBy<Voice> { v ->
                         var score = 0
-                        if (v.quality == Voice.QUALITY_VERY_HIGH) score += 300
-                        else if (v.quality == Voice.QUALITY_HIGH) score += 200
+                        if (v.quality == Voice.QUALITY_VERY_HIGH) score += 350
+                        else if (v.quality == Voice.QUALITY_HIGH) score += 250
                         else if (v.quality == Voice.QUALITY_NORMAL) score += 100
 
                         val name = v.name.lowercase()
-                        if (name.contains("neural") || name.contains("wavenet")) score += 300
-                        if (name.contains("network")) score += 180
+                        if (name.contains("neural") || name.contains("wavenet")) score += 350
+                        if (name.contains("network")) score += 200
                         if (name.contains("ru-ru-x-") || name.contains("ru-ru-")) score += 120
-                        if (v.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) == true) score -= 600
+
+                        val isFemale = name.contains("female") || name.contains("fem") || name.contains("женск") ||
+                            name.contains("-dfc") || name.contains("-rud") || name.contains("-rue") ||
+                            name.contains("aleksandra") || name.contains("anna") || name.contains("irina") ||
+                            name.contains("tatiana") || name.contains("victoria") || name.contains("elena")
+                        val isMale = name.contains("male") || name.contains("мужск") ||
+                            name.contains("-dfa") || name.contains("-dfb") || name.contains("-ruc") ||
+                            name.contains("pavel") || name.contains("mikhail") || name.contains("yuriy")
+
+                        when (prefGender) {
+                            "female" -> {
+                                if (isFemale) score += 600
+                                if (isMale) score -= 400
+                            }
+                            "male" -> {
+                                if (isMale) score += 600
+                                if (isFemale) score -= 400
+                            }
+                        }
+
+                        if (v.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) == true) score -= 800
                         score
                     }
                 )
@@ -187,9 +214,21 @@ class Speaker(private val context: Context) {
             }
         }
 
-        // Приятная интонация и естественный темп для наставника
-        t.setPitch(1.02f)
-        t.setSpeechRate(1.04f)
+        // Прекрасная выразительная интонация и естественный тембр (как в живых нейросетевых помощниках)
+        when (prefGender) {
+            "female" -> {
+                t.setPitch(1.09f) // Живой, мелодичный, теплый женский тембр
+                t.setSpeechRate(1.03f) // Естественный разговорный темп
+            }
+            "male" -> {
+                t.setPitch(0.96f) // Уверенный, спокойный мужской тембр
+                t.setSpeechRate(1.02f)
+            }
+            else -> {
+                t.setPitch(1.02f)
+                t.setSpeechRate(1.02f)
+            }
+        }
     }
 
     private fun say(text: String) {

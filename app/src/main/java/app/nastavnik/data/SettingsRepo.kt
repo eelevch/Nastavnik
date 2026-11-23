@@ -63,6 +63,8 @@ data class AppSettings(
     val deviceRole: String = "auto",
     /** Пользовательский системный промт наставника (пусто — стандартный шаблон). */
     val customSystemPrompt: String = "",
+    /** Выбор голоса озвучки подсказок ("female", "male", "system"). */
+    val ttsVoice: String = "female",
 )
 
 /**
@@ -116,6 +118,7 @@ class SettingsRepo(private val context: Context) {
         textScale = prefs.getFloat(K_TEXT_SCALE, 1f),
         deviceRole = prefs.getString(K_ROLE, "auto").orEmpty(),
         customSystemPrompt = customSystemPrompt(),
+        ttsVoice = ttsVoice(),
     )
 
     /**
@@ -157,6 +160,9 @@ class SettingsRepo(private val context: Context) {
 
     fun clearChatOnPromptChange(): Boolean = prefs.getBoolean(K_CLEAR_CHAT_ON_PROMPT, true)
     fun setClearChatOnPromptChange(on: Boolean) = prefs.edit { putBoolean(K_CLEAR_CHAT_ON_PROMPT, on) }
+
+    fun ttsVoice(): String = prefs.getString(K_TTS_VOICE, "female") ?: "female"
+    fun setTtsVoice(voice: String) = prefs.edit { putString(K_TTS_VOICE, voice) }
 
     /** Поток настроек: выдаёт текущее значение и каждое изменение. */
     fun flow(): Flow<AppSettings> = callbackFlow {
@@ -545,5 +551,6 @@ class SettingsRepo(private val context: Context) {
         private const val K_TG_CHAT_ID = "tg_chat_id"
         private const val K_SYSTEM_PROMPT = "custom_system_prompt"
         private const val K_CLEAR_CHAT_ON_PROMPT = "clear_chat_on_prompt_change"
+        private const val K_TTS_VOICE = "tts_voice"
     }
 }

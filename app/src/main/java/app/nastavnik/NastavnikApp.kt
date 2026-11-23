@@ -99,11 +99,16 @@ class NastavnikApp : Application() {
     val availableUpdate = MutableStateFlow<UpdateInfo?>(null)
     @Volatile private var lastUpdateCheckAt = 0L
 
-    /** Полностью очистить историю чатов наставника (диалоги, сообщения и активную беседу). */
-    suspend fun clearChatHistory() = kotlinx.coroutines.withContext(Dispatchers.IO) {
+    /** Полностью очистить историю чатов наставника (диалоги, сообщения, активную беседу и чаты тетрадей). */
+    suspend fun clearChatHistory(): Unit = kotlinx.coroutines.withContext(Dispatchers.IO) {
         db.messages().deleteAll()
         db.conversations().deleteAll()
         settings.setActiveConversation(0L)
+        runCatching {
+            notebooks.store.list().forEach { m ->
+                notebooks.store.deleteChat(m.id)
+            }
+        }
     }
 
     fun checkUpdateInBackground(force: Boolean = false) {

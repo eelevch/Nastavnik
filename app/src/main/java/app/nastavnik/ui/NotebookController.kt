@@ -19,6 +19,7 @@ import app.nastavnik.ink.InkPage
 import app.nastavnik.ink.InkView
 import app.nastavnik.ink.NotebookMeta
 import app.nastavnik.ink.NotebookStore
+import app.nastavnik.ink.SavedChatCodec
 import app.nastavnik.ink.PageRenderer
 import android.graphics.Bitmap
 import app.nastavnik.ink.PAGE_W
@@ -207,6 +208,22 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         mentor.newTask()
         ink.marks = emptyList()
         rejectedMarks.clear()
+        app.getSharedPreferences("notebook_chats", 0).edit().remove(notebookId.toString()).apply()
+        app.appScope.launch(Dispatchers.IO) {
+            nbs.store.deleteChat(notebookId)
+        }
+    }
+
+    fun saveChatToDisk() {
+        val msgs = chatMessages.toList()
+        app.appScope.launch(Dispatchers.IO) {
+            if (msgs.isEmpty()) {
+                nbs.store.deleteChat(notebookId)
+            } else {
+                val jsonStr = SavedChatCodec.encode(msgs)
+                nbs.store.saveChat(notebookId, jsonStr)
+            }
+        }
     }
 
     init {
@@ -221,6 +238,9 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
                     chatMessages.add(MentorChatMessage(id = ans.seq, isUser = false, text = "", kind = ans.kind, answer = ans))
                 }
                 refreshMarks(ans)
+                if (!ans.streaming) {
+                    saveChatToDisk()
+                }
             }
         }
     }
@@ -236,24 +256,40 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         val ps = withContext(Dispatchers.IO) { nbs.store.loadPages(m) }
         meta = m
         pages = ps
-        mentor.useConversation(app.getSharedPreferences("notebook_chats", 0).getLong(notebookId.toString(), m.conversationId))
-        chatMessages.clear()
-        var lastQuestion = ""
-        app.db.messages().forConversation(mentor.state.value.conversationId).forEach { message ->
-            val user = message.role == "user"
-            if (user) lastQuestion = message.text
-            chatMessages.add(MentorChatMessage(
-                id = message.id, isUser = user, text = message.text, timestamp = message.createdAt,
-                answer = if (user) null else AnswerUi(
-                    seq = message.id, kind = AskKind.USER, question = lastQuestion,
-                    streaming = false,
-                    marks = listOf(Mark(MarkKind.NOTE, null, message.text)),
-                ),
-            ))
-        }
+        val convId = app.getSharedPreferences("notebook_chats", 0).getLong(notebookId.toString(), m.conversationId)
+        if (convId > 0) mentor.useConversation(convId)
         answerPageId = 0L
         ink.marks = emptyList()
         rejectedMarks.clear()
+        val savedRaw = withContext(Dispatchers.IO) { nbs.store.loadChat(notebookId) }
+        chatMessages.clear()
+        if (!savedRaw.isNullOrBlank()) {
+            val restored = SavedChatCodec.decode(savedRaw)
+            chatMessages.addAll(restored)
+            val lastBot = restored.lastOrNull { !it.isUser && it.answer != null }
+            lastBot?.answer?.let { ans -> refreshMarks(ans) }
+        } else if (convId > 0) {
+            var lastQuestion = ""
+            app.db.messages().forConversation(mentor.state.value.conversationId).forEach { message ->
+                val user = message.role == "user"
+                if (user) lastQuestion = message.text
+                chatMessages.add(
+                    MentorChatMessage(
+                        id = message.id,
+                        isUser = user,
+                        text = message.text,
+                        timestamp = message.createdAt,
+                        answer = if (user) null else AnswerUi(
+                            seq = message.id,
+                            kind = AskKind.USER,
+                            question = lastQuestion,
+                            streaming = false,
+                            marks = listOf(Mark(MarkKind.NOTE, null, message.text)),
+                        ),
+                    )
+                )
+            }
+        }
         mentor.extraSystem = PracticePrompts.variantForMentor(m.tasks)
         applyTool()
         // Открыли ради конкретной страницы (задача ДЗ) — сразу на ней.
@@ -640,6 +676,7 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         val first = pages.firstOrNull() ?: return
         app.appScope.launch {
             flushSaveNow()
+            saveChatToDisk()
             runCatching { nbs.saveThumb(m, first) }
         }
     }
@@ -683,6 +720,7 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
                     timestamp = now,
                 )
             )
+            saveChatToDisk()
         }
         val pages = this.pages.size
         mentor.ask(question, kind) { shot(pages) }

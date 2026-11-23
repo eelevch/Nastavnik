@@ -96,6 +96,15 @@ fun SettingsScreen(onBack: () -> Unit, onAppearance: () -> Unit = {}, onOnboardi
                 Segmented(listOf(0 to "Выкл.", 5 to "5 с", 10 to "10 с", 20 to "20 с"), s.watchPauseSec) {
                     repo.setWatchPauseSec(it)
                 }
+                HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                FieldLabel("Голос озвучки", "Живая выразительная интонация наставника.")
+                Segmented(
+                    listOf("female" to "Женский", "male" to "Мужской", "system" to "Авто"),
+                    s.ttsVoice,
+                ) {
+                    repo.setTtsVoice(it)
+                    context.app.speaker.refreshVoice()
+                }
             }
 
             UsageSection(s.model)
