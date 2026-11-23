@@ -165,7 +165,7 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
     val wide = screenWidthDp >= 840
     var panel by rememberSaveable { mutableStateOf(wide) }
     var panelWidthDp by rememberSaveable { mutableFloatStateOf(390f) }
-    val minPanelWidthDp = 260f
+    val minPanelWidthDp = 340f
     val maxPanelWidthDp = (screenWidthDp - 380f).coerceAtLeast(minPanelWidthDp).coerceAtMost(screenWidthDp * 0.7f)
     val effectivePanelWidth = panelWidthDp.coerceIn(minPanelWidthDp, maxPanelWidthDp)
     var pagesOpen by rememberSaveable { mutableStateOf(false) }
@@ -794,8 +794,18 @@ private fun MentorPanel(
     var partialVoiceText by remember { mutableStateOf("") }
     var speechProblem by remember { mutableStateOf<String?>(null) }
     var selectPages by remember { mutableStateOf(false) }
+    var voiceOnly by rememberSaveable { mutableStateOf(false) }
 
-    val busy = ctl.mentor.isBusy
+    val mentorState by ctl.mentor.state.collectAsState()
+    val busy = mentorState.busy
+    var lastSpokenSeq by remember { mutableStateOf(0L) }
+    val latestAnswer = ctl.chatMessages.lastOrNull { !it.isUser }?.answer
+    LaunchedEffect(voiceOnly, latestAnswer?.seq, latestAnswer?.streaming) {
+        if (voiceOnly && latestAnswer != null && !latestAnswer.streaming && latestAnswer.seq != lastSpokenSeq && latestAnswer.marks.isNotEmpty()) {
+            lastSpokenSeq = latestAnswer.seq
+            speaker.speak(latestAnswer.marks.joinToString(". ") { it.text })
+        }
+    }
 
     fun ask(text: String, kind: AskKind) {
         val reason = context.app.settings.notReadyReason()
@@ -852,26 +862,47 @@ private fun MentorPanel(
             androidx.compose.material3.LocalContentColor provides Brand.Ink,
         ) {
         Column(Modifier.fillMaxSize()) {
-            // Верхняя шапка окна наставника: заголовок, глазик, новый чат и крестик закрытия
+            // Верхняя шапка окна наставника: заголовок, голосовой режим, страницы, глазик, очистка и закрытие
             Row(
                 Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                val mentorState by ctl.mentor.state.collectAsState()
-                MascotBadge(writing = ctl.writing, thinking = mentorState.busy, size = 32.dp)
                 Column(Modifier.weight(1f)) {
-                    Text("Наставник", style = MaterialTheme.typography.titleMedium)
-                    if (ctl.chatMessages.isNotEmpty()) {
+                    Text(if (voiceOnly) "Голосовой режим" else "Наставник", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!voiceOnly && ctl.chatMessages.isNotEmpty()) {
                         val count = ctl.chatMessages.count { it.isUser }
                         Text(
                             "$count ${if (count == 1) "вопрос" else if (count in 2..4) "вопроса" else "вопросов"}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = Brand.InkSoft,
                         )
                     }
+                }
+                // Кнопка переключения в онли-голосовой режим (маскот на всю панель + формулы и боксы)
+                Box(
+                    Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(if (voiceOnly) Color(0xFF2563EB) else Brand.Accent.copy(alpha = 0.12f))
+                        .clickable {
+                            voiceOnly = !voiceOnly
+                            if (!voiceOnly) {
+                                if (listening) speech.stop()
+                                speaker.stop()
+                            }
+                        }
+                        .semantics { contentDescription = if (voiceOnly) "Выйти из голосового режима" else "Голосовой режим" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painterResource(if (voiceOnly) R.drawable.ic_note else R.drawable.ic_mic),
+                        contentDescription = null,
+                        tint = if (voiceOnly) Color.White else Brand.Accent,
+                        modifier = Modifier.size(16.dp),
+                    )
                 }
                 // Контекст страниц: компактный интуитивный бейдж
                 Box(
@@ -949,6 +980,97 @@ private fun MentorPanel(
                 }
             }
 
+            // Центральная зона: онли-голосовой режим ИЛИ текстовый чат
+            if (voiceOnly) {
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    // Большой живой маскот по центру — реагирует на письмо, голос и размышления
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp)
+                            .clickable {
+                                if (isSpeaking) speaker.stop()
+                                speech.toggle()
+                            }
+                            .semantics { contentDescription = if (listening) "Остановить запись" else "Спросить голосом" },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        MascotIcon(
+                            writing = ctl.writing,
+                            thinking = busy,
+                            speaking = isSpeaking,
+                            listening = listening,
+                            voiceLevel = voiceRms,
+                            sizeDp = 148.dp,
+                        )
+                    }
+
+                    val voiceStatus = when {
+                        listening && partialVoiceText.isNotBlank() -> "«$partialVoiceText»"
+                        listening -> "Слушаю тебя…"
+                        busy -> latestAnswer?.status ?: "Думаю над задачей…"
+                        isSpeaking -> "Объясняю голосом…"
+                        else -> "Нажми на бота или микрофон, чтобы спросить"
+                    }
+                    Text(
+                        voiceStatus,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (listening || isSpeaking) Color(0xFF2563EB) else Brand.InkSoft,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        VoiceWaveButton(
+                            listening = listening,
+                            voiceRms = voiceRms,
+                            onClick = {
+                                if (isSpeaking) speaker.stop()
+                                speech.toggle()
+                            },
+                        )
+                        if (isSpeaking) {
+                            SoftButton("Стоп", icon = R.drawable.ic_close) { speaker.stop() }
+                        }
+                    }
+
+                    // Ниже под маскотом — формулы, подсказки и переходы к выделенным боксам на листе
+                    val marks = latestAnswer?.marks.orEmpty()
+                    if (marks.isNotEmpty()) {
+                        HorizontalDivider(color = Brand.Line.copy(alpha = 0.4f), thickness = 0.8.dp)
+                        Column(
+                            Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            marks.forEachIndexed { i, m ->
+                                NoteCard(
+                                    number = i + 1,
+                                    m = m,
+                                    topic = ctl.meta?.title.orEmpty(),
+                                    streaming = latestAnswer?.streaming == true,
+                                    onLocate = { ctl.focusMark(i + 1) },
+                                    onNotHere = { ctl.onMarkNotHere(i + 1) },
+                                )
+                            }
+                        }
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
+            } else {
             // Центральная зона: если чат пуст — экран первого запуска с плитками; если есть сообщения — лента чата
             if (ctl.chatMessages.isEmpty()) {
                 Column(
@@ -1074,6 +1196,7 @@ private fun MentorPanel(
                         modifier = Modifier.weight(1f),
                     )
                 }
+            }
             }
         }
         }
@@ -1569,11 +1692,10 @@ private fun ThinkingRow(seq: Long, status: String?) {
         Modifier
             .fillMaxWidth()
             .glass(RoundedCornerShape(20.dp), 4.dp, strong = true)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        MascotIcon(thinking = true, sizeDp = 28.dp)
         Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             repeat(3) { i ->
                 val a by pulse.animateFloat(

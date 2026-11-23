@@ -20,6 +20,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
@@ -27,23 +28,29 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.sin
 
+private val MascotRingBlueLight = Color(0xFF2563EB)
+private val MascotRingBlueDark = Color(0xFF3B82F6)
+
 /**
- * Процедурный векторный маскот-бот в стиле Grok (120 FPS, идеально чёткий в любом размере
- * и автоматически подстраивается под светлую и тёмную темы через [Brand.Ink] / [Brand.Paper] / [Brand.Accent]):
- * - Пока человек пишет конспект ([writing]): улыбается и машет рукой.
- * - Пока наставник думает и отвечает ([thinking]): вращает орбитальное кольцо и пишет стилусом.
- * - В покое: стильный геометричный бот с диагональным орбитальным кольцом и мягким морганием.
+ * Процедурный векторный маскот-бот в стиле Grok (120 FPS, всегда с фирменным синим кольцом):
+ * - Постоянно живой: мягко покачивается, орбитальное синее кольцо плавно дышит, глаза естественно моргают.
+ * - Пока человек пишет ([writing]): улыбается и машет рукой.
+ * - Пока наставник думает ([thinking]): синее кольцо вращается, глаза задумчиво смотрят по сторонам.
+ * - В голосовом режиме ([speaking] / [listening]): живые синие звуковые волны вокруг бота.
  */
 @Composable
 fun MascotIcon(
     writing: Boolean = false,
     thinking: Boolean = false,
+    speaking: Boolean = false,
+    listening: Boolean = false,
+    voiceLevel: Float = 0f,
     sizeDp: Dp = 26.dp,
     modifier: Modifier = Modifier,
 ) {
     val ink = Brand.Ink
     val paper = Brand.Paper
-    val accent = Brand.Accent
+    val ringBlue = if (Brand.dark) MascotRingBlueDark else MascotRingBlueLight
 
     val infinite = rememberInfiniteTransition(label = "grokBot")
     val wavePhase by infinite.animateFloat(
@@ -58,26 +65,46 @@ fun MascotIcon(
         animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart),
         label = "think",
     )
+    val idlePhase by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(2600, easing = LinearEasing), RepeatMode.Restart),
+        label = "idle",
+    )
     val blinkPhase by infinite.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(3600, easing = LinearEasing), RepeatMode.Restart),
+        animationSpec = infiniteRepeatable(tween(3800, easing = LinearEasing), RepeatMode.Restart),
         label = "blink",
     )
 
     Canvas(modifier = modifier.size(sizeDp)) {
+        val floatY = sin(idlePhase * 2f * Math.PI).toFloat() * size.minDimension * 0.032f
         val cx = size.width * 0.5f
-        val cy = size.height * 0.52f
-        val r = size.minDimension * 0.36f
+        val cy = size.height * 0.52f + floatY
+        val r = size.minDimension * 0.35f
 
-        // 1. Внешнее пульсирующее свечение при размышлении
-        if (thinking) {
-            val pulse = 0.16f + 0.14f * sin(thinkPhase * 2f * Math.PI).toFloat()
+        // 1. Внешнее синее свечение при размышлении или в голосовом режиме
+        if (thinking || speaking || listening) {
+            val basePulse = 0.14f + 0.12f * sin(thinkPhase * 2f * Math.PI).toFloat()
+            val extraScale = when {
+                listening -> 0.14f + voiceLevel * 0.28f
+                speaking -> 0.18f + 0.12f * sin(wavePhase * Math.PI).toFloat()
+                else -> 0.10f
+            }
             drawCircle(
-                color = accent.copy(alpha = pulse),
-                radius = r * 1.28f,
+                color = ringBlue.copy(alpha = basePulse),
+                radius = r * (1.22f + extraScale),
                 center = Offset(cx, cy),
             )
+            if (speaking || listening) {
+                drawCircle(
+                    color = ringBlue.copy(alpha = basePulse * 0.55f),
+                    radius = r * (1.40f + extraScale * 1.2f),
+                    center = Offset(cx, cy),
+                    style = Stroke(width = (r * 0.07f).coerceAtLeast(1.4f)),
+                )
+            }
         }
 
         // 2. Основная сфера-голова бота (контрастная к фону темы)
@@ -87,13 +114,19 @@ fun MascotIcon(
             center = Offset(cx, cy),
         )
 
-        // 3. Фирменное диагональное орбитальное кольцо в стиле Grok
-        val ringAngle = if (thinking) -32f + thinkPhase * 360f else if (writing) -28f + wavePhase * 8f else -32f
+        // 3. Фирменное диагональное СИНЕЕ орбитальное кольцо (постоянно в движении)
+        val idleTilt = sin(idlePhase * 2f * Math.PI).toFloat() * 7f
+        val ringAngle = when {
+            thinking -> -32f + thinkPhase * 360f
+            speaking -> -32f + wavePhase * 14f
+            writing -> -28f + wavePhase * 9f
+            else -> -32f + idleTilt
+        }
         rotate(degrees = ringAngle, pivot = Offset(cx, cy)) {
             drawArc(
-                color = accent,
+                color = ringBlue,
                 startAngle = -155f,
-                sweepAngle = 200f,
+                sweepAngle = 205f,
                 useCenter = false,
                 topLeft = Offset(cx - r * 1.32f, cy - r * 0.44f),
                 size = Size(r * 2.64f, r * 0.88f),
@@ -134,7 +167,7 @@ fun MascotIcon(
                         cap = StrokeCap.Round,
                     )
                     drawCircle(
-                        color = accent,
+                        color = ringBlue,
                         radius = r * 0.13f,
                         center = Offset(handPivot.x + r * 0.36f, handPivot.y - r * 0.52f),
                     )
@@ -142,37 +175,41 @@ fun MascotIcon(
             }
 
             thinking -> {
-                // Задумчивый взгляд вниз-вправо + анимированный стилус
-                val lookX = r * 0.10f + sin(thinkPhase * 2f * Math.PI).toFloat() * r * 0.06f
+                // Задумчивый взгляд — плавно переводит глаза без стилуса
+                val lookX = sin(thinkPhase * 2f * Math.PI).toFloat() * r * 0.12f
+                val lookY = -r * 0.04f
                 for (sign in listOf(-1f, 1f)) {
                     val ex = cx + sign * eyeOffX + lookX
                     drawRoundRect(
                         color = paper,
-                        topLeft = Offset(ex - eyeW * 0.5f, eyeY - eyeH * 0.35f),
+                        topLeft = Offset(ex - eyeW * 0.5f, eyeY + lookY - eyeH * 0.4f),
                         size = Size(eyeW, eyeH * 0.8f),
                         cornerRadius = CornerRadius(eyeW * 0.5f, eyeW * 0.5f),
                     )
                 }
-                // Светящийся стилус пишет внизу справа
-                val penShift = sin(thinkPhase * 4f * Math.PI).toFloat() * r * 0.16f
-                val tip = Offset(cx + r * 0.55f + penShift, cy + r * 0.82f)
-                val top = Offset(tip.x + r * 0.52f, tip.y - r * 0.58f)
-                drawLine(
-                    color = accent,
-                    start = tip,
-                    end = top,
-                    strokeWidth = (r * 0.18f).coerceAtLeast(2f),
-                    cap = StrokeCap.Round,
-                )
-                drawCircle(color = paper, radius = r * 0.08f, center = tip)
+            }
+
+            speaking -> {
+                // Живые глаза при разговоре (мягко пульсируют по высоте)
+                val h = eyeH * (0.85f + 0.22f * ((wavePhase + 1f) * 0.5f))
+                for (sign in listOf(-1f, 1f)) {
+                    val ex = cx + sign * eyeOffX
+                    drawRoundRect(
+                        color = paper,
+                        topLeft = Offset(ex - eyeW * 0.5f, eyeY - h * 0.5f),
+                        size = Size(eyeW, h),
+                        cornerRadius = CornerRadius(eyeW * 0.5f, eyeW * 0.5f),
+                    )
+                }
             }
 
             else -> {
-                // Покой: аккуратные капсульные глаза с редким естественным морганием
+                // Постоянно живой покой: капсульные глаза, лёгкий взгляд и естественное моргание
                 val isBlinking = blinkPhase > 0.94f
-                val h = if (isBlinking) eyeH * 0.18f else eyeH
+                val h = if (isBlinking) eyeH * 0.16f else eyeH
+                val gazeX = sin(idlePhase * 2f * Math.PI).toFloat() * r * 0.04f
                 for (sign in listOf(-1f, 1f)) {
-                    val ex = cx + sign * eyeOffX
+                    val ex = cx + sign * eyeOffX + gazeX
                     drawRoundRect(
                         color = paper,
                         topLeft = Offset(ex - eyeW * 0.5f, eyeY - h * 0.5f),
@@ -185,7 +222,7 @@ fun MascotIcon(
     }
 }
 
-/** Круглый бейдж с живым маскотом для шапки панели наставника и карточек. */
+/** Круглый бейдж с живым маскотом для карточек главного экрана. */
 @Composable
 fun MascotBadge(
     writing: Boolean = false,
