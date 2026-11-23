@@ -74,26 +74,69 @@ fun Modifier.softCard(shape: Shape = RoundedCornerShape(24.dp), elevation: Dp = 
         .then(if (color != null) Modifier.background(color) else Modifier)
 
 /**
- * Карточка, как в приложении для родителя: ровная, цвета карточки темы (белая в светлой), без тени, блика и
- * кромки. Параметры [elevation] и [strong] остались от «стекла» — ни на что не влияют.
+ * Карточка темы: в светлой теме — ровная матовая поверхность как в приложении для родителя,
+ * в тёмной теме — аппаратное «жидкое стекло» с полупрозрачным градиентом, верхним бликом и стеклянной кромкой.
  */
 @Suppress("UNUSED_PARAMETER")
-fun Modifier.glass(shape: Shape = RoundedCornerShape(24.dp), elevation: Dp = 10.dp, strong: Boolean = false): Modifier =
-    this
+fun Modifier.glass(shape: Shape = RoundedCornerShape(24.dp), elevation: Dp = 10.dp, strong: Boolean = false): Modifier {
+    if (!Brand.dark) {
+        return this
+            .clip(shape)
+            .background(Brand.Glass)
+    }
+    val topGlass = lerp(Brand.Glass, Color.White, if (strong) 0.11f else 0.08f)
+        .copy(alpha = if (strong) 0.80f else 0.58f)
+    val midGlass = Brand.Glass.copy(alpha = if (strong) 0.68f else 0.42f)
+    val botGlass = lerp(Brand.Glass, Brand.Accent, 0.08f)
+        .copy(alpha = if (strong) 0.74f else 0.50f)
+    val rimBrush = Brush.linearGradient(
+        0.0f to Color.White.copy(alpha = if (strong) 0.34f else 0.26f),
+        0.30f to Color.White.copy(alpha = 0.10f),
+        0.72f to Color.White.copy(alpha = 0.04f),
+        1.0f to lerp(Color.White, Brand.Accent, 0.35f).copy(alpha = 0.20f),
+    )
+    return this
         .clip(shape)
-        .background(Brand.Glass)
+        .background(Brush.verticalGradient(listOf(topGlass, midGlass, botGlass)))
+        .drawBehind {
+            val h = size.height
+            drawRect(
+                Brush.verticalGradient(
+                    0.0f to Color.White.copy(alpha = if (strong) 0.13f else 0.10f),
+                    0.36f to Color.Transparent,
+                    startY = 0f,
+                    endY = h,
+                ),
+            )
+            drawRect(
+                Brush.verticalGradient(
+                    0.78f to Color.Transparent,
+                    1.0f to Color.White.copy(alpha = 0.04f),
+                    startY = 0f,
+                    endY = h,
+                ),
+            )
+        }
+        .border(1.dp, rimBrush, shape)
+}
 
 /**
  * Фон всех экранов под стеклом — по настройке «Фон»: мягкие пятна, «живые» (медленно плывут),
- * градиент или ровный цвет темы.
+ * градиент или ровный цвет темы (в тёмной теме с мягкой подсветкой для эффекта жидкого стекла).
  */
 fun Modifier.paperBackdrop(): Modifier = drawBehind {
     drawRect(Brand.Paper)
     val w = size.width
     val h = size.height
     val m = maxOf(w, h)
+    fun blob(c: Color, x: Float, y: Float, r: Float) =
+        drawCircle(Brush.radialGradient(listOf(c, c.copy(alpha = 0f)), center = Offset(x, y), radius = r), r, Offset(x, y))
     when (Brand.backdrop) {
-        Backdrop.PLAIN -> Unit
+        Backdrop.PLAIN -> if (Brand.dark) {
+            blob(Brand.BlobCool.copy(alpha = 0.38f), w * 0.85f, h * 0.08f, m * 0.52f)
+            blob(Brand.BlobWarm.copy(alpha = 0.30f), w * 0.10f, h * 0.48f, m * 0.45f)
+            blob(Brand.BlobMint.copy(alpha = 0.28f), w * 0.88f, h * 0.90f, m * 0.48f)
+        }
         Backdrop.IMAGE -> Brand.backdropImage?.let { img ->
             // По размеру экрана с обрезкой (как обои) и лёгкая вуаль цвета темы — чтобы текст читался.
             val k = maxOf(w / img.width, h / img.height)
@@ -111,8 +154,6 @@ fun Modifier.paperBackdrop(): Modifier = drawBehind {
             drawRect(Brush.linearGradient(listOf(Brand.BlobWarm.copy(alpha = 0.9f), Brand.Paper.copy(alpha = 0f)), Offset(0f, h), Offset(w * 0.6f, h * 0.3f)))
         }
         Backdrop.BLOBS, Backdrop.LIVE -> {
-            fun blob(c: Color, x: Float, y: Float, r: Float) =
-                drawCircle(Brush.radialGradient(listOf(c, c.copy(alpha = 0f)), center = Offset(x, y), radius = r), r, Offset(x, y))
             val t = if (Brand.backdrop == Backdrop.LIVE) Brand.phase * 2 * PI.toFloat() else 0f
             blob(Brand.BlobCool, w * (0.88f + 0.07f * sin(t)), h * (0.06f + 0.05f * cos(t)), m * (0.5f + 0.04f * sin(t * 2)))
             blob(Brand.BlobWarm, w * (0.04f + 0.08f * cos(t + 2.1f)), h * (0.42f + 0.07f * sin(t + 2.1f)), m * 0.42f)

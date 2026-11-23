@@ -1127,6 +1127,7 @@ private fun AssistantChatBubble(
                         number = i + 1,
                         m = m,
                         topic = ctl.meta?.title.orEmpty(),
+                        streaming = answer.streaming,
                         onLocate = { ctl.focusMark(i + 1) },
                         onNotHere = { ctl.onMarkNotHere(i + 1) },
                     )
@@ -1562,7 +1563,14 @@ private fun ThinkingRow(seq: Long, status: String?) {
 
 /** Заметка наставника в панели: номер как на листе, вид, короткая подсказка и «Подробнее». */
 @Composable
-private fun NoteCard(number: Int, m: Mark, topic: String, onLocate: () -> Unit, onNotHere: (() -> Unit)? = null) {
+private fun NoteCard(
+    number: Int,
+    m: Mark,
+    topic: String,
+    streaming: Boolean = false,
+    onLocate: () -> Unit,
+    onNotHere: (() -> Unit)? = null,
+) {
     val context = LocalContext.current
     val speak: (String) -> Unit = context.app.speaker::speak
     val scope = rememberCoroutineScope()
@@ -1634,7 +1642,7 @@ private fun NoteCard(number: Int, m: Mark, topic: String, onLocate: () -> Unit, 
                 Icon(painterResource(R.drawable.ic_volume), contentDescription = null, tint = Brand.InkSoft, modifier = Modifier.size(16.dp))
             }
         }
-        RichText(m.text, sizePx = 15)
+        RichText(m.text, sizePx = 15, streaming = streaming)
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (m.detail != null) LinkText(if (expanded) "Свернуть ↑" else "Подробнее ↓") { expanded = !expanded }
             Spacer(Modifier.weight(1f))
@@ -1654,7 +1662,7 @@ private fun NoteCard(number: Int, m: Mark, topic: String, onLocate: () -> Unit, 
                 }
             }
         }
-        if (m.detail != null && expanded) RichText(m.detail, sizePx = 15)
+        if (m.detail != null && expanded) RichText(m.detail, sizePx = 15, streaming = streaming)
     }
 }
 

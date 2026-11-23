@@ -51,6 +51,10 @@
     } else {
       html = src.replace(/\n/g, '<br>');
     }
+    // Страховка для **жирного** вокруг кириллических кавычек/знаков, где CommonMark пропускает границы.
+    html = html.replace(/(<pre[\s\S]*?<\/pre>|<code[\s\S]*?<\/code>|<[^>]+>)|\*\*([^\n*<>]+?)\*\*/g, function (m, tag, bold) {
+      return tag ? tag : '<strong>' + bold + '</strong>';
+    });
     html = html.replace(/<p>\s*KXPH(\d+)END\s*<\/p>/g, function (m, i) {
       var item = store[+i];
       return '<div class="math-block">' + renderTex(item.tex, true) + '</div>';
