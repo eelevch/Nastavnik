@@ -996,6 +996,8 @@ class InkView(context: Context) : View(context) {
     }
 
     override fun onDraw(canvas: Canvas) {
+        // Никогда не рисуем за пределами своего прямоугольника (иначе стол закрывает соседние панели).
+        canvas.clipRect(0, 0, width, height)
         val p = page
         if (p == null) {
             canvas.drawColor(desk)

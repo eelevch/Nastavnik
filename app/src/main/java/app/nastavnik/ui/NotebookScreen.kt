@@ -202,7 +202,9 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                 BoxWithConstraints(
                     Modifier
                         .fillMaxSize()
-                        .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                        .padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
+                        // Обрезка обязательна: без неё лист (AndroidView) рисует стол поверх панели инструментов.
+                        .clip(RoundedCornerShape(24.dp)),
                 ) {
                     AndroidView(
                         factory = { ctx ->
