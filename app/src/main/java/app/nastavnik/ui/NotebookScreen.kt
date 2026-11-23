@@ -848,6 +848,9 @@ private fun MentorPanel(
     }
 
     Box(modifier.glass(RoundedCornerShape(28.dp), 14.dp)) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.material3.LocalContentColor provides Brand.Ink,
+        ) {
         Column(Modifier.fillMaxSize()) {
             // Верхняя шапка окна наставника: заголовок, глазик, новый чат и крестик закрытия
             Row(
@@ -1073,6 +1076,7 @@ private fun MentorPanel(
                 }
             }
         }
+        }
     }
 
     if (selectPages) {
@@ -1113,11 +1117,11 @@ private fun UserChatBubble(msg: NotebookController.MentorChatMessage) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (icon != null) {
-                Icon(painterResource(icon), contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                Icon(painterResource(icon), contentDescription = null, tint = Brand.OnAccent, modifier = Modifier.size(16.dp))
             }
             Text(
                 label,
-                style = MaterialTheme.typography.bodyMedium.copy(color = Color.White, fontWeight = FontWeight.Medium),
+                style = MaterialTheme.typography.bodyMedium.copy(color = Brand.OnAccent, fontWeight = FontWeight.Medium),
             )
         }
     }
@@ -1544,8 +1548,8 @@ private fun AskTile(a: Ask, enabled: Boolean, modifier: Modifier, onClick: () ->
             Icon(painterResource(a.icon), contentDescription = null, tint = Brand.Accent, modifier = Modifier.size(17.dp))
         }
         Column(Modifier.weight(1f)) {
-            Text(a.title, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
-            Text(a.hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(a.title, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold), color = Brand.Ink, maxLines = 1)
+            Text(a.hint, style = MaterialTheme.typography.bodySmall, color = Brand.InkSoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

@@ -56,21 +56,30 @@ class Speaker(private val context: Context) {
         stop()
         _problem.value = null
         if (neuralEnabled()) {
-            val key = (context.applicationContext as NastavnikApp).settings.apiKey(AiProvider.GEMINI)
-            if (key.isBlank()) {
-                _problem.value = "Для нейронного голоса добавь ключ Gemini в настройках голоса или выбери системную озвучку."
-                android.widget.Toast.makeText(context, _problem.value, android.widget.Toast.LENGTH_LONG).show()
-                return
-            }
+            val app = context.applicationContext as? NastavnikApp
+            val prefVoice = app?.settings?.ttsVoice() ?: "female"
+            val geminiKey = app?.settings?.apiKey(AiProvider.GEMINI).orEmpty()
             _isSpeaking.value = true
             val generation = playbackGeneration
             neuralJob = scope.launch {
                 try {
                     // Последовательные фрагменты позволяют читать длинные ответы целиком.
                     for (chunk in NeuralSpeech.chunks(text)) {
-                        val bytes = withContext(Dispatchers.IO) { NeuralSpeech.generate(key, chunk, neuralVoice()) }
+                        val (bytes, ext) = withContext(Dispatchers.IO) {
+                            // Бесплатный живой нейронный голос (Edge Neural TTS) работает без ключа!
+                            // Если пользователь выбрал Gemini и есть ключ — пробуем Gemini, иначе сразу бесплатный Edge Neural.
+                            runCatching {
+                                EdgeNeuralSpeech.generate(chunk, female = prefVoice != "male") to ".mp3"
+                            }.getOrElse {
+                                if (geminiKey.isNotBlank()) {
+                                    NeuralSpeech.generate(geminiKey, chunk, neuralVoice()) to ".wav"
+                                } else {
+                                    throw it
+                                }
+                            }
+                        }
                         ensureActive()
-                        val file = File.createTempFile("mentor-voice-", ".wav", context.cacheDir)
+                        val file = File.createTempFile("mentor-voice-", ext, context.cacheDir)
                         audioFile = file
                         withContext(Dispatchers.IO) { file.writeBytes(bytes) }
                         ensureActive()
@@ -92,9 +101,13 @@ class Speaker(private val context: Context) {
                     }
                 } catch (e: CancellationException) {
                     throw e
-                } catch (e: Exception) {
-                    _problem.value = e.message ?: "Не удалось озвучить ответ"
-                    android.widget.Toast.makeText(context, _problem.value, android.widget.Toast.LENGTH_LONG).show()
+                } catch (_: Exception) {
+                    // Если нет сети — плавно переключаемся на встроенный системный TTS без ошибок
+                    if (generation == playbackGeneration) {
+                        releaseAudio()
+                        _isSpeaking.value = false
+                        speakSystem(text)
+                    }
                 } finally {
                     if (generation == playbackGeneration) {
                         releaseAudio()
@@ -104,6 +117,10 @@ class Speaker(private val context: Context) {
             }
             return
         }
+        speakSystem(text)
+    }
+
+    private fun speakSystem(text: String) {
         val t = tts
         if (t == null) {
             pending = text

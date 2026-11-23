@@ -1,6 +1,5 @@
 package app.nastavnik.ui
 
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -8,33 +7,32 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import app.nastavnik.R
-import kotlinx.coroutines.delay
+import kotlin.math.sin
 
 /**
- * Живой маскот-робот проекта «Наставник»:
- * - Пока человек пишет конспект: робот машет рукой в значке.
- * - Пока наставник думает/отвечает: робот думает и пишет формулы.
- * - В покое: стильный логотип с наушниками и очками.
+ * Процедурный векторный маскот-бот в стиле Grok (120 FPS, идеально чёткий в любом размере
+ * и автоматически подстраивается под светлую и тёмную темы через [Brand.Ink] / [Brand.Paper] / [Brand.Accent]):
+ * - Пока человек пишет конспект ([writing]): улыбается и машет рукой.
+ * - Пока наставник думает и отвечает ([thinking]): вращает орбитальное кольцо и пишет стилусом.
+ * - В покое: стильный геометричный бот с диагональным орбитальным кольцом и мягким морганием.
  */
 @Composable
 fun MascotIcon(
@@ -43,87 +41,146 @@ fun MascotIcon(
     sizeDp: Dp = 26.dp,
     modifier: Modifier = Modifier,
 ) {
-    val isDark = isSystemInDarkTheme()
+    val ink = Brand.Ink
+    val paper = Brand.Paper
+    val accent = Brand.Accent
 
-    when {
-        // Человек пишет на листе конспекта — робот в значке дружелюбно машет рукой
-        writing -> {
-            val infinite = rememberInfiniteTransition(label = "mascotWave")
-            val rot by infinite.animateFloat(
-                initialValue = -12f,
-                targetValue = 14f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(280, easing = FastOutSlowInEasing),
-                    repeatMode = RepeatMode.Reverse,
-                ),
-                label = "waveRot",
-            )
-            val swayX by infinite.animateFloat(
-                initialValue = -1.2f,
-                targetValue = 1.2f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(280, easing = LinearEasing),
-                    repeatMode = RepeatMode.Reverse,
-                ),
-                label = "waveSwayX",
-            )
-            val res = if (isDark) R.drawable.ic_mascot_wave_dark else R.drawable.ic_mascot_wave
-            Image(
-                painter = painterResource(res),
-                contentDescription = "Наставник машет",
-                modifier = modifier
-                    .size(sizeDp)
-                    .graphicsLayer {
-                        rotationZ = rot
-                        translationX = swayX
-                        translationY = -swayX * 0.5f
-                    },
+    val infinite = rememberInfiniteTransition(label = "grokBot")
+    val wavePhase by infinite.animateFloat(
+        initialValue = -1f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(320, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "wave",
+    )
+    val thinkPhase by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart),
+        label = "think",
+    )
+    val blinkPhase by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(3600, easing = LinearEasing), RepeatMode.Restart),
+        label = "blink",
+    )
+
+    Canvas(modifier = modifier.size(sizeDp)) {
+        val cx = size.width * 0.5f
+        val cy = size.height * 0.52f
+        val r = size.minDimension * 0.36f
+
+        // 1. Внешнее пульсирующее свечение при размышлении
+        if (thinking) {
+            val pulse = 0.16f + 0.14f * sin(thinkPhase * 2f * Math.PI).toFloat()
+            drawCircle(
+                color = accent.copy(alpha = pulse),
+                radius = r * 1.28f,
+                center = Offset(cx, cy),
             )
         }
-        // Наставник думает и пишет ответ — робот чередует размышления и письмо
-        thinking -> {
-            var phase by remember { mutableIntStateOf(0) }
-            LaunchedEffect(thinking) {
-                while (true) {
-                    delay(850)
-                    phase = (phase + 1) % 2
+
+        // 2. Основная сфера-голова бота (контрастная к фону темы)
+        drawCircle(
+            color = ink,
+            radius = r,
+            center = Offset(cx, cy),
+        )
+
+        // 3. Фирменное диагональное орбитальное кольцо в стиле Grok
+        val ringAngle = if (thinking) -32f + thinkPhase * 360f else if (writing) -28f + wavePhase * 8f else -32f
+        rotate(degrees = ringAngle, pivot = Offset(cx, cy)) {
+            drawArc(
+                color = accent,
+                startAngle = -155f,
+                sweepAngle = 200f,
+                useCenter = false,
+                topLeft = Offset(cx - r * 1.32f, cy - r * 0.44f),
+                size = Size(r * 2.64f, r * 0.88f),
+                style = Stroke(width = (r * 0.17f).coerceAtLeast(1.8f), cap = StrokeCap.Round),
+            )
+        }
+
+        // 4. Выразительные глаза-визор
+        val eyeY = cy - r * 0.06f
+        val eyeOffX = r * 0.30f
+        val eyeW = r * 0.22f
+        val eyeH = r * 0.34f
+
+        when {
+            writing -> {
+                // Радостные дуги ^ ^
+                val stroke = Stroke(width = (r * 0.14f).coerceAtLeast(1.5f), cap = StrokeCap.Round)
+                for (sign in listOf(-1f, 1f)) {
+                    val ex = cx + sign * eyeOffX
+                    drawArc(
+                        color = paper,
+                        startAngle = 195f,
+                        sweepAngle = 150f,
+                        useCenter = false,
+                        topLeft = Offset(ex - eyeW * 0.65f, eyeY - eyeH * 0.35f),
+                        size = Size(eyeW * 1.3f, eyeH * 0.9f),
+                        style = stroke,
+                    )
+                }
+                // Анимированная машущая рука справа
+                val handPivot = Offset(cx + r * 0.92f, cy + r * 0.15f)
+                rotate(degrees = 18f + wavePhase * 26f, pivot = handPivot) {
+                    drawLine(
+                        color = ink,
+                        start = handPivot,
+                        end = Offset(handPivot.x + r * 0.36f, handPivot.y - r * 0.52f),
+                        strokeWidth = (r * 0.24f).coerceAtLeast(2.2f),
+                        cap = StrokeCap.Round,
+                    )
+                    drawCircle(
+                        color = accent,
+                        radius = r * 0.13f,
+                        center = Offset(handPivot.x + r * 0.36f, handPivot.y - r * 0.52f),
+                    )
                 }
             }
-            val infinite = rememberInfiniteTransition(label = "mascotThink")
-            val bobY by infinite.animateFloat(
-                initialValue = -1.5f,
-                targetValue = 1.5f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(420, easing = FastOutSlowInEasing),
-                    repeatMode = RepeatMode.Reverse,
-                ),
-                label = "thinkBobY",
-            )
-            val res = if (phase == 0) {
-                if (isDark) R.drawable.ic_mascot_think_dark else R.drawable.ic_mascot_think
-            } else {
-                if (isDark) R.drawable.ic_mascot_write_dark else R.drawable.ic_mascot_write
-            }
-            Crossfade(targetState = res, animationSpec = tween(250), label = "mascotCrossfade") { drawableRes ->
-                Image(
-                    painter = painterResource(drawableRes),
-                    contentDescription = "Наставник думает и пишет",
-                    modifier = modifier
-                        .size(sizeDp)
-                        .graphicsLayer {
-                            translationY = bobY
-                        },
+
+            thinking -> {
+                // Задумчивый взгляд вниз-вправо + анимированный стилус
+                val lookX = r * 0.10f + sin(thinkPhase * 2f * Math.PI).toFloat() * r * 0.06f
+                for (sign in listOf(-1f, 1f)) {
+                    val ex = cx + sign * eyeOffX + lookX
+                    drawRoundRect(
+                        color = paper,
+                        topLeft = Offset(ex - eyeW * 0.5f, eyeY - eyeH * 0.35f),
+                        size = Size(eyeW, eyeH * 0.8f),
+                        cornerRadius = CornerRadius(eyeW * 0.5f, eyeW * 0.5f),
+                    )
+                }
+                // Светящийся стилус пишет внизу справа
+                val penShift = sin(thinkPhase * 4f * Math.PI).toFloat() * r * 0.16f
+                val tip = Offset(cx + r * 0.55f + penShift, cy + r * 0.82f)
+                val top = Offset(tip.x + r * 0.52f, tip.y - r * 0.58f)
+                drawLine(
+                    color = accent,
+                    start = tip,
+                    end = top,
+                    strokeWidth = (r * 0.18f).coerceAtLeast(2f),
+                    cap = StrokeCap.Round,
                 )
+                drawCircle(color = paper, radius = r * 0.08f, center = tip)
             }
-        }
-        // Состояние покоя — классический логотип маскота
-        else -> {
-            val res = if (isDark) R.drawable.ic_mascot_think_dark else R.drawable.ic_mascot_think
-            Image(
-                painter = painterResource(res),
-                contentDescription = "Наставник",
-                modifier = modifier.size(sizeDp),
-            )
+
+            else -> {
+                // Покой: аккуратные капсульные глаза с редким естественным морганием
+                val isBlinking = blinkPhase > 0.94f
+                val h = if (isBlinking) eyeH * 0.18f else eyeH
+                for (sign in listOf(-1f, 1f)) {
+                    val ex = cx + sign * eyeOffX
+                    drawRoundRect(
+                        color = paper,
+                        topLeft = Offset(ex - eyeW * 0.5f, eyeY - h * 0.5f),
+                        size = Size(eyeW, h),
+                        cornerRadius = CornerRadius(eyeW * 0.5f, eyeW * 0.5f),
+                    )
+                }
+            }
         }
     }
 }
@@ -136,8 +193,7 @@ fun MascotBadge(
     size: Dp = 32.dp,
     modifier: Modifier = Modifier,
 ) {
-    val isDark = isSystemInDarkTheme()
-    val bg = if (isDark) Brand.Glass.copy(alpha = 0.45f) else Brand.Paper
+    val bg = if (Brand.dark) Brand.Glass.copy(alpha = 0.6f) else Brand.Paper
     Box(
         modifier
             .size(size)
@@ -148,7 +204,7 @@ fun MascotBadge(
         MascotIcon(
             writing = writing,
             thinking = thinking,
-            sizeDp = (size.value * 0.78f).dp,
+            sizeDp = (size.value * 0.82f).dp,
         )
     }
 }

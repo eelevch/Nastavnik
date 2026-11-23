@@ -514,22 +514,23 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
     fun askSelection(customQuestion: String? = null) {
         val bmp = ink.selectionSnapshot() ?: return
         if (app.settings.notReadyReason() != null) return
-        val question = customQuestion ?: "Объясни выделенное: что здесь написано, всё ли верно и как решить?"
+        val question = customQuestion ?: "На первом изображении — выделенный лассо фрагмент, на остальных — страницы всего конспекта. Объясни выделенный фрагмент относительно всего конспекта: как он связан с общим решением, всё ли верно и что делать дальше?"
         autoJob?.cancel()
         val now = System.currentTimeMillis()
         val userMsgId = now * 10L
         val botMsgId = userMsgId + 1L
-        chatMessages.add(MentorChatMessage(id = userMsgId, isUser = true, text = question, kind = AskKind.USER, timestamp = now))
+        chatMessages.add(MentorChatMessage(id = userMsgId, isUser = true, text = customQuestion ?: "Объясни выделенное в контексте конспекта", kind = AskKind.USER, timestamp = now))
         chatMessages.add(
             MentorChatMessage(
                 id = botMsgId,
                 isUser = false,
                 text = "",
                 kind = AskKind.USER,
-                answer = AnswerUi(seq = botMsgId, kind = AskKind.USER, question = question, streaming = true, status = "Изучаю выделенную область…"),
+                answer = AnswerUi(seq = botMsgId, kind = AskKind.USER, question = question, streaming = true, status = "Изучаю выделенное в контексте конспекта…"),
                 timestamp = now,
             )
         )
+        saveChatToDisk()
         val p = page ?: return
         answerPageId = p.id
         answerScale = 1f
@@ -540,10 +541,17 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         val w = bmp.width
         val h = bmp.height
         bmp.recycle()
+        val allPages = pages.toList()
+        val sel = selectedContextPages
         mentor.ask(question, AskKind.USER) {
             val geom = ShotGeometry(IRect(0, 0, w, h), w, h, 0, null, null)
             ShotGeometry.last = geom
-            ShotResult.Ok(jpeg, geom, null, emptyList())
+            // Отправляем полную текущую страницу и остальные выбранные страницы конспекта для полного контекста
+            val ctxPages = allPages
+                .filter { it.id == p.id || sel == null || it.id in sel }
+                .take(5)
+                .map { contextImage(it) }
+            ShotResult.Ok(jpeg, geom, null, ctxPages)
         }
     }
 
