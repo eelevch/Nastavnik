@@ -62,8 +62,10 @@ private val WIDGETS = listOf(
 )
 
 private fun defaults(tablet: Boolean) = if (tablet) listOf(
-    Item("cards", Size.S), Item("exam", Size.S),
-    Item("notebooks", Size.L), Item("mentor", Size.M), Item("sections", Size.M),
+    Item("notebooks", Size.L),
+    Item("day", Size.S), Item("cards", Size.S), Item("exam", Size.S), Item("grades", Size.S),
+    Item("mentor", Size.L),
+    Item("sections", Size.L),
 ) else listOf(
     Item("day", Size.L),
     Item("cards", Size.S), Item("exam", Size.S),
@@ -89,7 +91,12 @@ fun HomeBoard(
     val catalog = remember(tablet) { WIDGETS.filter { tablet || !it.tabletOnly } }
     val known = remember(catalog) { catalog.map { it.id }.toSet() }
     val rawLayout = app.settings.homeLayout(tablet).let {
-        if (!tablet && (it == "cards:S,exam:S,grades:L" || it.isNullOrBlank())) null else it
+        when {
+            it.isNullOrBlank() -> null
+            !tablet && it == "cards:S,exam:S,grades:L" -> null
+            tablet && it == "cards:S,exam:S,notebooks:L,mentor:M,sections:M" -> null
+            else -> it
+        }
     }
     var items by remember(tablet) { mutableStateOf(HomeLayout.decode(rawLayout, known, defaults(tablet))) }
     fun save(next: List<Item>) {
@@ -106,6 +113,8 @@ fun HomeBoard(
     val due by remember(nowMs) { app.db.cards().observeDueCount(nowMs) }.collectAsStateWithLifecycle(initialValue = 0)
     val hasGroup = app.settings.scheduleGroup().isNotBlank()
     val exam = remember(resumeTick) { app.study.nextExam() }
+    val journal by app.grades.journal.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(Unit) { app.grades.refreshLks() }
 
     @Composable
     fun content(item: Item, m: Modifier) {
@@ -120,9 +129,17 @@ fun HomeBoard(
             "cards" -> CardsTile(m, due, go)
             "exam" -> ExamTile(m, exam, go)
             "grades" -> if (small) {
-                HomeTile(m, R.drawable.ic_chart, "Оценки", "успеваемость", false, { go(MainActivity.SCREEN_GRADES) })
+                val avg = journal?.averageMark
+                HomeTile(
+                    m,
+                    R.drawable.ic_chart,
+                    avg?.let { "%.2f".format(java.util.Locale.forLanguageTag("ru"), it) } ?: "Оценки",
+                    if (avg != null) "средний балл" else "успеваемость",
+                    false,
+                    { go(MainActivity.SCREEN_GRADES) },
+                )
             } else Box(m) { GradesCard(onOpen = { go(MainActivity.SCREEN_GRADES) }) }
-            "sections" -> Box(m) { SectionsGrid(go, columns = if (item.size == Size.L && tablet) 5 else 3, items = TABLET_SECTIONS) }
+            "sections" -> Box(m) { SectionsGrid(go, columns = if (item.size == Size.L && tablet) 4 else 3, items = TABLET_SECTIONS) }
             else -> Box(m) { extra[item.id]?.invoke() }
         }
     }

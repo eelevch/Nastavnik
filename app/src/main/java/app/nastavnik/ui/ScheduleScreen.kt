@@ -12,6 +12,8 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -58,6 +60,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -145,6 +150,27 @@ fun ScheduleScreen(onBack: (() -> Unit)?) {
             Column(Modifier.weight(1f).padding(start = 4.dp)) {
                 Text("Расписание", style = MaterialTheme.typography.headlineMedium)
                 Text(group, style = MaterialTheme.typography.bodySmall, color = Brand.InkSoft, modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { picking = true })
+            }
+            val isToday = day == LocalDate.now()
+            AnimatedVisibility(
+                visible = !isToday,
+                enter = fadeIn(tween(180)) + scaleIn(tween(180), initialScale = 0.85f),
+                exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.85f),
+            ) {
+                val todaySrc = remember { MutableInteractionSource() }
+                Text(
+                    "Сегодня",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = Brand.Accent,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .pressable(todaySrc)
+                        .clip(CircleShape)
+                        .background(Brand.Accent.copy(alpha = 0.14f))
+                        .clickable(todaySrc, indication = ripple()) { day = LocalDate.now() }
+                        .semantics { contentDescription = "Вернуться в сегодня" }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
             }
             RefreshButton(loading) { refresh(force = true) }
             RoundIconButton(R.drawable.ic_tune, "Сменить группу") { picking = true }

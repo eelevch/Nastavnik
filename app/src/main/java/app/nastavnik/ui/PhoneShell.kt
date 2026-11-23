@@ -1,5 +1,6 @@
 package app.nastavnik.ui
 
+import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -43,6 +44,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,10 +52,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.layer.GraphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -89,59 +103,142 @@ enum class PhoneTab(val title: String, val icon: Int) {
  */
 @Composable
 fun PhoneShell(tab: PhoneTab, onTab: (PhoneTab) -> Unit, resumeTick: Int, go: (String) -> Unit) {
+    val context = LocalContext.current
+    val isWeak = remember(context) { app.nastavnik.data.DeviceProfile.isWeakDevice(context) }
+    val useRealBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !isWeak
+    val contentLayer = rememberGraphicsLayer()
+    var rootHeightPx by remember { mutableIntStateOf(0) }
+
     Box(Modifier.fillMaxSize().paperBackdrop()) {
-        CompositionLocalProvider(LocalBottomBarInset provides 72.dp) {
-            AnimatedContent(
-                targetState = tab,
-                transitionSpec = {
-                    // Вкладки — плавный сдвиг и мягкое проявление без скачков и пауз.
-                    val dir = if (targetState.ordinal > initialState.ordinal) 1 else -1
-                    (fadeIn(tween(260, easing = Motion.Decelerate)) + slideInHorizontally(tween(300, easing = Motion.Emphasized)) { (it * 0.18f * dir).toInt() })
-                        .togetherWith(fadeOut(tween(180, easing = Motion.Accelerate)) + slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { (-it * 0.18f * dir).toInt() })
-                },
-                label = "tab",
-                modifier = Modifier.fillMaxSize(),
-            ) { t ->
-                when (t) {
-                    PhoneTab.TODAY -> TodayTab(resumeTick, go, onTab = onTab)
-                    PhoneTab.SCHEDULE -> ScheduleScreen(onBack = null)
-                    PhoneTab.GRADES -> GradesScreen(onBack = null, onSettings = { go(MainActivity.SCREEN_SETTINGS) }, onLks = { go(MainActivity.SCREEN_LKS) })
-                    PhoneTab.STUDY -> StudyTab(resumeTick, go)
+        CompositionLocalProvider(LocalBottomBarInset provides 84.dp) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onSizeChanged { rootHeightPx = it.height }
+                    .then(
+                        if (useRealBlur) {
+                            Modifier.drawWithContent {
+                                contentLayer.record {
+                                    this@drawWithContent.drawContent()
+                                }
+                                drawLayer(contentLayer)
+                            }
+                        } else {
+                            Modifier
+                        },
+                    ),
+            ) {
+                AnimatedContent(
+                    targetState = tab,
+                    transitionSpec = {
+                        // Вкладки — плавный сдвиг и мягкое проявление без скачков и пауз.
+                        val dir = if (targetState.ordinal > initialState.ordinal) 1 else -1
+                        (fadeIn(tween(260, easing = Motion.Decelerate)) + slideInHorizontally(tween(300, easing = Motion.Emphasized)) { (it * 0.18f * dir).toInt() })
+                            .togetherWith(fadeOut(tween(180, easing = Motion.Accelerate)) + slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { (-it * 0.18f * dir).toInt() })
+                    },
+                    label = "tab",
+                    modifier = Modifier.fillMaxSize(),
+                ) { t ->
+                    when (t) {
+                        PhoneTab.TODAY -> TodayTab(resumeTick, go, onTab = onTab)
+                        PhoneTab.SCHEDULE -> ScheduleScreen(onBack = null)
+                        PhoneTab.GRADES -> GradesScreen(onBack = null, onSettings = { go(MainActivity.SCREEN_SETTINGS) }, onLks = { go(MainActivity.SCREEN_LKS) })
+                        PhoneTab.STUDY -> StudyTab(resumeTick, go)
+                    }
                 }
             }
         }
-        TabBar(tab, onTab, Modifier.align(Alignment.BottomCenter))
+        TabBar(
+            tab = tab,
+            onTab = onTab,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            contentLayer = if (useRealBlur) contentLayer else null,
+            rootHeightPx = rootHeightPx,
+        )
     }
 }
 
 /**
- * Нижняя панель без подложки сзади (как в Яндекс Музыке): значки и подписи парят поверх контента
- * на мягком вертикальном затухании без сплошной карточки и пилюли.
+ * Нижняя панель без подложки сзади (как в Яндекс Музыке): значки и подписи парят поверх
+ * глубокого прогрессивного размытия контента без сплошной карточки и пилюли.
  */
 @Composable
-private fun TabBar(tab: PhoneTab, onTab: (PhoneTab) -> Unit, modifier: Modifier) {
+private fun TabBar(
+    tab: PhoneTab,
+    onTab: (PhoneTab) -> Unit,
+    modifier: Modifier,
+    contentLayer: GraphicsLayer? = null,
+    rootHeightPx: Int = 0,
+) {
     TabRowBar(
         items = PhoneTab.entries.map { Triple(it.title, it.icon, it == tab) },
         onClick = { onTab(PhoneTab.entries[it]) },
         modifier = modifier,
+        contentLayer = contentLayer,
+        rootHeightPx = rootHeightPx,
     )
 }
 
-/** Панель вкладок без подложки: подпись, значок, выбрана ли; [onClick] — номер вкладки. */
+/** Панель вкладок без подложки с прогрессивным размытием; [onClick] — номер вкладки. */
 @Composable
-fun TabRowBar(items: List<Triple<String, Int, Boolean>>, onClick: (Int) -> Unit, modifier: Modifier) {
+fun TabRowBar(
+    items: List<Triple<String, Int, Boolean>>,
+    onClick: (Int) -> Unit,
+    modifier: Modifier,
+    contentLayer: GraphicsLayer? = null,
+    rootHeightPx: Int = 0,
+) {
+    val density = LocalDensity.current
+    var barHeightPx by remember { mutableIntStateOf(0) }
     val fade = Brush.verticalGradient(
-        0f to Color.Transparent,
-        0.35f to Brand.Paper.copy(alpha = 0.72f),
-        1f to Brand.Paper.copy(alpha = 0.94f),
+        0.00f to Color.Transparent,
+        0.22f to Brand.Paper.copy(alpha = if (contentLayer != null) 0.22f else 0.34f),
+        0.48f to Brand.Paper.copy(alpha = if (contentLayer != null) 0.56f else 0.74f),
+        0.76f to Brand.Paper.copy(alpha = if (contentLayer != null) 0.84f else 0.94f),
+        1.00f to Brand.Paper.copy(alpha = if (contentLayer != null) 0.95f else 0.99f),
     )
     Box(
         modifier
             .fillMaxWidth()
-            .background(fade)
-            .navigationBarsPadding(),
+            .onSizeChanged { barHeightPx = it.height },
     ) {
-        Row(Modifier.fillMaxWidth().height(64.dp)) {
+        if (contentLayer != null && rootHeightPx > 0 && barHeightPx > 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    .drawWithContent {
+                        drawContent()
+                        drawRect(
+                            Brush.verticalGradient(
+                                0f to Color.Transparent,
+                                0.36f to Color.Black,
+                                1f to Color.Black,
+                            ),
+                            blendMode = BlendMode.DstIn,
+                        )
+                    },
+            ) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .clipToBounds()
+                        .graphicsLayer {
+                            val r = with(density) { 28.dp.toPx() }
+                            renderEffect = BlurEffect(r, r, TileMode.Clamp)
+                        }
+                        .drawWithContent {
+                            if (contentLayer.size.width > 0 && contentLayer.size.height > 0) {
+                                translate(top = -(rootHeightPx - barHeightPx).toFloat()) {
+                                    drawLayer(contentLayer)
+                                }
+                            }
+                        },
+                )
+            }
+        }
+        Box(Modifier.matchParentSize().background(fade))
+        Row(Modifier.fillMaxWidth().padding(top = 34.dp).navigationBarsPadding().height(64.dp)) {
             items.forEachIndexed { i, (title, icon, sel) ->
                 val fg by animateColorAsState(
                     if (sel) Brand.Accent else Brand.InkSoft.copy(alpha = 0.68f),

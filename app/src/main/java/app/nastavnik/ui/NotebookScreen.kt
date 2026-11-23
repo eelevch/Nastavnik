@@ -73,6 +73,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -190,7 +191,7 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                     .fillMaxWidth()
                     .weight(1f),
             ) {
-                Box(
+                BoxWithConstraints(
                     Modifier
                         .fillMaxSize()
                         .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
@@ -224,6 +225,9 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
 
                     // Страница задачи ДЗ — плашка с проверкой.
                     HomeworkBar(ctl, Modifier.align(Alignment.BottomCenter).padding(start = 72.dp, end = 16.dp, bottom = 56.dp))
+
+                    // Плавающая боковая панель инструментов (когда выбрано «Панель кистей: сбоку»).
+                    EditorRail(ctl, maxHeight)
 
                     androidx.compose.animation.AnimatedVisibility(
                         visible = !ctl.loaded,
@@ -380,105 +384,122 @@ private fun NotebookTopBar(
     if (paperDialog) PaperDialog(ctl) { paperDialog = false }
     if (examDialog) ExamDialog(onStart = { m -> examDialog = false; ctl.startExam(m) }, onDismiss = { examDialog = false })
     val meta = ctl.meta
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        BarButton(R.drawable.ic_arrow_back, "Назад", onClick = onBack)
-        Text(
-            meta?.title ?: "Тетрадь",
-            style = MaterialTheme.typography.titleMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .widthIn(max = 140.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .clickable { renaming = true }
-                .padding(horizontal = 4.dp, vertical = 2.dp),
-        )
-        val subj = meta?.subject?.trim().orEmpty()
-        if (subj.isNotEmpty()) {
-            Text(
-                subj,
-                style = MaterialTheme.typography.labelSmall,
-                color = Brand.Accent,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Brand.Accent.copy(alpha = 0.12f))
-                    .clickable { choosingSubject = true }
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-            )
-        }
-        // Кисти всегда сверху — расширенный центрированный ряд инструментов по центру
-        Spacer(Modifier.weight(1f))
-        TopToolBar(ctl)
-        Spacer(Modifier.weight(1f))
-        // Страницы: стрелки, номер и кнопка быстрого удаления страницы
-        Row(
-            Modifier.glass(CircleShape, 4.dp, strong = true).padding(horizontal = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            BarIcon(R.drawable.ic_chevron_left, "Предыдущая страница", enabled = ctl.index > 0) { ctl.showPage(ctl.index - 1) }
-            Text(
-                "${ctl.index + 1} / ${ctl.pages.size.coerceAtLeast(1)}",
-                style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.clickable(onClick = onPages).padding(horizontal = 4.dp),
-            )
-            BarIcon(R.drawable.ic_chevron, "Следующая страница", enabled = ctl.index < ctl.pages.lastIndex) { ctl.showPage(ctl.index + 1) }
-            if (ctl.pages.size > 1) {
-                BarIcon(R.drawable.ic_trash, "Удалить страницу") { deletePageConfirm = true }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val singleRowTools = ctl.toolBarTop && maxWidth >= 1100.dp
+        val secondRowTools = ctl.toolBarTop && !singleRowTools
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                BarButton(R.drawable.ic_arrow_back, "Назад", onClick = onBack)
+                Text(
+                    meta?.title ?: "Тетрадь",
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .widthIn(max = 160.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { renaming = true }
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                )
+                val subj = meta?.subject?.trim().orEmpty()
+                if (subj.isNotEmpty()) {
+                    Text(
+                        subj,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Brand.Accent,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Brand.Accent.copy(alpha = 0.12f))
+                            .clickable { choosingSubject = true }
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                if (singleRowTools) {
+                    TopToolBar(ctl)
+                    Spacer(Modifier.weight(1f))
+                }
+                // Страницы: стрелки, номер и кнопка быстрого удаления страницы
+                Row(
+                    Modifier.glass(CircleShape, 4.dp, strong = true).padding(horizontal = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BarIcon(R.drawable.ic_chevron_left, "Предыдущая страница", enabled = ctl.index > 0) { ctl.showPage(ctl.index - 1) }
+                    Text(
+                        "${ctl.index + 1} / ${ctl.pages.size.coerceAtLeast(1)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.clickable(onClick = onPages).padding(horizontal = 4.dp),
+                    )
+                    BarIcon(R.drawable.ic_chevron, "Следующая страница", enabled = ctl.index < ctl.pages.lastIndex) { ctl.showPage(ctl.index + 1) }
+                    if (ctl.pages.size > 1) {
+                        BarIcon(R.drawable.ic_trash, "Удалить страницу") { deletePageConfirm = true }
+                    }
+                }
+                // Режим фиксации листа: только 2 пальца + фиксированный зум
+                BarButton(
+                    if (ctl.lockMode) R.drawable.ic_lock else R.drawable.ic_unlock,
+                    if (ctl.lockMode) "Фиксация включена (только 2 пальца, зум зафиксирован)" else "Включить фиксацию листа",
+                    active = ctl.lockMode,
+                    onClick = { ctl.toggleLockMode() },
+                )
+                BarButton(R.drawable.ic_undo, "Отменить", enabled = ctl.canUndo) { ctl.undo() }
+                BarButton(R.drawable.ic_redo, "Вернуть", enabled = ctl.canRedo) { ctl.redo() }
+                // Всё остальное — в одном меню: страницы, бумага, контрольная, проверка.
+                Box {
+                    BarButton(R.drawable.ic_more, "Ещё") { moreMenu = true }
+                    DropdownMenu(expanded = moreMenu, onDismissRequest = { moreMenu = false }, containerColor = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
+                        MenuItem(if (ctl.toolBarTop) "Панель кистей: сбоку" else "Панель кистей: сверху", R.drawable.ic_panel) {
+                            moreMenu = false
+                            ctl.toggleToolBarPosition()
+                        }
+                        MenuItem(if (ctl.lockMode) "Выключить фиксацию" else "Фиксация (2 пальца + зум)", if (ctl.lockMode) R.drawable.ic_lock else R.drawable.ic_unlock) {
+                            moreMenu = false
+                            ctl.toggleLockMode()
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        MenuItem("Новая страница", R.drawable.ic_plus) { moreMenu = false; ctl.addPage(ctl.page?.paper ?: Paper.GRID) }
+                        MenuItem("Фото или PDF как страница", R.drawable.ic_camera) { moreMenu = false; addMenu = true }
+                        MenuItem("Все страницы", R.drawable.ic_pages) { moreMenu = false; onPages() }
+                        MenuItem("Бумага…", R.drawable.ic_notebook) { moreMenu = false; paperDialog = true }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        MenuItem("Контрольная на время…", R.drawable.ic_timer) { moreMenu = false; examDialog = true }
+                        MenuItem((if (ctl.autoCheck) "✓ " else "") + "Проверять, когда остановлюсь", R.drawable.ic_eye) { moreMenu = false; ctl.toggleAutoCheck() }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        MenuItem(if (subj.isNotEmpty()) "Группа: $subj" else "Добавить в группу…", R.drawable.ic_panel) { moreMenu = false; choosingSubject = true }
+                        MenuItem("Переименовать", R.drawable.ic_pen) { moreMenu = false; renaming = true }
+                        if (ctl.pages.size > 1) {
+                            MenuItem("Удалить текущую страницу", R.drawable.ic_trash) { moreMenu = false; deletePageConfirm = true }
+                        }
+                        MenuItem("Очистить страницу", R.drawable.ic_eraser) { moreMenu = false; ctl.clearPage() }
+                    }
+                    DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }, containerColor = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
+                        MenuItem("Сфотографировать", R.drawable.ic_camera) { addMenu = false; importers.camera() }
+                        MenuItem("Фото из галереи", R.drawable.ic_image) { addMenu = false; importers.gallery() }
+                        MenuItem("Страницы из PDF", R.drawable.ic_pdf) { addMenu = false; importers.pdf() }
+                    }
+                }
+                val mentorAction = if (panel) "Скрыть наставника" else "Показать наставника"
+                BarButton(R.drawable.ic_sparkle, mentorAction, active = panel, onClick = onTogglePanel)
+            }
+            if (secondRowTools) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = 8.dp, end = 8.dp, top = 2.dp, bottom = 4.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    TopToolBar(ctl, Modifier.horizontalScroll(rememberScrollState()))
+                }
             }
         }
-        // Режим фиксации листа: только 2 пальца + фиксированный зум
-        BarButton(
-            if (ctl.lockMode) R.drawable.ic_lock else R.drawable.ic_unlock,
-            if (ctl.lockMode) "Фиксация включена (только 2 пальца, зум зафиксирован)" else "Включить фиксацию листа",
-            active = ctl.lockMode,
-            onClick = { ctl.toggleLockMode() },
-        )
-        BarButton(R.drawable.ic_undo, "Отменить", enabled = ctl.canUndo) { ctl.undo() }
-        BarButton(R.drawable.ic_redo, "Вернуть", enabled = ctl.canRedo) { ctl.redo() }
-        // Всё остальное — в одном меню: страницы, бумага, контрольная, проверка.
-        Box {
-            BarButton(R.drawable.ic_more, "Ещё") { moreMenu = true }
-            DropdownMenu(expanded = moreMenu, onDismissRequest = { moreMenu = false }, containerColor = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
-                MenuItem(if (ctl.toolBarTop) "Панель кистей: сбоку" else "Панель кистей: сверху", R.drawable.ic_panel) {
-                    moreMenu = false
-                    ctl.toggleToolBarPosition()
-                }
-                MenuItem(if (ctl.lockMode) "Выключить фиксацию" else "Фиксация (2 пальца + зум)", if (ctl.lockMode) R.drawable.ic_lock else R.drawable.ic_unlock) {
-                    moreMenu = false
-                    ctl.toggleLockMode()
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                MenuItem("Новая страница", R.drawable.ic_plus) { moreMenu = false; ctl.addPage(ctl.page?.paper ?: Paper.GRID) }
-                MenuItem("Фото или PDF как страница", R.drawable.ic_camera) { moreMenu = false; addMenu = true }
-                MenuItem("Все страницы", R.drawable.ic_pages) { moreMenu = false; onPages() }
-                MenuItem("Бумага…", R.drawable.ic_notebook) { moreMenu = false; paperDialog = true }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                MenuItem("Контрольная на время…", R.drawable.ic_timer) { moreMenu = false; examDialog = true }
-                MenuItem((if (ctl.autoCheck) "✓ " else "") + "Проверять, когда остановлюсь", R.drawable.ic_eye) { moreMenu = false; ctl.toggleAutoCheck() }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                MenuItem(if (subj.isNotEmpty()) "Группа: $subj" else "Добавить в группу…", R.drawable.ic_panel) { moreMenu = false; choosingSubject = true }
-                MenuItem("Переименовать", R.drawable.ic_pen) { moreMenu = false; renaming = true }
-                if (ctl.pages.size > 1) {
-                    MenuItem("Удалить текущую страницу", R.drawable.ic_trash) { moreMenu = false; deletePageConfirm = true }
-                }
-                MenuItem("Очистить страницу", R.drawable.ic_eraser) { moreMenu = false; ctl.clearPage() }
-            }
-            DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }, containerColor = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(18.dp)) {
-                MenuItem("Сфотографировать", R.drawable.ic_camera) { addMenu = false; importers.camera() }
-                MenuItem("Фото из галереи", R.drawable.ic_image) { addMenu = false; importers.gallery() }
-                MenuItem("Страницы из PDF", R.drawable.ic_pdf) { addMenu = false; importers.pdf() }
-            }
-        }
-        val mentorAction = if (panel) "Скрыть наставника" else "Показать наставника"
-        BarButton(R.drawable.ic_sparkle, mentorAction, active = panel, onClick = onTogglePanel)
     }
     if (deletePageConfirm) {
         AlertDialog(

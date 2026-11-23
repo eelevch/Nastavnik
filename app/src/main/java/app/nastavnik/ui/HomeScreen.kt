@@ -42,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -120,6 +121,7 @@ fun HomeScreen(resumeTick: Int, go: (String) -> Unit, openNotebook: (Long) -> Un
                     RoundIconButton(R.drawable.ic_tune, "Настройки") { go(MainActivity.SCREEN_SETTINGS) }
                 }
                 InAppUpdateBanner()
+                TabletQuickBar(resumeTick = resumeTick, go = go, openNotebook = openNotebook)
 
                 if (notReady != null) Banner("$notReady — без этого наставник не ответит.", "Настроить") { go(MainActivity.SCREEN_SETTINGS) }
                 // Блоки — из конструктора: порядок и размер правятся кнопкой «Изменить главную».
@@ -168,6 +170,82 @@ private fun SectionHeader(title: String, action: String? = null, onAction: () ->
     }
 }
 
+/** Быстрые действия на главном экране планшета: новая тетрадь, продолжить последнюю, домашка, пары и карточки. */
+@Composable
+private fun TabletQuickBar(resumeTick: Int, go: (String) -> Unit, openNotebook: (Long) -> Unit) {
+    val context = LocalContext.current
+    val nbs = context.app.notebooks
+    val scope = rememberCoroutineScope()
+    val latest by produceState<NotebookMeta?>(null, resumeTick) {
+        value = withContext(Dispatchers.IO) { nbs.store.list().firstOrNull() }
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        QuickBarChip(
+            icon = R.drawable.ic_plus,
+            label = "Новая тетрадь",
+            primary = true,
+            onClick = {
+                scope.launch {
+                    val (m, _) = withContext(Dispatchers.IO) { nbs.store.create(nbs.defaultTitle(), Paper.GRID) }
+                    openNotebook(m.id)
+                }
+            },
+        )
+        latest?.let { nb ->
+            QuickBarChip(
+                icon = R.drawable.ic_pen,
+                label = "Продолжить: ${nb.title}",
+                onClick = { openNotebook(nb.id) },
+            )
+        }
+        QuickBarChip(icon = R.drawable.ic_notebook, label = "Домашка", onClick = { go(MainActivity.SCREEN_HOMEWORK) })
+        QuickBarChip(icon = R.drawable.ic_calendar, label = "Расписание", onClick = { go(MainActivity.SCREEN_SCHEDULE) })
+        QuickBarChip(icon = R.drawable.ic_cards, label = "Карточки", onClick = { go(MainActivity.SCREEN_REVIEW) })
+    }
+}
+
+@Composable
+private fun QuickBarChip(icon: Int, label: String, primary: Boolean = false, onClick: () -> Unit) {
+    val shape = CircleShape
+    Row(
+        Modifier
+            .clip(shape)
+            .then(
+                if (primary) {
+                    Modifier.background(Brush.linearGradient(listOf(Brand.Accent, Brand.Accent.copy(alpha = 0.85f))))
+                } else {
+                    Modifier
+                        .glass(shape, 4.dp, strong = true)
+                        .border(0.8.dp, Brand.Line.copy(alpha = 0.5f), shape)
+                },
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Icon(
+            painterResource(icon),
+            contentDescription = null,
+            tint = if (primary) Brand.OnInk else Brand.Accent,
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (primary) Brand.OnInk else Brand.Ink,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
 /** Тетради: «Новая» и последние — с превью страницы, чтобы сразу продолжить. */
 @Composable
 internal fun NotebooksSection(resumeTick: Int, go: (String) -> Unit, openNotebook: (Long) -> Unit) {
@@ -206,7 +284,7 @@ internal fun NotebooksSection(resumeTick: Int, go: (String) -> Unit, openNoteboo
     }
 }
 
-private val CARD_W = 168.dp
+private val CARD_W = 176.dp
 
 /** Карточка «Новая тетрадь» с быстрым импортом фото и PDF. */
 @Composable
@@ -216,8 +294,8 @@ private fun NewNotebookCard(busy: Boolean, onNew: () -> Unit, onPhoto: () -> Uni
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f / 1.25f)
-                .clip(RoundedCornerShape(20.dp))
-                .background(Brand.Accent)
+                .clip(RoundedCornerShape(22.dp))
+                .background(Brush.linearGradient(listOf(Brand.Accent, Brand.Accent.copy(alpha = 0.82f))))
                 .clickable(onClick = onNew),
             contentAlignment = Alignment.Center,
         ) {
@@ -283,11 +361,12 @@ private fun RecentNotebook(m: NotebookMeta, onOpen: () -> Unit) {
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f / 1.25f)
-                .enter().glass(RoundedCornerShape(20.dp), 8.dp, strong = true)
+                .enter().glass(RoundedCornerShape(22.dp), 8.dp, strong = true)
+                .border(0.8.dp, Brand.Line.copy(alpha = 0.5f), RoundedCornerShape(22.dp))
                 .padding(6.dp)
-                .clip(RoundedCornerShape(15.dp))
+                .clip(RoundedCornerShape(16.dp))
                 .background(Color(PageDrawer.PAPER))
-                .border(0.6.dp, Color(0x1416161A), RoundedCornerShape(15.dp)),
+                .border(0.6.dp, Color(0x1416161A), RoundedCornerShape(16.dp)),
             contentAlignment = Alignment.Center,
         ) {
             val t = thumb
@@ -306,6 +385,22 @@ private fun RecentNotebook(m: NotebookMeta, onOpen: () -> Unit) {
                         .padding(8.dp)
                         .clip(CircleShape)
                         .background(Color(0xFF16161A))
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                )
+            }
+            val subj = m.subject.trim()
+            if (subj.isNotEmpty()) {
+                Text(
+                    subj,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(8.dp)
+                        .clip(CircleShape)
+                        .background(Brand.Accent.copy(alpha = 0.92f))
                         .padding(horizontal = 8.dp, vertical = 3.dp),
                 )
             }

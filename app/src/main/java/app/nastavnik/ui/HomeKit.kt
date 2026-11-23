@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -193,8 +194,14 @@ fun HomeTile(
 ) {
     val src = remember { MutableInteractionSource() }
     Column(
-        modifier.enter().pressable(src).glass(RoundedCornerShape(24.dp), 10.dp)
-            .clickable(src, indication = ripple(), onClick = onClick).padding(14.dp),
+        modifier
+            .heightIn(min = 124.dp)
+            .enter()
+            .pressable(src)
+            .glass(RoundedCornerShape(24.dp), 10.dp)
+            .border(0.8.dp, Brand.Line.copy(alpha = 0.45f), RoundedCornerShape(24.dp))
+            .clickable(src, indication = ripple(), onClick = onClick)
+            .padding(14.dp),
     ) {
         Box(
             Modifier.size(32.dp).clip(CircleShape).background(if (accent) Brand.Accent else Brand.Accent.copy(alpha = 0.12f)),
@@ -238,13 +245,31 @@ fun SectionsGrid(go: (String) -> Unit, columns: Int, items: List<Triple<Int, Str
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 row.forEach { (icon, title, screen) ->
                     val src = remember(screen) { MutableInteractionSource() }
-                    Column(
-                        Modifier.weight(1f).enter().pressable(src).glass(RoundedCornerShape(22.dp), 8.dp)
-                            .clickable(src, indication = ripple()) { go(screen) }.padding(horizontal = 12.dp, vertical = 14.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        IconBadge(icon, 36)
-                        Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val tileMod = Modifier
+                        .weight(1f)
+                        .enter()
+                        .pressable(src)
+                        .glass(RoundedCornerShape(22.dp), 8.dp)
+                        .border(0.8.dp, Brand.Line.copy(alpha = 0.45f), RoundedCornerShape(22.dp))
+                        .clickable(src, indication = ripple()) { go(screen) }
+                        .padding(horizontal = 14.dp, vertical = 14.dp)
+                    if (columns >= 4) {
+                        Row(
+                            tileMod,
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            IconBadge(icon, 36)
+                            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    } else {
+                        Column(
+                            tileMod,
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            IconBadge(icon, 36)
+                            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                     }
                 }
                 repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
@@ -253,10 +278,11 @@ fun SectionsGrid(go: (String) -> Unit, columns: Int, items: List<Triple<Int, Str
     }
 }
 
-/** Разделы планшета для сетки. */
+/** Разделы планшета для сетки (8 пунктов — ровная сетка 4×2). */
 val TABLET_SECTIONS = listOf(
     Triple(R.drawable.ic_calendar, "Расписание", MainActivity.SCREEN_SCHEDULE),
     Triple(R.drawable.ic_chart, "Оценки", MainActivity.SCREEN_GRADES),
+    Triple(R.drawable.ic_notebook, "Домашка", MainActivity.SCREEN_HOMEWORK),
     Triple(R.drawable.ic_target, "Тренировка", MainActivity.SCREEN_TRAINING),
     Triple(R.drawable.ic_chart, "Прогресс", MainActivity.SCREEN_PROGRESS),
     Triple(R.drawable.ic_calendar, "Экзамены", MainActivity.SCREEN_EXAMS),
