@@ -155,6 +155,9 @@ class SettingsRepo(private val context: Context) {
         if (clean.isEmpty()) remove(K_SYSTEM_PROMPT) else putString(K_SYSTEM_PROMPT, clean)
     }
 
+    fun clearChatOnPromptChange(): Boolean = prefs.getBoolean(K_CLEAR_CHAT_ON_PROMPT, true)
+    fun setClearChatOnPromptChange(on: Boolean) = prefs.edit { putBoolean(K_CLEAR_CHAT_ON_PROMPT, on) }
+
     /** Поток настроек: выдаёт текущее значение и каждое изменение. */
     fun flow(): Flow<AppSettings> = callbackFlow {
         trySend(load())
@@ -541,5 +544,6 @@ class SettingsRepo(private val context: Context) {
         private const val K_TG_BOT_TOKEN = "tg_bot_token"
         private const val K_TG_CHAT_ID = "tg_chat_id"
         private const val K_SYSTEM_PROMPT = "custom_system_prompt"
+        private const val K_CLEAR_CHAT_ON_PROMPT = "clear_chat_on_prompt_change"
     }
 }

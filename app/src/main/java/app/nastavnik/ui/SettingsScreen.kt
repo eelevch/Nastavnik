@@ -32,8 +32,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -176,8 +178,27 @@ fun SettingsScreen(onBack: () -> Unit, onAppearance: () -> Unit = {}, onOnboardi
 
 @Composable
 private fun SystemPromptSection(current: String, onSave: (String) -> Unit) {
+    val context = LocalContext.current
+    val settingsRepo = context.app.settings
+    val scope = rememberCoroutineScope()
     val isCustom = current.isNotBlank()
     var editing by remember { mutableStateOf(false) }
+    var clearOnChange by remember { mutableStateOf(settingsRepo.clearChatOnPromptChange()) }
+    var confirmClear by remember { mutableStateOf(false) }
+    var clearedHint by remember { mutableStateOf(false) }
+
+    fun savePrompt(next: String) {
+        val normalized = next.trim()
+        val changed = normalized != current.trim()
+        onSave(normalized)
+        if (changed && clearOnChange) {
+            scope.launch {
+                context.app.clearChatHistory()
+                clearedHint = true
+            }
+        }
+    }
+
     SectionCard("Системный промт") {
         FieldLabel(
             "Промт наставника",
@@ -188,9 +209,34 @@ private fun SystemPromptSection(current: String, onSave: (String) -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            SoftButton(if (isCustom) "Изменить промт" else "Настроить промт") { editing = true }
+            SoftButton(if (isCustom) "Изменить промт" else "Настроить промт") {
+                clearedHint = false
+                editing = true
+            }
             if (isCustom) {
-                LinkText("Сбросить") { onSave("") }
+                LinkText("Сбросить") { savePrompt("") }
+            }
+        }
+        HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                FieldLabel(
+                    "Очищать историю чатов при смене промта",
+                    "Удаляет прошлые диалоги, чтобы наставник сразу отвечал по новым правилам.",
+                )
+            }
+            AppSwitch(clearOnChange) {
+                clearOnChange = it
+                settingsRepo.setClearChatOnPromptChange(it)
+            }
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SoftButton("Очистить историю чатов", icon = R.drawable.ic_trash) { confirmClear = true }
+            if (clearedHint) {
+                Text("История очищена", style = MaterialTheme.typography.labelMedium, color = Brand.Ok)
             }
         }
     }
@@ -228,14 +274,38 @@ private fun SystemPromptSection(current: String, onSave: (String) -> Unit) {
                 InkButton("Сохранить") {
                     val trimmed = draft.trim()
                     if (trimmed.isEmpty() || trimmed == Prompts.DEFAULT_MENTOR_TEMPLATE.trim()) {
-                        onSave("")
+                        savePrompt("")
                     } else {
-                        onSave(trimmed)
+                        savePrompt(trimmed)
                     }
                     editing = false
                 }
             },
             dismissButton = { SoftButton("Отмена") { editing = false } },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(24.dp),
+        )
+    }
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Очистить историю чатов?") },
+            text = {
+                Text(
+                    "Все прошлые диалоги с наставником будут удалены. Конспекты и тетради останутся.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            confirmButton = {
+                InkButton("Очистить", danger = true) {
+                    confirmClear = false
+                    scope.launch {
+                        context.app.clearChatHistory()
+                        clearedHint = true
+                    }
+                }
+            },
+            dismissButton = { SoftButton("Отмена") { confirmClear = false } },
             containerColor = MaterialTheme.colorScheme.surface,
             shape = RoundedCornerShape(24.dp),
         )

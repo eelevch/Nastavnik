@@ -141,6 +141,9 @@ interface ConversationDao {
     @Query("DELETE FROM conversations WHERE id = :id")
     suspend fun delete(id: Long)
 
+    @Query("DELETE FROM conversations")
+    suspend fun deleteAll()
+
     @Query(
         "SELECT c.id, c.title, c.subject, c.updated_at, " +
             "(SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count " +
@@ -162,6 +165,9 @@ interface MessageDao {
 
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun delete(id: Long)
+
+    @Query("DELETE FROM messages")
+    suspend fun deleteAll()
 
     @Query("SELECT * FROM messages WHERE conversation_id = :conversationId ORDER BY id")
     suspend fun forConversation(conversationId: Long): List<Message>
