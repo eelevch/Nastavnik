@@ -107,32 +107,55 @@ fun MascotIcon(
             }
         }
 
-        // 2. Основная сфера-голова бота (контрастная к фону темы)
+        // 2. Задняя часть орбиты (за сферой бота — создаёт настоящий 3D-объём)
+        val idleTilt = sin(idlePhase * 2f * Math.PI).toFloat() * 5f
+        val ringAngle = when {
+            thinking -> -32f + sin(thinkPhase * 2f * Math.PI).toFloat() * 4f
+            speaking -> -32f + wavePhase * 10f
+            writing -> -28f + wavePhase * 7f
+            else -> -32f + idleTilt
+        }
+        val ringTopLeft = Offset(cx - r * 1.32f, cy - r * 0.44f)
+        val ringSize = Size(r * 2.64f, r * 0.88f)
+        val ringStroke = Stroke(width = (r * 0.16f).coerceAtLeast(1.8f), cap = StrokeCap.Round)
+
+        rotate(degrees = ringAngle, pivot = Offset(cx, cy)) {
+            // Задняя дуга кольца (проходит за головой бота)
+            drawArc(
+                color = ringBlue.copy(alpha = if (thinking) 0.35f else 0.45f),
+                startAngle = 180f,
+                sweepAngle = 180f,
+                useCenter = false,
+                topLeft = ringTopLeft,
+                size = ringSize,
+                style = ringStroke,
+            )
+            // Бегущая световая дуга при размышлении — когда она на задней полуорбите
+            if (thinking) {
+                val headDeg = (thinkPhase * 360f) % 360f
+                val tailLen = 95f
+                val backStart = maxOf(180f, headDeg - tailLen)
+                val backEnd = minOf(360f, headDeg)
+                if (backEnd > backStart) {
+                    drawArc(
+                        color = ringBlue,
+                        startAngle = backStart,
+                        sweepAngle = backEnd - backStart,
+                        useCenter = false,
+                        topLeft = ringTopLeft,
+                        size = ringSize,
+                        style = Stroke(width = (r * 0.20f).coerceAtLeast(2.2f), cap = StrokeCap.Round),
+                    )
+                }
+            }
+        }
+
+        // 3. Основная сфера-голова бота (контрастная к фону темы)
         drawCircle(
             color = ink,
             radius = r,
             center = Offset(cx, cy),
         )
-
-        // 3. Фирменное диагональное СИНЕЕ орбитальное кольцо (постоянно в движении)
-        val idleTilt = sin(idlePhase * 2f * Math.PI).toFloat() * 7f
-        val ringAngle = when {
-            thinking -> -32f + thinkPhase * 360f
-            speaking -> -32f + wavePhase * 14f
-            writing -> -28f + wavePhase * 9f
-            else -> -32f + idleTilt
-        }
-        rotate(degrees = ringAngle, pivot = Offset(cx, cy)) {
-            drawArc(
-                color = ringBlue,
-                startAngle = -155f,
-                sweepAngle = 205f,
-                useCenter = false,
-                topLeft = Offset(cx - r * 1.32f, cy - r * 0.44f),
-                size = Size(r * 2.64f, r * 0.88f),
-                style = Stroke(width = (r * 0.17f).coerceAtLeast(1.8f), cap = StrokeCap.Round),
-            )
-        }
 
         // 4. Выразительные глаза-визор
         val eyeY = cy - r * 0.06f
@@ -175,8 +198,8 @@ fun MascotIcon(
             }
 
             thinking -> {
-                // Задумчивый взгляд — плавно переводит глаза без стилуса
-                val lookX = sin(thinkPhase * 2f * Math.PI).toFloat() * r * 0.12f
+                // Задумчивый взгляд — плавно следит за бегущим импульсом по орбите
+                val lookX = kotlin.math.cos(thinkPhase * 2f * Math.PI).toFloat() * r * 0.12f
                 val lookY = -r * 0.04f
                 for (sign in listOf(-1f, 1f)) {
                     val ex = cx + sign * eyeOffX + lookX
@@ -215,6 +238,54 @@ fun MascotIcon(
                         topLeft = Offset(ex - eyeW * 0.5f, eyeY - h * 0.5f),
                         size = Size(eyeW, h),
                         cornerRadius = CornerRadius(eyeW * 0.5f, eyeW * 0.5f),
+                    )
+                }
+            }
+        }
+
+        // 5. Передняя часть СИНЕГО орбитального кольца (проходит спереди сферы — эффект 3D!)
+        rotate(degrees = ringAngle, pivot = Offset(cx, cy)) {
+            drawArc(
+                color = if (thinking) ringBlue.copy(alpha = 0.45f) else ringBlue,
+                startAngle = 0f,
+                sweepAngle = 180f,
+                useCenter = false,
+                topLeft = ringTopLeft,
+                size = ringSize,
+                style = ringStroke,
+            )
+            // Бегущая яркая комета по передней полуорбите, когда бот думает
+            if (thinking) {
+                val headDeg = (thinkPhase * 360f) % 360f
+                val tailLen = 95f
+                // Учитываем переход через 0°/360°
+                val segs = if (headDeg < tailLen) {
+                    listOf(0f to headDeg)
+                } else {
+                    val s = maxOf(0f, headDeg - tailLen)
+                    val e = minOf(180f, headDeg)
+                    if (e > s) listOf(s to e) else emptyList()
+                }
+                for ((s, e) in segs) {
+                    drawArc(
+                        color = ringBlue,
+                        startAngle = s,
+                        sweepAngle = e - s,
+                        useCenter = false,
+                        topLeft = ringTopLeft,
+                        size = ringSize,
+                        style = Stroke(width = (r * 0.21f).coerceAtLeast(2.3f), cap = StrokeCap.Round),
+                    )
+                }
+                // Яркая светящаяся искра-точка на передней полуорбите
+                if (headDeg in 0f..180f) {
+                    val rad = Math.toRadians(headDeg.toDouble())
+                    val dotX = cx + r * 1.32f * kotlin.math.cos(rad).toFloat()
+                    val dotY = cy + r * 0.44f * sin(rad).toFloat()
+                    drawCircle(
+                        color = Color(0xFF93C5FD),
+                        radius = (r * 0.16f).coerceAtLeast(2f),
+                        center = Offset(dotX, dotY),
                     )
                 }
             }
