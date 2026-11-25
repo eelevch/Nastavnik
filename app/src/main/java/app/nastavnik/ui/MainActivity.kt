@@ -220,6 +220,7 @@ class MainActivity : ComponentActivity() {
                             tab = tabletTab,
                             onTab = { tabletTab = it },
                             tabBarPosition = TabBarPosition.forTablet(st.tabletTabBar),
+                            sideCapsuleBias = st.sideCapsuleBias,
                             resumeTick = resumeTick,
                             go = go,
                             openNotebook = openNotebook,
@@ -228,7 +229,6 @@ class MainActivity : ComponentActivity() {
                             onTab = { phoneTab = it },
                             tabBarPosition = TabBarPosition.forPhone(st.phoneTabBar),
                             sideCapsuleBias = st.sideCapsuleBias,
-                            onSideCapsuleBiasChange = { app.settings.setSideCapsuleBias(it) },
                             resumeTick = resumeTick,
                             go = go,
                         )

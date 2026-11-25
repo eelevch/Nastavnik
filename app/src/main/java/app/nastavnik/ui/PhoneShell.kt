@@ -32,7 +32,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -45,7 +44,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
@@ -56,7 +54,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Brush
@@ -111,20 +108,20 @@ fun PhoneShell(
     onTab: (PhoneTab) -> Unit,
     tabBarPosition: TabBarPosition = TabBarPosition.BOTTOM,
     sideCapsuleBias: Float = 0.78f,
-    onSideCapsuleBiasChange: (Float) -> Unit = {},
     resumeTick: Int,
     go: (String) -> Unit,
 ) {
     val context = LocalContext.current
-    val density = LocalDensity.current
     val isWeak = remember(context) { app.nastavnik.data.DeviceProfile.isWeakDevice(context) }
     val useRealBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !isWeak && tabBarPosition == TabBarPosition.BOTTOM
     val contentLayer = rememberGraphicsLayer()
     var rootHeightPx by remember { mutableIntStateOf(0) }
-    var sideAreaHeightPx by remember { mutableFloatStateOf(0f) }
-    var currentBias by remember(sideCapsuleBias) { mutableFloatStateOf(sideCapsuleBias.coerceIn(0.15f, 0.90f)) }
 
-    val bottomInset = if (tabBarPosition == TabBarPosition.BOTTOM_CAPSULE) 88.dp else 84.dp
+    val bottomInset = when (tabBarPosition) {
+        TabBarPosition.BOTTOM -> 84.dp
+        TabBarPosition.BOTTOM_CAPSULE -> 88.dp
+        TabBarPosition.LEFT, TabBarPosition.RIGHT -> 24.dp
+    }
     val capsuleItems = PhoneTab.entries.map { entry ->
         CapsuleTabItem(
             title = entry.title,
@@ -185,34 +182,12 @@ fun PhoneShell(
                 items = capsuleItems,
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
-            TabBarPosition.LEFT, TabBarPosition.RIGHT -> {
-                val isRight = tabBarPosition == TabBarPosition.RIGHT
-                val vPadPx = with(density) { 32.dp.toPx() }
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .systemBarsPadding()
-                        .padding(horizontal = 10.dp, vertical = 16.dp)
-                        .onSizeChanged { sideAreaHeightPx = it.height.toFloat() },
-                ) {
-                    PhoneSideCapsule(
-                        items = capsuleItems,
-                        sideBias = currentBias,
-                        containerHeightPx = sideAreaHeightPx,
-                        verticalPaddingPx = vPadPx,
-                        onBiasCommit = { updated ->
-                            currentBias = updated
-                            onSideCapsuleBiasChange(updated)
-                        },
-                        modifier = Modifier.align(
-                            BiasAlignment(
-                                horizontalBias = if (isRight) 1f else -1f,
-                                verticalBias = (currentBias * 2f - 1f).coerceIn(-0.7f, 0.8f),
-                            ),
-                        ),
-                    )
-                }
-            }
+            TabBarPosition.LEFT, TabBarPosition.RIGHT -> EdgeBezelCapsule(
+                items = capsuleItems,
+                isRight = tabBarPosition == TabBarPosition.RIGHT,
+                verticalBias = sideCapsuleBias,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
     }
 }

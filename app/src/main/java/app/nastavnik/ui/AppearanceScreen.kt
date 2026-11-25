@@ -190,12 +190,12 @@ fun TabBarSettingsCard(
     repo: SettingsRepo,
     onChanged: () -> Unit = {},
 ) {
-    SectionCard("Панель вкладок (капсула)") {
+    SectionCard("Панель вкладок (вылазка с края)") {
+        val current = if (tablet) TabBarPosition.forTablet(s.tabletTabBar) else TabBarPosition.forPhone(s.phoneTabBar)
         if (tablet) {
-            val current = TabBarPosition.forTablet(s.tabletTabBar)
             FieldLabel(
-                "Расположение на планшете",
-                "Плотная плавающая капсула с живым перетеканием вкладки — слева или справа.",
+                "Сторона на планшете",
+                "Зажми у края экрана — появится вылазка со всеми вкладками; веди вверх и вниз для выбора, отпусти — скроется.",
             )
             Segmented(
                 listOf(
@@ -208,10 +208,9 @@ fun TabBarSettingsCard(
                 onChanged()
             }
         } else {
-            val current = TabBarPosition.forPhone(s.phoneTabBar)
             FieldLabel(
                 "Стиль и сторона на телефоне",
-                "Компактная плавающая капсула снизу или сбоку (переключение проведением пальца, удержание — сдвиг по высоте).",
+                "Зажми у края экрана — появится вылазка со всеми вкладками; веди вверх и вниз для выбора, отпусти — скроется.",
             )
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Segmented(
@@ -226,8 +225,8 @@ fun TabBarSettingsCard(
                 }
                 Segmented(
                     listOf(
-                        TabBarPosition.LEFT to "Сбоку слева",
-                        TabBarPosition.RIGHT to "Сбоку справа",
+                        TabBarPosition.LEFT to "Вылазка слева",
+                        TabBarPosition.RIGHT to "Вылазка справа",
                     ),
                     current,
                 ) {
@@ -235,6 +234,18 @@ fun TabBarSettingsCard(
                     onChanged()
                 }
             }
+        }
+        if (tablet || current.isSide()) {
+            FieldLabel("Высота язычка у края")
+            AppSlider(
+                value = s.sideCapsuleBias.coerceIn(0.20f, 0.85f),
+                onValueChange = {
+                    repo.setSideCapsuleBias(it)
+                    onChanged()
+                },
+                onValueChangeFinished = {},
+                valueRange = 0.20f..0.85f,
+            )
         }
     }
 }
