@@ -46,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -57,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -68,6 +70,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -126,6 +129,7 @@ fun TabletShell(
     onTab: (TabletTab) -> Unit,
     tabBarPosition: TabBarPosition,
     sideCapsuleBias: Float = 0.55f,
+    showSideCapsuleLabels: Boolean = true,
     resumeTick: Int,
     go: (String) -> Unit,
     openNotebook: (Long) -> Unit,
@@ -173,7 +177,9 @@ fun TabletShell(
 
         EdgeBezelCapsule(
             items = railItems,
-            isRight = side == TabBarPosition.RIGHT,
+            enableLeft = side.hasLeftEdge(),
+            enableRight = side.hasRightEdge(),
+            showLabels = showSideCapsuleLabels,
             verticalBias = sideCapsuleBias,
             modifier = Modifier.fillMaxSize(),
         )
@@ -181,25 +187,32 @@ fun TabletShell(
 }
 
 /**
- * Единая моментная «вылазка» вкладок с края экрана в стиле iPhone Camera Control:
- * в покое — деликатный 5 dp бортик у рамки, при зажатии выезжает чёрная капсульная вылазка
- * со всеми вкладками и управлением вверх/вниз; как только палец отпускается — плавно скрывается.
+ * Единая моментная «вылазка» вкладок с края экрана (слева, справа или с двух сторон):
+ * в покое — деликатный штрих по всему активному краю, при зажатии на любой высоте плавно выезжает
+ * чёрная вылазка, а при отпускании содержимое клиппированно уезжает обратно в рамку экрана.
  */
 @Composable
 fun EdgeBezelCapsule(
     items: List<CapsuleTabItem>,
-    isRight: Boolean,
+    enableLeft: Boolean,
+    enableRight: Boolean,
+    showLabels: Boolean = true,
     verticalBias: Float = 0.55f,
     modifier: Modifier = Modifier,
 ) {
+    if (!enableLeft && !enableRight) return
+
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
     val currentItems by rememberUpdatedState(items)
     val selectedIndex = items.indexOfFirst { it.isSelected }.coerceAtLeast(0)
     val currentSelectedIndex by rememberUpdatedState(selectedIndex)
 
-    val bulgeW = 196.dp
+    val bulgeW = if (showLabels) 196.dp else 104.dp
+    val maxBodyW = if (showLabels) 180.dp else 86.dp
+    val innerW = if (showLabels) 148.dp else 46.dp
     val bulgeH = 284.dp
+    val maxBodyH = 216.dp
     val bulgeHpx = with(density) { bulgeH.toPx() }
     val halfBulgePx = bulgeHpx * 0.5f
 
@@ -207,6 +220,7 @@ fun EdgeBezelCapsule(
     var anchorY by remember { mutableFloatStateOf(0f) }
     var hasCustomAnchor by remember { mutableStateOf(false) }
     var isPressed by remember { mutableStateOf(false) }
+    var activeIsRight by remember { mutableStateOf(enableRight && !enableLeft) }
     var previewIndex by remember { mutableIntStateOf(selectedIndex) }
     var settledIndex by remember { mutableIntStateOf(selectedIndex) }
     var analogSlot by remember { mutableFloatStateOf(selectedIndex.toFloat()) }
@@ -214,9 +228,9 @@ fun EdgeBezelCapsule(
     val expandProgress by animateFloatAsState(
         targetValue = if (isPressed) 1f else 0f,
         animationSpec = if (isPressed) {
-            spring(dampingRatio = 0.82f, stiffness = 580f, visibilityThreshold = 0.002f)
+            spring(dampingRatio = 0.86f, stiffness = 520f, visibilityThreshold = 0.002f)
         } else {
-            spring(dampingRatio = 1.0f, stiffness = 1450f, visibilityThreshold = 0.004f)
+            spring(dampingRatio = 1.0f, stiffness = 920f, visibilityThreshold = 0.003f)
         },
         label = "bezelExpand",
     )
@@ -229,6 +243,16 @@ fun EdgeBezelCapsule(
         }
     }
 
+    LaunchedEffect(enableLeft, enableRight, isPressed, expandProgress < 0.02f) {
+        if (!isPressed && expandProgress < 0.02f) {
+            if (activeIsRight && !enableRight && enableLeft) {
+                activeIsRight = false
+            } else if (!activeIsRight && !enableLeft && enableRight) {
+                activeIsRight = true
+            }
+        }
+    }
+
     val defaultAnchorY = if (containerHeightPx > 0f) {
         (containerHeightPx * verticalBias.coerceIn(0.18f, 0.82f))
             .coerceIn(halfBulgePx, (containerHeightPx - halfBulgePx).coerceAtLeast(halfBulgePx))
@@ -236,15 +260,17 @@ fun EdgeBezelCapsule(
         0f
     }
     val targetAnchorY = if (hasCustomAnchor) anchorY else defaultAnchorY
-    val smoothAnchorY by animateFloatAsState(
-        targetValue = targetAnchorY,
-        animationSpec = if (expandProgress < 0.03f) {
-            snap()
-        } else {
-            spring(dampingRatio = 0.92f, stiffness = 280f)
-        },
-        label = "bezelAnchorY",
-    )
+    val smoothAnchorY by key(activeIsRight) {
+        animateFloatAsState(
+            targetValue = targetAnchorY,
+            animationSpec = if (expandProgress < 0.03f) {
+                snap()
+            } else {
+                spring(dampingRatio = 0.92f, stiffness = 280f)
+            },
+            label = "bezelAnchorY",
+        )
+    }
 
     val maxIdx = (items.size - 1).coerceAtLeast(0)
     val smoothSlot by animateFloatAsState(
@@ -271,7 +297,7 @@ fun EdgeBezelCapsule(
     Box(modifier.fillMaxSize()) {
         if (expandProgress > 0.008f) {
             val pClamped = expandProgress.coerceIn(0f, 1f)
-            val scrimCurve = if (isPressed) pClamped else pClamped.pow(1.7f)
+            val scrimCurve = if (isPressed) pClamped else pClamped.pow(1.45f)
             val scrimAlpha = (if (isDark) 0.28f else 0.10f) * scrimCurve
             Box(
                 Modifier
@@ -286,163 +312,151 @@ fun EdgeBezelCapsule(
                 .systemBarsPadding()
                 .onSizeChanged { containerHeightPx = it.height.toFloat() },
         ) {
-            // Деликатный намёк вдоль всего активного края экрана в состоянии покоя.
-            val idleStripAlpha = ((1f - expandProgress * 3.2f).coerceIn(0f, 1f)) * 0.55f
+            // Деликатный намёк вдоль активных краёв экрана в состоянии покоя.
+            val idleStripAlpha = ((1f - expandProgress * 3.0f).coerceIn(0f, 1f)) * 0.55f
             if (idleStripAlpha > 0.01f) {
-                Canvas(
-                    Modifier
-                        .align(if (isRight) Alignment.CenterEnd else Alignment.CenterStart)
-                        .fillMaxHeight(0.76f)
-                        .width(4.dp),
-                ) {
-                    val lineW = 2.dp.toPx()
-                    val x = if (isRight) size.width - lineW - 0.5.dp.toPx() else 0.5.dp.toPx()
-                    val brush = Brush.verticalGradient(
-                        0.00f to Color.Transparent,
-                        0.15f to accentColor.copy(alpha = idleStripAlpha * 0.65f),
-                        0.50f to accentColor.copy(alpha = idleStripAlpha),
-                        0.85f to accentColor.copy(alpha = idleStripAlpha * 0.65f),
-                        1.00f to Color.Transparent,
+                if (enableLeft) {
+                    IdleEdgeWhisper(
+                        isRight = false,
+                        accentColor = accentColor,
+                        idleStripAlpha = idleStripAlpha,
                     )
-                    drawRoundRect(
-                        brush = brush,
-                        topLeft = Offset(x, 0f),
-                        size = Size(lineW, size.height),
-                        cornerRadius = CornerRadius(lineW * 0.5f, lineW * 0.5f),
+                }
+                if (enableRight) {
+                    IdleEdgeWhisper(
+                        isRight = true,
+                        accentColor = accentColor,
+                        idleStripAlpha = idleStripAlpha,
                     )
                 }
             }
 
-            // Органическая вылазка от рамки экрана, всплывающая на высоте нажатия пальца.
-            if (expandProgress > 0.004f) {
+            // Органическая вылазка от рамки экрана: клиппируем содержимое по контуру капли и двигаем синхронно со стенкой.
+            if (expandProgress > 0.003f) {
                 val bulgeTopPx = (smoothAnchorY - halfBulgePx).roundToInt()
                 val isClosing = !isPressed
+                val p = expandProgress.coerceIn(0f, 1f)
+                val widthProgress = if (isClosing) {
+                    p.pow(1.22f)
+                } else {
+                    1f - (1f - p).pow(1.35f)
+                }
+                val heightProgress = sin(p * (PI.toFloat() * 0.5f))
+                    .pow(if (isClosing) 0.78f else 0.90f)
+                val tensionWave = sin(p * PI.toFloat())
+
                 Box(
                     Modifier
-                        .align(if (isRight) Alignment.TopEnd else Alignment.TopStart)
+                        .align(if (activeIsRight) Alignment.TopEnd else Alignment.TopStart)
                         .offset { IntOffset(0, bulgeTopPx) }
-                        .size(width = bulgeW, height = bulgeH),
-                ) {
-                    Canvas(Modifier.fillMaxSize()) {
-                        val p = expandProgress.coerceIn(0f, 1f)
-                        val widthProgress = if (isClosing) {
-                            p.pow(1.48f)
-                        } else {
-                            1f - (1f - p).pow(1.25f)
-                        }
-                        val heightProgress = if (isClosing) {
-                            sin(p * (PI.toFloat() * 0.5f)).pow(0.72f)
-                        } else {
-                            sin(p * (PI.toFloat() * 0.5f))
-                        }
-                        val tensionWave = sin(p * PI.toFloat())
-                        val bodyW = lerp(0f, 180.dp.toPx(), widthProgress)
-                        val bodyH = lerp(32.dp.toPx(), 216.dp.toPx(), heightProgress)
-                        val shoulder = lerp(8.dp.toPx(), 32.dp.toPx(), heightProgress) +
-                            tensionWave * (if (isClosing) 10.dp.toPx() else 4.dp.toPx())
-                        val cornerR = lerp(2.dp.toPx(), 26.dp.toPx(), widthProgress)
-                            .coerceAtMost(bodyW * 0.85f)
-                            .coerceAtMost(bodyH * 0.45f)
+                        .size(width = bulgeW, height = bulgeH)
+                        .drawWithContent {
+                            val bodyW = lerp(0f, maxBodyW.toPx(), widthProgress)
+                            val bodyH = lerp(44.dp.toPx(), maxBodyH.toPx(), heightProgress)
+                            val shoulder = lerp(8.dp.toPx(), 32.dp.toPx(), heightProgress) +
+                                tensionWave * (if (isClosing) 10.dp.toPx() else 4.dp.toPx())
+                            val cornerR = lerp(2.dp.toPx(), 26.dp.toPx(), widthProgress)
+                                .coerceAtMost(bodyW * 0.85f)
+                                .coerceAtMost(bodyH * 0.45f)
 
-                        if (bodyW > 0.5f) {
-                            drawBezelBulgePath(
-                                path = bulgePath,
-                                isRight = isRight,
-                                bodyW = bodyW,
-                                bodyH = bodyH,
-                                shoulder = shoulder,
-                                cornerR = cornerR,
-                            )
-
-                            drawPath(path = bulgePath, color = BezelObsidian)
-
-                            if (widthProgress > 0.04f) {
-                                val rimAlpha = (if (isDark) 0.20f else 0.14f) * widthProgress
-                                drawPath(
+                            if (bodyW > 0.5f) {
+                                drawBezelBulgePath(
                                     path = bulgePath,
-                                    color = Color.White.copy(alpha = rimAlpha),
-                                    style = Stroke(width = 1.dp.toPx()),
+                                    isRight = activeIsRight,
+                                    bodyW = bodyW,
+                                    bodyH = bodyH,
+                                    shoulder = shoulder,
+                                    cornerR = cornerR,
+                                )
+
+                                drawPath(path = bulgePath, color = BezelObsidian)
+
+                                clipPath(bulgePath) {
+                                    this@drawWithContent.drawContent()
+                                }
+
+                                if (widthProgress > 0.04f) {
+                                    val rimAlpha = (if (isDark) 0.20f else 0.14f) * widthProgress
+                                    drawPath(
+                                        path = bulgePath,
+                                        color = Color.White.copy(alpha = rimAlpha),
+                                        style = Stroke(width = 1.dp.toPx()),
+                                    )
+                                }
+                            }
+
+                            // Акцентный световой импульс «запечатывания» в рамку при отпускании.
+                            if (isClosing && p in 0.015f..0.60f) {
+                                val gleamPhase = ((p - 0.015f) / (0.60f - 0.015f)).coerceIn(0f, 1f)
+                                val gleamIntensity = sin(gleamPhase * PI.toFloat()).coerceIn(0f, 1f)
+                                val itemFraction = if (items.isNotEmpty()) {
+                                    ((settledIndex + 0.5f) / items.size.toFloat()).coerceIn(0.12f, 0.88f)
+                                } else {
+                                    0.5f
+                                }
+                                val gleamCenterY = size.height * 0.5f - bodyH * 0.44f + bodyH * 0.88f * itemFraction
+                                val gleamH = 44.dp.toPx() * (0.7f + 0.5f * gleamIntensity)
+                                val gleamTop = (gleamCenterY - gleamH * 0.5f).coerceIn(0f, size.height)
+                                val gleamBottom = (gleamCenterY + gleamH * 0.5f).coerceIn(gleamTop, size.height)
+                                val gleamW = lerp(2.dp.toPx(), 3.5.dp.toPx(), gleamIntensity)
+                                val gleamX = if (activeIsRight) size.width - gleamW else 0f
+                                val gleamBrush = Brush.verticalGradient(
+                                    0.0f to Color.Transparent,
+                                    0.5f to accentColor.copy(alpha = 0.92f * gleamIntensity),
+                                    1.0f to Color.Transparent,
+                                    startY = gleamTop,
+                                    endY = gleamBottom,
+                                )
+                                drawRoundRect(
+                                    brush = gleamBrush,
+                                    topLeft = Offset(gleamX, gleamTop),
+                                    size = Size(gleamW, (gleamBottom - gleamTop).coerceAtLeast(1f)),
+                                    cornerRadius = CornerRadius(gleamW * 0.5f, gleamW * 0.5f),
                                 )
                             }
-                        }
 
-                        // Акцентный световой импульс «запечатывания» в рамку при отпускании.
-                        if (isClosing && p in 0.015f..0.60f) {
-                            val gleamPhase = ((p - 0.015f) / (0.60f - 0.015f)).coerceIn(0f, 1f)
-                            val gleamIntensity = sin(gleamPhase * PI.toFloat()).coerceIn(0f, 1f)
-                            val itemFraction = if (items.isNotEmpty()) {
-                                ((settledIndex + 0.5f) / items.size.toFloat()).coerceIn(0.12f, 0.88f)
-                            } else {
-                                0.5f
+                            // Тонкие тактильные риски вдоль активного края, как на диске управления iPhone.
+                            val dialThreshold = if (isClosing) 0.36f else 0.20f
+                            if (p > dialThreshold && items.size > 1) {
+                                val dialAlpha = ((p - dialThreshold) / (1f - dialThreshold).coerceAtLeast(0.2f))
+                                    .coerceIn(0f, 1f)
+                                val spanTop = size.height * 0.5f - bodyH * 0.40f
+                                val spanH = bodyH * 0.80f
+                                val xEdge = if (activeIsRight) size.width else 0f
+                                val dir = if (activeIsRight) -1f else 1f
+                                val tickInset = 4.dp.toPx()
+                                val totalTicks = 13
+                                for (i in 0 until totalTicks) {
+                                    val tNorm = i.toFloat() / (totalTicks - 1)
+                                    val y = spanTop + tNorm * spanH
+                                    val slotPos = tNorm * (items.size - 1)
+                                    val isMajor = i % 4 == 0
+                                    val dist = abs(slotPos - smoothSlot)
+                                    val focus = (1f - dist).coerceIn(0f, 1f)
+                                    val len = (if (isMajor) 7.dp else 4.dp).toPx() + focus * 2.dp.toPx()
+                                    val baseAlpha = (if (isMajor) 0.42f else 0.18f) * dialAlpha
+                                    val color = lerp(
+                                        Color.White.copy(alpha = baseAlpha),
+                                        accentColor.copy(alpha = dialAlpha),
+                                        focus,
+                                    )
+                                    drawLine(
+                                        color = color,
+                                        start = Offset(xEdge + dir * tickInset, y),
+                                        end = Offset(xEdge + dir * (tickInset + len), y),
+                                        strokeWidth = (if (isMajor) 1.5.dp else 1.dp).toPx(),
+                                        cap = StrokeCap.Round,
+                                    )
+                                }
                             }
-                            val gleamCenterY = size.height * 0.5f - bodyH * 0.44f + bodyH * 0.88f * itemFraction
-                            val gleamH = 44.dp.toPx() * (0.7f + 0.5f * gleamIntensity)
-                            val gleamTop = (gleamCenterY - gleamH * 0.5f).coerceIn(0f, size.height)
-                            val gleamBottom = (gleamCenterY + gleamH * 0.5f).coerceIn(gleamTop, size.height)
-                            val gleamW = lerp(2.dp.toPx(), 3.5.dp.toPx(), gleamIntensity)
-                            val gleamX = if (isRight) size.width - gleamW else 0f
-                            val gleamBrush = Brush.verticalGradient(
-                                0.0f to Color.Transparent,
-                                0.5f to accentColor.copy(alpha = 0.92f * gleamIntensity),
-                                1.0f to Color.Transparent,
-                                startY = gleamTop,
-                                endY = gleamBottom,
-                            )
-                            drawRoundRect(
-                                brush = gleamBrush,
-                                topLeft = Offset(gleamX, gleamTop),
-                                size = Size(gleamW, (gleamBottom - gleamTop).coerceAtLeast(1f)),
-                                cornerRadius = CornerRadius(gleamW * 0.5f, gleamW * 0.5f),
-                            )
-                        }
-
-                        // Тонкие тактильные риски вдоль края, как на диске управления iPhone.
-                        val dialThreshold = if (isClosing) 0.36f else 0.22f
-                        if (p > dialThreshold && items.size > 1) {
-                            val dialAlpha = ((p - dialThreshold) / (1f - dialThreshold).coerceAtLeast(0.2f))
-                                .coerceIn(0f, 1f)
-                            val spanTop = size.height * 0.5f - bodyH * 0.40f
-                            val spanH = bodyH * 0.80f
-                            val xEdge = if (isRight) size.width else 0f
-                            val dir = if (isRight) -1f else 1f
-                            val tickInset = 4.dp.toPx()
-                            val totalTicks = 13
-                            for (i in 0 until totalTicks) {
-                                val tNorm = i.toFloat() / (totalTicks - 1)
-                                val y = spanTop + tNorm * spanH
-                                val slotPos = tNorm * (items.size - 1)
-                                val isMajor = i % 4 == 0
-                                val dist = abs(slotPos - smoothSlot)
-                                val focus = (1f - dist).coerceIn(0f, 1f)
-                                val len = (if (isMajor) 7.dp else 4.dp).toPx() + focus * 2.dp.toPx()
-                                val baseAlpha = (if (isMajor) 0.42f else 0.18f) * dialAlpha
-                                val color = lerp(
-                                    Color.White.copy(alpha = baseAlpha),
-                                    accentColor.copy(alpha = dialAlpha),
-                                    focus,
-                                )
-                                drawLine(
-                                    color = color,
-                                    start = Offset(xEdge + dir * tickInset, y),
-                                    end = Offset(xEdge + dir * (tickInset + len), y),
-                                    strokeWidth = (if (isMajor) 1.5.dp else 1.dp).toPx(),
-                                    cap = StrokeCap.Round,
-                                )
-                            }
-                        }
-                    }
-
-                    // Контейнер вкладок внутри вылазки с плавающей плашкой выбора.
-                    val contentProgress = if (isClosing) {
-                        ((expandProgress - 0.34f) / 0.66f).coerceIn(0f, 1f)
-                    } else {
-                        ((expandProgress - 0.14f) / 0.62f).coerceIn(0f, 1f)
-                    }
-                    val easedContent = contentProgress * contentProgress * (3f - 2f * contentProgress)
-                    if (easedContent > 0.01f) {
-                        val shiftPx = with(density) {
-                            (1f - easedContent) * (if (isClosing) 38.dp else 26.dp).toPx() * (if (isRight) 1f else -1f)
-                        }
+                        },
+                ) {
+                    // Внутренний список вкладок двигается синхронно со стенкой капли.
+                    val contentAlpha = ((p - 0.08f) / 0.55f).coerceIn(0f, 1f)
+                    if (contentAlpha > 0.01f) {
+                        val maxBodyWpx = with(density) { maxBodyW.toPx() }
+                        val currentBodyWpx = maxBodyWpx * widthProgress
+                        val shiftPx = (maxBodyWpx - currentBodyWpx) * 0.82f * (if (activeIsRight) 1f else -1f)
                         val pivotY = if (items.isNotEmpty()) {
                             ((settledIndex + 0.5f) / items.size.toFloat()).coerceIn(0.12f, 0.88f)
                         } else {
@@ -453,19 +467,19 @@ fun EdgeBezelCapsule(
 
                         Box(
                             Modifier
-                                .align(if (isRight) Alignment.CenterEnd else Alignment.CenterStart)
+                                .align(if (activeIsRight) Alignment.CenterEnd else Alignment.CenterStart)
                                 .padding(
-                                    end = if (isRight) 20.dp else 0.dp,
-                                    start = if (!isRight) 20.dp else 0.dp,
+                                    end = if (activeIsRight) 20.dp else 0.dp,
+                                    start = if (!activeIsRight) 20.dp else 0.dp,
                                 )
-                                .width(148.dp)
+                                .width(innerW)
                                 .height(196.dp)
                                 .graphicsLayer {
-                                    alpha = easedContent
+                                    alpha = contentAlpha
                                     translationX = shiftPx
-                                    scaleX = lerp(if (isClosing) 0.72f else 0.84f, 1f, easedContent)
-                                    scaleY = lerp(if (isClosing) 0.84f else 0.92f, 1f, easedContent)
-                                    transformOrigin = TransformOrigin(if (isRight) 1f else 0f, pivotY)
+                                    scaleX = lerp(0.88f, 1f, contentAlpha)
+                                    scaleY = lerp(0.92f, 1f, contentAlpha)
+                                    transformOrigin = TransformOrigin(if (activeIsRight) 1f else 0f, pivotY)
                                 },
                         ) {
                             Box(
@@ -490,35 +504,58 @@ fun EdgeBezelCapsule(
                                     )
                                     val iconScale = lerp(1f, 1.08f, focus)
                                     val isHighlighted = idx == (if (isPressed) previewIndex else settledIndex)
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(46.dp)
-                                            .clip(CircleShape)
-                                            .padding(horizontal = 14.dp)
-                                            .semantics {
-                                                contentDescription = item.title
-                                                selected = isHighlighted
-                                            },
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    ) {
-                                        Icon(
-                                            painterResource(item.icon),
-                                            contentDescription = null,
-                                            tint = tint,
+                                    if (showLabels) {
+                                        Row(
                                             modifier = Modifier
-                                                .size(20.dp)
-                                                .graphicsLayer { scaleX = iconScale; scaleY = iconScale },
-                                        )
-                                        Text(
-                                            item.title,
-                                            fontSize = 13.sp,
-                                            fontWeight = if (isHighlighted) FontWeight.SemiBold else FontWeight.Medium,
-                                            color = tint,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
+                                                .fillMaxWidth()
+                                                .height(46.dp)
+                                                .clip(CircleShape)
+                                                .padding(horizontal = 14.dp)
+                                                .semantics {
+                                                    contentDescription = item.title
+                                                    selected = isHighlighted
+                                                },
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        ) {
+                                            Icon(
+                                                painterResource(item.icon),
+                                                contentDescription = null,
+                                                tint = tint,
+                                                modifier = Modifier
+                                                    .size(20.dp)
+                                                    .graphicsLayer { scaleX = iconScale; scaleY = iconScale },
+                                            )
+                                            Text(
+                                                item.title,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (isHighlighted) FontWeight.SemiBold else FontWeight.Medium,
+                                                color = tint,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(46.dp)
+                                                .clip(CircleShape)
+                                                .semantics {
+                                                    contentDescription = item.title
+                                                    selected = isHighlighted
+                                                },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(
+                                                painterResource(item.icon),
+                                                contentDescription = null,
+                                                tint = tint,
+                                                modifier = Modifier
+                                                    .size(22.dp)
+                                                    .graphicsLayer { scaleX = iconScale; scaleY = iconScale },
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -527,115 +564,156 @@ fun EdgeBezelCapsule(
                 }
             }
 
-            // Полновысотная сенсорная полоса вдоль края (с динамическим 200dp systemGestureExclusion):
-            // зажим на любой высоте края открывает вылазку под пальцем, смена вкладки происходит при отпускании.
+            // Полновысотные сенсорные полосы по активным краям экрана (с независимой 200dp systemGestureExclusion).
+            val activeSides = remember(enableLeft, enableRight) {
+                buildList {
+                    if (enableLeft) add(false)
+                    if (enableRight) add(true)
+                }
+            }
             val exclusionHalfPx = with(density) { 100.dp.toPx() }
-            val exclusionTopPx = (smoothAnchorY - exclusionHalfPx)
-                .coerceIn(0f, (containerHeightPx - exclusionHalfPx * 2f).coerceAtLeast(0f))
-                .roundToInt()
+            for (sideIsRight in activeSides) {
+                val stripAnchorY = if (activeIsRight == sideIsRight) smoothAnchorY else defaultAnchorY
+                val exclusionTopPx = (stripAnchorY - exclusionHalfPx)
+                    .coerceIn(0f, (containerHeightPx - exclusionHalfPx * 2f).coerceAtLeast(0f))
+                    .roundToInt()
 
-            Box(
-                Modifier
-                    .align(if (isRight) Alignment.CenterEnd else Alignment.CenterStart)
-                    .fillMaxHeight()
-                    .width(26.dp)
-                    .semantics { contentDescription = "Панель вкладок" }
-                    .pointerInput(items.size, isRight) {
-                        val stepPx = 40.dp.toPx()
-                        val touchSlopPx = viewConfiguration.touchSlop
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            val downX = down.position.x
-                            val downY = down.position.y
-                            val clampedY = if (containerHeightPx > 0f) {
-                                downY.coerceIn(
-                                    halfBulgePx,
-                                    (containerHeightPx - halfBulgePx).coerceAtLeast(halfBulgePx),
-                                )
-                            } else {
-                                downY
-                            }
-
-                            // Даём 60 мс на распознавание быстрого горизонтального системного свайпа «Назад».
-                            val quickCancel = withTimeoutOrNull(60L) {
-                                var canceledAsBack = false
-                                while (true) {
-                                    val ev = awaitPointerEvent(PointerEventPass.Initial)
-                                    val ch = ev.changes.firstOrNull { it.id == down.id }
-                                    if (ch == null || ch.changedToUpIgnoreConsumed() || !ch.pressed) {
-                                        canceledAsBack = true
-                                        break
-                                    }
-                                    val dx = ch.position.x - downX
-                                    val dy = ch.position.y - downY
-                                    val inwardDx = if (isRight) -dx else dx
-                                    if (inwardDx > touchSlopPx && inwardDx > abs(dy) * 1.4f) {
-                                        canceledAsBack = true
-                                        break
-                                    }
-                                    if (abs(dy) > touchSlopPx) {
-                                        break
-                                    }
-                                }
-                                canceledAsBack
-                            }
-                            if (quickCancel == true) return@awaitEachGesture
-
-                            val startIdx = currentSelectedIndex.coerceIn(0, (currentItems.size - 1).coerceAtLeast(0))
-                            anchorY = clampedY
-                            hasCustomAnchor = true
-                            previewIndex = startIdx
-                            settledIndex = startIdx
-                            analogSlot = startIdx.toFloat()
-                            isPressed = true
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-
-                            var liftedNormally = false
-                            try {
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                    if (change.changedToUpIgnoreConsumed() || !change.pressed) {
-                                        liftedNormally = true
-                                        break
-                                    }
-                                    change.consume()
-                                    val dy = change.position.y - downY
-                                    val maxSlot = (currentItems.size - 1).coerceAtLeast(0).toFloat()
-                                    val nextSlot = (startIdx + dy / stepPx).coerceIn(0f, maxSlot)
-                                    analogSlot = nextSlot
-                                    val candidateIdx = nextSlot.roundToInt()
-                                        .coerceIn(0, currentItems.lastIndex.coerceAtLeast(0))
-                                    if (candidateIdx != previewIndex) {
-                                        previewIndex = candidateIdx
-                                        settledIndex = candidateIdx
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    }
-                                }
-                            } finally {
-                                if (liftedNormally && currentItems.isNotEmpty()) {
-                                    val commitIdx = previewIndex.coerceIn(0, currentItems.lastIndex)
-                                    settledIndex = commitIdx
-                                    isPressed = false
-                                    if (commitIdx != currentSelectedIndex) {
-                                        currentItems[commitIdx].onClick()
-                                    }
-                                } else {
-                                    isPressed = false
-                                }
-                            }
-                        }
-                    },
-            ) {
                 Box(
                     Modifier
-                        .fillMaxWidth()
-                        .height(200.dp)
-                        .offset { IntOffset(0, exclusionTopPx) }
-                        .systemGestureExclusion(),
-                )
+                        .align(if (sideIsRight) Alignment.CenterEnd else Alignment.CenterStart)
+                        .fillMaxHeight()
+                        .width(26.dp)
+                        .semantics { contentDescription = "Панель вкладок" }
+                        .pointerInput(items.size, sideIsRight) {
+                            val stepPx = 40.dp.toPx()
+                            val touchSlopPx = viewConfiguration.touchSlop
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                if (isPressed) return@awaitEachGesture
+
+                                val downX = down.position.x
+                                val downY = down.position.y
+                                val clampedY = if (containerHeightPx > 0f) {
+                                    downY.coerceIn(
+                                        halfBulgePx,
+                                        (containerHeightPx - halfBulgePx).coerceAtLeast(halfBulgePx),
+                                    )
+                                } else {
+                                    downY
+                                }
+
+                                // 38 мс на распознавание быстрого горизонтального системного свайпа «Назад».
+                                val quickCancel = withTimeoutOrNull(38L) {
+                                    var canceledAsBack = false
+                                    while (true) {
+                                        val ev = awaitPointerEvent(PointerEventPass.Initial)
+                                        val ch = ev.changes.firstOrNull { it.id == down.id }
+                                        if (ch == null || ch.changedToUpIgnoreConsumed() || !ch.pressed) {
+                                            canceledAsBack = true
+                                            break
+                                        }
+                                        val dx = ch.position.x - downX
+                                        val dy = ch.position.y - downY
+                                        val inwardDx = if (sideIsRight) -dx else dx
+                                        if (inwardDx > touchSlopPx && inwardDx > abs(dy) * 1.4f) {
+                                            canceledAsBack = true
+                                            break
+                                        }
+                                        if (abs(dy) > touchSlopPx) {
+                                            break
+                                        }
+                                    }
+                                    canceledAsBack
+                                }
+                                if (quickCancel == true || isPressed) return@awaitEachGesture
+
+                                val startIdx = currentSelectedIndex.coerceIn(0, (currentItems.size - 1).coerceAtLeast(0))
+                                activeIsRight = sideIsRight
+                                anchorY = clampedY
+                                hasCustomAnchor = true
+                                previewIndex = startIdx
+                                settledIndex = startIdx
+                                analogSlot = startIdx.toFloat()
+                                isPressed = true
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+
+                                var liftedNormally = false
+                                try {
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                        if (change.changedToUpIgnoreConsumed() || !change.pressed) {
+                                            liftedNormally = true
+                                            break
+                                        }
+                                        change.consume()
+                                        val dy = change.position.y - downY
+                                        val maxSlot = (currentItems.size - 1).coerceAtLeast(0).toFloat()
+                                        val nextSlot = (startIdx + dy / stepPx).coerceIn(0f, maxSlot)
+                                        analogSlot = nextSlot
+                                        val candidateIdx = nextSlot.roundToInt()
+                                            .coerceIn(0, currentItems.lastIndex.coerceAtLeast(0))
+                                        if (candidateIdx != previewIndex) {
+                                            previewIndex = candidateIdx
+                                            settledIndex = candidateIdx
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        }
+                                    }
+                                } finally {
+                                    if (liftedNormally && currentItems.isNotEmpty()) {
+                                        val commitIdx = previewIndex.coerceIn(0, currentItems.lastIndex)
+                                        settledIndex = commitIdx
+                                        isPressed = false
+                                        if (commitIdx != currentSelectedIndex) {
+                                            currentItems[commitIdx].onClick()
+                                        }
+                                    } else {
+                                        isPressed = false
+                                    }
+                                }
+                            }
+                        },
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(200.dp)
+                            .offset { IntOffset(0, exclusionTopPx) }
+                            .systemGestureExclusion(),
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun BoxScope.IdleEdgeWhisper(
+    isRight: Boolean,
+    accentColor: Color,
+    idleStripAlpha: Float,
+) {
+    Canvas(
+        Modifier
+            .align(if (isRight) Alignment.CenterEnd else Alignment.CenterStart)
+            .fillMaxHeight(0.76f)
+            .width(4.dp),
+    ) {
+        val lineW = 2.dp.toPx()
+        val x = if (isRight) size.width - lineW - 0.5.dp.toPx() else 0.5.dp.toPx()
+        val brush = Brush.verticalGradient(
+            0.00f to Color.Transparent,
+            0.15f to accentColor.copy(alpha = idleStripAlpha * 0.65f),
+            0.50f to accentColor.copy(alpha = idleStripAlpha),
+            0.85f to accentColor.copy(alpha = idleStripAlpha * 0.65f),
+            1.00f to Color.Transparent,
+        )
+        drawRoundRect(
+            brush = brush,
+            topLeft = Offset(x, 0f),
+            size = Size(lineW, size.height),
+            cornerRadius = CornerRadius(lineW * 0.5f, lineW * 0.5f),
+        )
     }
 }
 

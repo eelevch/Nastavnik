@@ -221,6 +221,7 @@ class MainActivity : ComponentActivity() {
                             onTab = { tabletTab = it },
                             tabBarPosition = TabBarPosition.forTablet(st.tabletTabBar),
                             sideCapsuleBias = st.sideCapsuleBias,
+                            showSideCapsuleLabels = st.sideCapsuleShowLabels,
                             resumeTick = resumeTick,
                             go = go,
                             openNotebook = openNotebook,
@@ -229,6 +230,7 @@ class MainActivity : ComponentActivity() {
                             onTab = { phoneTab = it },
                             tabBarPosition = TabBarPosition.forPhone(st.phoneTabBar),
                             sideCapsuleBias = st.sideCapsuleBias,
+                            showSideCapsuleLabels = st.sideCapsuleShowLabels,
                             resumeTick = resumeTick,
                             go = go,
                         )
@@ -296,6 +298,9 @@ class MainActivity : ComponentActivity() {
             }
             if (intent.getBooleanExtra("debug_skip_onboarding", false)) {
                 app.settings.setOnboardingDone(true)
+            }
+            if (intent.hasExtra("debug_side_labels")) {
+                app.settings.setSideCapsuleShowLabels(intent.getBooleanExtra("debug_side_labels", true))
             }
         }
         val s = intent.getStringExtra(EXTRA_SCREEN) ?: return null

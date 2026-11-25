@@ -201,6 +201,7 @@ fun TabBarSettingsCard(
                 listOf(
                     TabBarPosition.LEFT to "Слева",
                     TabBarPosition.RIGHT to "Справа",
+                    TabBarPosition.BOTH to "С двух сторон",
                 ),
                 current,
             ) {
@@ -225,14 +226,31 @@ fun TabBarSettingsCard(
                 }
                 Segmented(
                     listOf(
-                        TabBarPosition.LEFT to "Вылазка слева",
-                        TabBarPosition.RIGHT to "Вылазка справа",
+                        TabBarPosition.LEFT to "Слева",
+                        TabBarPosition.RIGHT to "Справа",
+                        TabBarPosition.BOTH to "С двух сторон",
                     ),
                     current,
                 ) {
                     repo.setPhoneTabBar(it)
                     onChanged()
                 }
+            }
+        }
+        if (tablet || current.isSide()) {
+            FieldLabel(
+                "Подписи рядом со значками",
+                "Можно оставить названия вкладок или включить компактную вылазку только со значками.",
+            )
+            Segmented(
+                listOf(
+                    true to "С текстом",
+                    false to "Только значки",
+                ),
+                s.sideCapsuleShowLabels,
+            ) {
+                repo.setSideCapsuleShowLabels(it)
+                onChanged()
             }
         }
     }

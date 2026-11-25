@@ -68,10 +68,12 @@ data class AppSettings(
     val ttsVoice: String = "female",
     /** Расположение капсульной панели вкладок на планшете ("LEFT" / "RIGHT"). */
     val tabletTabBar: String = TabBarPosition.LEFT.id,
-    /** Расположение панели вкладок на телефоне ("BOTTOM" / "BOTTOM_CAPSULE" / "LEFT" / "RIGHT"). */
+    /** Расположение панели вкладок на телефоне ("BOTTOM" / "BOTTOM_CAPSULE" / "LEFT" / "RIGHT" / "BOTH"). */
     val phoneTabBar: String = TabBarPosition.BOTTOM.id,
     /** Вертикальная позиция боковой капсулы на телефоне (0.15..0.90). */
     val sideCapsuleBias: Float = 0.78f,
+    /** Показывать текстовые подписи рядом со значками в боковой вылазке. */
+    val sideCapsuleShowLabels: Boolean = true,
 )
 
 /**
@@ -129,6 +131,7 @@ class SettingsRepo(private val context: Context) {
         tabletTabBar = tabletTabBar(),
         phoneTabBar = phoneTabBar(),
         sideCapsuleBias = sideCapsuleBias(),
+        sideCapsuleShowLabels = sideCapsuleShowLabels(),
     )
 
     /**
@@ -182,6 +185,9 @@ class SettingsRepo(private val context: Context) {
 
     fun sideCapsuleBias(): Float = prefs.getFloat(K_SIDE_CAPSULE_BIAS, 0.78f).coerceIn(0.15f, 0.90f)
     fun setSideCapsuleBias(bias: Float) = prefs.edit { putFloat(K_SIDE_CAPSULE_BIAS, bias.coerceIn(0.15f, 0.90f)) }
+
+    fun sideCapsuleShowLabels(): Boolean = prefs.getBoolean(K_SIDE_CAPSULE_LABELS, true)
+    fun setSideCapsuleShowLabels(show: Boolean) = prefs.edit { putBoolean(K_SIDE_CAPSULE_LABELS, show) }
 
     /** Поток настроек: выдаёт текущее значение и каждое изменение. */
     fun flow(): Flow<AppSettings> = callbackFlow {
@@ -574,5 +580,6 @@ class SettingsRepo(private val context: Context) {
         private const val K_TABLET_TAB_BAR = "tablet_tab_bar"
         private const val K_PHONE_TAB_BAR = "phone_tab_bar"
         private const val K_SIDE_CAPSULE_BIAS = "side_capsule_bias"
+        private const val K_SIDE_CAPSULE_LABELS = "side_capsule_show_labels"
     }
 }

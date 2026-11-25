@@ -108,6 +108,7 @@ fun PhoneShell(
     onTab: (PhoneTab) -> Unit,
     tabBarPosition: TabBarPosition = TabBarPosition.BOTTOM,
     sideCapsuleBias: Float = 0.78f,
+    showSideCapsuleLabels: Boolean = true,
     resumeTick: Int,
     go: (String) -> Unit,
 ) {
@@ -120,7 +121,7 @@ fun PhoneShell(
     val bottomInset = when (tabBarPosition) {
         TabBarPosition.BOTTOM -> 84.dp
         TabBarPosition.BOTTOM_CAPSULE -> 88.dp
-        TabBarPosition.LEFT, TabBarPosition.RIGHT -> 24.dp
+        TabBarPosition.LEFT, TabBarPosition.RIGHT, TabBarPosition.BOTH -> 24.dp
     }
     val capsuleItems = PhoneTab.entries.map { entry ->
         CapsuleTabItem(
@@ -182,9 +183,11 @@ fun PhoneShell(
                 items = capsuleItems,
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
-            TabBarPosition.LEFT, TabBarPosition.RIGHT -> EdgeBezelCapsule(
+            TabBarPosition.LEFT, TabBarPosition.RIGHT, TabBarPosition.BOTH -> EdgeBezelCapsule(
                 items = capsuleItems,
-                isRight = tabBarPosition == TabBarPosition.RIGHT,
+                enableLeft = tabBarPosition.hasLeftEdge(),
+                enableRight = tabBarPosition.hasRightEdge(),
+                showLabels = showSideCapsuleLabels,
                 verticalBias = sideCapsuleBias,
                 modifier = Modifier.fillMaxSize(),
             )
