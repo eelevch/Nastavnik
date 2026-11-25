@@ -54,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Brush
@@ -65,7 +66,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -81,6 +84,7 @@ import app.nastavnik.app
 import app.nastavnik.schedule.Lesson
 import app.nastavnik.schedule.ScheduleNow
 import app.nastavnik.study.ruPlural
+import app.nastavnik.theme.TabBarPosition
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -102,19 +106,37 @@ enum class PhoneTab(val title: String, val icon: Int) {
  * Тетради для стилуса, наставник поверх записей и чистовики — на планшете.
  */
 @Composable
-fun PhoneShell(tab: PhoneTab, onTab: (PhoneTab) -> Unit, resumeTick: Int, go: (String) -> Unit) {
+fun PhoneShell(
+    tab: PhoneTab,
+    onTab: (PhoneTab) -> Unit,
+    tabBarPosition: TabBarPosition = TabBarPosition.BOTTOM,
+    resumeTick: Int,
+    go: (String) -> Unit,
+) {
     val context = LocalContext.current
     val isWeak = remember(context) { app.nastavnik.data.DeviceProfile.isWeakDevice(context) }
     val useRealBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !isWeak
     val contentLayer = rememberGraphicsLayer()
     var rootHeightPx by remember { mutableIntStateOf(0) }
+    var rootOrigin by remember { mutableStateOf(Offset.Zero) }
+
+    val bottomInset = if (tabBarPosition == TabBarPosition.BOTTOM_CAPSULE) 88.dp else 84.dp
+    val capsuleItems = PhoneTab.entries.map { entry ->
+        CapsuleTabItem(
+            title = entry.title,
+            icon = entry.icon,
+            isSelected = entry == tab,
+            onClick = { onTab(entry) },
+        )
+    }
 
     Box(Modifier.fillMaxSize().paperBackdrop()) {
-        CompositionLocalProvider(LocalBottomBarInset provides 84.dp) {
+        CompositionLocalProvider(LocalBottomBarInset provides bottomInset) {
             Box(
                 Modifier
                     .fillMaxSize()
                     .onSizeChanged { rootHeightPx = it.height }
+                    .onGloballyPositioned { rootOrigin = it.positionInWindow() }
                     .then(
                         if (useRealBlur) {
                             Modifier.drawWithContent {
@@ -148,13 +170,35 @@ fun PhoneShell(tab: PhoneTab, onTab: (PhoneTab) -> Unit, resumeTick: Int, go: (S
                 }
             }
         }
-        TabBar(
-            tab = tab,
-            onTab = onTab,
-            modifier = Modifier.align(Alignment.BottomCenter),
-            contentLayer = if (useRealBlur) contentLayer else null,
-            rootHeightPx = rootHeightPx,
-        )
+        when (tabBarPosition) {
+            TabBarPosition.BOTTOM -> TabBar(
+                tab = tab,
+                onTab = onTab,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                contentLayer = if (useRealBlur) contentLayer else null,
+                rootHeightPx = rootHeightPx,
+            )
+            TabBarPosition.BOTTOM_CAPSULE -> PhoneBottomCapsule(
+                items = capsuleItems,
+                contentLayer = if (useRealBlur) contentLayer else null,
+                rootOriginInWindow = rootOrigin,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+            TabBarPosition.LEFT -> PhoneThumbSideCapsule(
+                items = capsuleItems,
+                isRight = false,
+                contentLayer = if (useRealBlur) contentLayer else null,
+                rootOriginInWindow = rootOrigin,
+                modifier = Modifier.align(Alignment.BottomStart),
+            )
+            TabBarPosition.RIGHT -> PhoneThumbSideCapsule(
+                items = capsuleItems,
+                isRight = true,
+                contentLayer = if (useRealBlur) contentLayer else null,
+                rootOriginInWindow = rootOrigin,
+                modifier = Modifier.align(Alignment.BottomEnd),
+            )
+        }
     }
 }
 

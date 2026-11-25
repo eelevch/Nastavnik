@@ -45,9 +45,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.nastavnik.R
 import app.nastavnik.app
+import app.nastavnik.data.AppSettings
+import app.nastavnik.data.SettingsRepo
+import app.nastavnik.theme.MascotVariant
+import app.nastavnik.theme.TabBarPosition
 import kotlinx.coroutines.launch
 
 /** Вход в «Оформление» из настроек: мини-палитра текущей темы и стрелка. */
@@ -80,12 +86,13 @@ fun AppearanceEntry(onOpen: () -> Unit) {
  * Всё применяется сразу и плавно; лист тетради всегда белый.
  */
 @Composable
-fun AppearanceScreen(onBack: () -> Unit) {
+fun AppearanceScreen(onBack: () -> Unit, onPreviewMascots: () -> Unit = {}) {
     val repo = LocalContext.current.app.settings
     // Локальные копии — чтобы выбор отзывался мгновенно, а настройки сохранялись следом.
     var s by remember { mutableStateOf(repo.load()) }
     fun refresh() { s = repo.load() }
     val context = LocalContext.current
+    val tablet = remember(s.deviceRole) { context.app.isTablet() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     // Своя картинка фона: выбрал — сохраняем уменьшенную копию и включаем «Картинка».
     val pickBackdrop = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -166,6 +173,274 @@ fun AppearanceScreen(onBack: () -> Unit) {
         SectionCard("Текст") {
             Segmented(listOf(0.92f to "Мельче", 1f to "Обычный", 1.12f to "Крупнее"), nearest(s.textScale)) {
                 repo.setTextScale(it); refresh()
+            }
+        }
+
+        MascotVariantSection(
+            selected = MascotVariant.fromId(s.mascotVariant),
+            onSelect = { repo.setMascotVariant(it); refresh() },
+            onPreviewAll = onPreviewMascots,
+        )
+
+        TabBarSettingsCard(
+            tablet = tablet,
+            s = s,
+            repo = repo,
+            onChanged = { refresh() },
+        )
+    }
+}
+
+/** Выбор стиля маскота «Наставник» с живыми мини-превью каждого варианта. */
+@Composable
+fun MascotVariantSection(
+    selected: MascotVariant,
+    onSelect: (MascotVariant) -> Unit,
+    onPreviewAll: (() -> Unit)? = null,
+) {
+    SectionCard("Маскот «Наставник»") {
+        FieldLabel(
+            "Вариант силуэта",
+            "Все варианты сохраняют классический силуэт сферы с синей орбитой и плавные 120 FPS анимации.",
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            MascotVariant.entries.forEach { variant ->
+                val active = variant == selected
+                val cardShape = RoundedCornerShape(20.dp)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(cardShape)
+                        .background(if (active) Brand.Accent.copy(alpha = if (Brand.dark) 0.18f else 0.10f) else Brand.Glass.copy(alpha = 0.35f))
+                        .border(
+                            width = if (active) 1.5.dp else 0.8.dp,
+                            color = if (active) Brand.Accent else Brand.Line.copy(alpha = 0.55f),
+                            shape = cardShape,
+                        )
+                        .clickable { onSelect(variant) }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Box(
+                        Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(Brand.Paper),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        MascotIcon(
+                            thinking = active,
+                            sizeDp = 40.dp,
+                            variantOverride = variant,
+                        )
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                variant.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                variant.badge,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (active) Brand.Accent else Brand.InkSoft,
+                            )
+                        }
+                        Text(
+                            variant.subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Brand.InkSoft,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+        if (onPreviewAll != null) {
+            SoftButton("Сравнить все варианты крупно", onClick = onPreviewAll)
+        }
+    }
+}
+
+/** Настройка капсульной панели вкладок для планшета и телефона. */
+@Composable
+fun TabBarSettingsCard(
+    tablet: Boolean,
+    s: AppSettings,
+    repo: SettingsRepo,
+    onChanged: () -> Unit = {},
+) {
+    SectionCard("Панель вкладок (капсула)") {
+        if (tablet) {
+            val current = TabBarPosition.forTablet(s.tabletTabBar)
+            FieldLabel(
+                "Расположение на планшете",
+                "Полупрозрачная капсульная панель вкладок слева или справа — в тетради она скрыта.",
+            )
+            Segmented(
+                listOf(
+                    TabBarPosition.LEFT to "Слева",
+                    TabBarPosition.RIGHT to "Справа",
+                ),
+                current,
+            ) {
+                repo.setTabletTabBar(it)
+                onChanged()
+            }
+        } else {
+            val current = TabBarPosition.forPhone(s.phoneTabBar)
+            FieldLabel(
+                "Стиль и сторона на телефоне",
+                "Компактная стеклянная капсула снизу или аккуратный сворачиваемый док под большой палец сбоку.",
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Segmented(
+                    listOf(
+                        TabBarPosition.BOTTOM to "Обычная",
+                        TabBarPosition.BOTTOM_CAPSULE to "Капсула снизу",
+                    ),
+                    current,
+                ) {
+                    repo.setPhoneTabBar(it)
+                    onChanged()
+                }
+                Segmented(
+                    listOf(
+                        TabBarPosition.LEFT to "Сбоку слева",
+                        TabBarPosition.RIGHT to "Сбоку справа",
+                    ),
+                    current,
+                ) {
+                    repo.setPhoneTabBar(it)
+                    onChanged()
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Полноэкранная витрина всех вариантов маскота крупным планом (в покое и при размышлении).
+ */
+@Composable
+fun MascotVariantsPreviewScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val repo = context.app.settings
+    var selected by remember { mutableStateOf(MascotVariant.fromId(repo.mascotVariant())) }
+
+    ScreenScaffold(title = "Варианты маскота", onBack = onBack) {
+        Text(
+            "Четыре проработанных варианта на базе классического минималистичного силуэта. Нажмите на карточку, чтобы выбрать.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Brand.InkSoft,
+        )
+        MascotVariant.entries.chunked(2).forEach { row ->
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                row.forEach { variant ->
+                    val active = variant == selected
+                    val shape = RoundedCornerShape(26.dp)
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .glass(shape, 12.dp, strong = active)
+                            .border(
+                                width = if (active) 2.dp else 0.8.dp,
+                                color = if (active) Brand.Accent else Brand.Line.copy(alpha = 0.6f),
+                                shape = shape,
+                            )
+                            .clickable {
+                                selected = variant
+                                repo.setMascotVariant(variant)
+                            }
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                variant.badge,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (active) Brand.Accent else Brand.InkSoft,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            if (active) {
+                                Text(
+                                    "Выбран",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Brand.OnAccent,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(Brand.Accent)
+                                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                                )
+                            }
+                        }
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Box(
+                                    Modifier
+                                        .size(88.dp)
+                                        .clip(CircleShape)
+                                        .background(Brand.Paper),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    MascotIcon(sizeDp = 76.dp, variantOverride = variant)
+                                }
+                                Text("Покой", style = MaterialTheme.typography.labelSmall, color = Brand.InkSoft)
+                            }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Box(
+                                    Modifier
+                                        .size(88.dp)
+                                        .clip(CircleShape)
+                                        .background(Brand.Paper),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    MascotIcon(thinking = true, sizeDp = 76.dp, variantOverride = variant)
+                                }
+                                Text("Думает", style = MaterialTheme.typography.labelSmall, color = Brand.InkSoft)
+                            }
+                        }
+                        Column(
+                            Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            Text(
+                                variant.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                variant.subtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Brand.InkSoft,
+                            )
+                        }
+                    }
+                }
             }
         }
     }

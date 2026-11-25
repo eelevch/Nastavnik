@@ -11,6 +11,8 @@ import app.nastavnik.ai.ProxyConfig
 import app.nastavnik.ai.ModelPresets
 import app.nastavnik.ai.OpenAiCompatPresets
 import app.nastavnik.ai.Strictness
+import app.nastavnik.theme.MascotVariant
+import app.nastavnik.theme.TabBarPosition
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -65,6 +67,12 @@ data class AppSettings(
     val customSystemPrompt: String = "",
     /** Выбор голоса озвучки подсказок ("female", "male", "system"). */
     val ttsVoice: String = "female",
+    /** Расположение капсульной панели вкладок на планшете ("LEFT" / "RIGHT"). */
+    val tabletTabBar: String = TabBarPosition.LEFT.id,
+    /** Расположение панели вкладок на телефоне ("BOTTOM" / "BOTTOM_CAPSULE" / "LEFT" / "RIGHT"). */
+    val phoneTabBar: String = TabBarPosition.BOTTOM.id,
+    /** Вариант дизайна маскота ("CLASSIC" / "COSMIC_ORB" / "DUAL_ORBIT" / "GLASS_VISOR"). */
+    val mascotVariant: String = MascotVariant.CLASSIC.id,
 )
 
 /**
@@ -119,6 +127,9 @@ class SettingsRepo(private val context: Context) {
         deviceRole = prefs.getString(K_ROLE, "auto").orEmpty(),
         customSystemPrompt = customSystemPrompt(),
         ttsVoice = ttsVoice(),
+        tabletTabBar = tabletTabBar(),
+        phoneTabBar = phoneTabBar(),
+        mascotVariant = mascotVariant(),
     )
 
     /**
@@ -163,6 +174,15 @@ class SettingsRepo(private val context: Context) {
 
     fun ttsVoice(): String = prefs.getString(K_TTS_VOICE, "female") ?: "female"
     fun setTtsVoice(voice: String) = prefs.edit { putString(K_TTS_VOICE, voice) }
+
+    fun tabletTabBar(): String = TabBarPosition.forTablet(prefs.getString(K_TABLET_TAB_BAR, TabBarPosition.LEFT.id)).id
+    fun setTabletTabBar(pos: TabBarPosition) = prefs.edit { putString(K_TABLET_TAB_BAR, TabBarPosition.forTablet(pos.id).id) }
+
+    fun phoneTabBar(): String = TabBarPosition.forPhone(prefs.getString(K_PHONE_TAB_BAR, TabBarPosition.BOTTOM.id)).id
+    fun setPhoneTabBar(pos: TabBarPosition) = prefs.edit { putString(K_PHONE_TAB_BAR, TabBarPosition.forPhone(pos.id).id) }
+
+    fun mascotVariant(): String = MascotVariant.fromId(prefs.getString(K_MASCOT_VARIANT, MascotVariant.CLASSIC.id)).id
+    fun setMascotVariant(variant: MascotVariant) = prefs.edit { putString(K_MASCOT_VARIANT, variant.id) }
 
     /** Поток настроек: выдаёт текущее значение и каждое изменение. */
     fun flow(): Flow<AppSettings> = callbackFlow {
@@ -552,5 +572,8 @@ class SettingsRepo(private val context: Context) {
         private const val K_SYSTEM_PROMPT = "custom_system_prompt"
         private const val K_CLEAR_CHAT_ON_PROMPT = "clear_chat_on_prompt_change"
         private const val K_TTS_VOICE = "tts_voice"
+        private const val K_TABLET_TAB_BAR = "tablet_tab_bar"
+        private const val K_PHONE_TAB_BAR = "phone_tab_bar"
+        private const val K_MASCOT_VARIANT = "mascot_variant"
     }
 }

@@ -13,6 +13,8 @@ import app.nastavnik.BuildConfig
 import app.nastavnik.R
 import app.nastavnik.data.AppSettings
 import app.nastavnik.data.TelegramMetrics
+import app.nastavnik.theme.MascotVariant
+import app.nastavnik.theme.TabBarPosition
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -72,6 +74,9 @@ class MainActivity : ComponentActivity() {
     /** Телефон: открытая вкладка. */
     private var phoneTab by mutableStateOf(PhoneTab.TODAY)
 
+    /** Планшет: открытая вкладка капсульной панели. */
+    private var tabletTab by mutableStateOf(TabletTab.HOME)
+
     /** Растёт при каждом onResume — экраны перечитывают состояние разрешений. */
     private var resumeTick by mutableIntStateOf(0)
 
@@ -83,6 +88,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
         notebookId = savedInstanceState?.getLong(KEY_NOTEBOOK) ?: 0L
         savedInstanceState?.getString(KEY_TAB)?.let { t -> PhoneTab.entries.firstOrNull { it.name == t }?.let { phoneTab = it } }
+        savedInstanceState?.getString(KEY_TABLET_TAB)?.let { t -> TabletTab.entries.firstOrNull { it.name == t }?.let { tabletTab = it } }
         screen = savedInstanceState?.getString(KEY_SCREEN)
             ?: screenFrom(intent)
             // Первая настройка — про кнопку поверх записей; телефону она не нужна.
@@ -108,6 +114,8 @@ class MainActivity : ComponentActivity() {
                     when {
                         !tablet && target == SCREEN_SCHEDULE -> { phoneTab = PhoneTab.SCHEDULE; screen = SCREEN_HOME }
                         !tablet && target == SCREEN_GRADES -> { phoneTab = PhoneTab.GRADES; screen = SCREEN_HOME }
+                        tablet && target == SCREEN_SCHEDULE -> { tabletTab = TabletTab.SCHEDULE; screen = SCREEN_HOME }
+                        tablet && target == SCREEN_GRADES -> { tabletTab = TabletTab.GRADES; screen = SCREEN_HOME }
                         else -> screen = target
                     }
                 }
@@ -127,6 +135,7 @@ class MainActivity : ComponentActivity() {
                             when (screen) {
                                 SCREEN_CLEAN_TEST -> go(SCREEN_CLEAN)
                                 SCREEN_APPEARANCE -> go(SCREEN_SETTINGS)
+                                SCREEN_MASCOT_PREVIEW -> go(SCREEN_APPEARANCE)
                                 SCREEN_VIEWER -> go(SCREEN_NOTEBOOKS)
                                 SCREEN_NOTEBOOK -> go(SCREEN_NOTEBOOKS)
                                 SCREEN_LKS -> go(SCREEN_GRADES)
@@ -135,6 +144,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         !tablet && phoneTab != PhoneTab.TODAY -> phoneTab = PhoneTab.TODAY
+                        tablet && tabletTab != TabletTab.HOME -> tabletTab = TabletTab.HOME
                         else -> {
                             if (fromOverlay) moveTaskToBack(true) else finish()
                         }
@@ -192,7 +202,11 @@ class MainActivity : ComponentActivity() {
                             resumeTick, onBack = home, openNotebook = openNotebook,
                             sharedFile = sharedHomework, onSharedUsed = { sharedHomework = null },
                         )
-                        SCREEN_APPEARANCE -> AppearanceScreen(onBack = { go(SCREEN_SETTINGS) })
+                        SCREEN_APPEARANCE -> AppearanceScreen(
+                            onBack = { go(SCREEN_SETTINGS) },
+                            onPreviewMascots = { go(SCREEN_MASCOT_PREVIEW) },
+                        )
+                        SCREEN_MASCOT_PREVIEW -> MascotVariantsPreviewScreen(onBack = { go(SCREEN_APPEARANCE) })
                         SCREEN_HISTORY -> HistoryScreen(onBack = home, onCleanReady = { go(SCREEN_CLEAN) })
                         SCREEN_SEARCH -> SearchScreen(
                             onBack = home,
@@ -208,8 +222,20 @@ class MainActivity : ComponentActivity() {
                             onSettings = { go(SCREEN_SETTINGS) },
                             onExample = { go(SCREEN_CLEAN_TEST) },
                         )
-                        else -> if (tablet) HomeScreen(resumeTick, go, openNotebook)
-                        else PhoneShell(phoneTab, onTab = { phoneTab = it }, resumeTick = resumeTick, go = go)
+                        else -> if (tablet) TabletShell(
+                            tab = tabletTab,
+                            onTab = { tabletTab = it },
+                            tabBarPosition = TabBarPosition.forTablet(st.tabletTabBar),
+                            resumeTick = resumeTick,
+                            go = go,
+                            openNotebook = openNotebook,
+                        ) else PhoneShell(
+                            tab = phoneTab,
+                            onTab = { phoneTab = it },
+                            tabBarPosition = TabBarPosition.forPhone(st.phoneTabBar),
+                            resumeTick = resumeTick,
+                            go = go,
+                        )
                     }
                 }
             }
@@ -263,12 +289,31 @@ class MainActivity : ComponentActivity() {
      * Ярлык «Запустить наставника» включает его и сразу уходит в фон — к записям.
      */
     private fun screenFrom(intent: Intent): String? {
+        if (BuildConfig.DEBUG) {
+            intent.getStringExtra("debug_role")?.let { app.settings.setDeviceRole(it) }
+            intent.getStringExtra("debug_theme")?.let { app.settings.setThemeMode(it) }
+            intent.getStringExtra("debug_tablet_tab_bar")?.let {
+                app.settings.setTabletTabBar(TabBarPosition.forTablet(it))
+            }
+            intent.getStringExtra("debug_phone_tab_bar")?.let {
+                app.settings.setPhoneTabBar(TabBarPosition.forPhone(it))
+            }
+            intent.getStringExtra("debug_mascot")?.let {
+                app.settings.setMascotVariant(MascotVariant.fromId(it))
+            }
+            if (intent.getBooleanExtra("debug_skip_onboarding", false)) {
+                app.settings.setOnboardingDone(true)
+            }
+        }
         val s = intent.getStringExtra(EXTRA_SCREEN) ?: return null
         fromOverlay = intent.getBooleanExtra(EXTRA_FROM_OVERLAY, false)
-        // Телефон: расписание и успеваемость — вкладки.
+        // Расписание и успеваемость — вкладки оболочки.
         if (!app.isTablet()) when (s) {
             SCREEN_GRADES -> { phoneTab = PhoneTab.GRADES; return SCREEN_HOME }
             SCREEN_SCHEDULE -> { phoneTab = PhoneTab.SCHEDULE; return SCREEN_HOME }
+        } else when (s) {
+            SCREEN_GRADES -> { tabletTab = TabletTab.GRADES; return SCREEN_HOME }
+            SCREEN_SCHEDULE -> { tabletTab = TabletTab.SCHEDULE; return SCREEN_HOME }
         }
         intent.getLongExtra(EXTRA_NOTEBOOK, 0L).takeIf { it != 0L }?.let { notebookId = it }
         if (s == ACTION_START_MENTOR) {
@@ -336,6 +381,7 @@ class MainActivity : ComponentActivity() {
         outState.putString(KEY_SCREEN, screen)
         outState.putLong(KEY_NOTEBOOK, notebookId)
         outState.putString(KEY_TAB, phoneTab.name)
+        outState.putString(KEY_TABLET_TAB, tabletTab.name)
     }
 
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
@@ -364,6 +410,7 @@ class MainActivity : ComponentActivity() {
         const val SCREEN_TRAINING = "training"
         const val SCREEN_SEARCH = "search"
         const val SCREEN_APPEARANCE = "appearance"
+        const val SCREEN_MASCOT_PREVIEW = "mascot_preview"
         const val SCREEN_EXAMS = "exams"
         const val SCREEN_NOTEBOOK = "notebook"
         const val SCREEN_SCHEDULE = "schedule"
@@ -382,6 +429,7 @@ class MainActivity : ComponentActivity() {
         private const val KEY_SCREEN = "screen"
         private const val KEY_NOTEBOOK = "notebook"
         private const val KEY_TAB = "phone_tab"
+        private const val KEY_TABLET_TAB = "tablet_tab"
     }
 }
 
@@ -404,4 +452,5 @@ internal fun appearanceOf(st: AppSettings) = Appearance(
     accent = st.accent,
     backdrop = runCatching { Backdrop.valueOf(st.backdrop) }.getOrDefault(Backdrop.PLAIN),
     textScale = st.textScale,
+    mascotVariant = MascotVariant.fromId(st.mascotVariant),
 )

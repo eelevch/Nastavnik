@@ -67,6 +67,12 @@ fun SettingsScreen(onBack: () -> Unit, onAppearance: () -> Unit = {}, onOnboardi
 
         AppearanceEntry(onAppearance)
 
+        TabBarSettingsCard(
+            tablet = tablet,
+            s = s,
+            repo = repo,
+        )
+
         if (tablet) {
             SectionCard("Нейросеть") {
                 ProviderEditor(onChanged = {})
