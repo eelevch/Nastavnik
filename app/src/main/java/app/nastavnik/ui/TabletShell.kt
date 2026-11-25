@@ -94,9 +94,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.nastavnik.R
 import app.nastavnik.app
 import app.nastavnik.theme.TabBarPosition
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.floor
+import kotlin.math.pow
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 enum class TabletTab(val title: String, val icon: Int) {
     HOME("Главная", R.drawable.ic_home),
@@ -205,24 +208,26 @@ fun EdgeBezelCapsule(
     var hasCustomAnchor by remember { mutableStateOf(false) }
     var isPressed by remember { mutableStateOf(false) }
     var previewIndex by remember { mutableIntStateOf(selectedIndex) }
+    var settledIndex by remember { mutableIntStateOf(selectedIndex) }
     var analogSlot by remember { mutableFloatStateOf(selectedIndex.toFloat()) }
-
-    LaunchedEffect(selectedIndex) {
-        if (!isPressed) {
-            previewIndex = selectedIndex
-            analogSlot = selectedIndex.toFloat()
-        }
-    }
 
     val expandProgress by animateFloatAsState(
         targetValue = if (isPressed) 1f else 0f,
         animationSpec = if (isPressed) {
-            spring(dampingRatio = 0.86f, stiffness = 320f)
+            spring(dampingRatio = 0.82f, stiffness = 580f, visibilityThreshold = 0.002f)
         } else {
-            spring(dampingRatio = 0.92f, stiffness = 240f)
+            spring(dampingRatio = 1.0f, stiffness = 1450f, visibilityThreshold = 0.004f)
         },
         label = "bezelExpand",
     )
+
+    LaunchedEffect(selectedIndex, isPressed, expandProgress < 0.02f) {
+        if (!isPressed && expandProgress < 0.02f) {
+            settledIndex = selectedIndex
+            previewIndex = selectedIndex
+            analogSlot = selectedIndex.toFloat()
+        }
+    }
 
     val defaultAnchorY = if (containerHeightPx > 0f) {
         (containerHeightPx * verticalBias.coerceIn(0.18f, 0.82f))
@@ -243,18 +248,18 @@ fun EdgeBezelCapsule(
 
     val maxIdx = (items.size - 1).coerceAtLeast(0)
     val smoothSlot by animateFloatAsState(
-        targetValue = if (isPressed) analogSlot else selectedIndex.toFloat(),
-        animationSpec = spring(dampingRatio = 0.90f, stiffness = 340f),
+        targetValue = if (isPressed) analogSlot else settledIndex.toFloat(),
+        animationSpec = spring(dampingRatio = 0.92f, stiffness = 620f),
         label = "bezelSlot",
     )
     val pillTarget = if (isPressed) {
         continuousSlotCurve(analogSlot, maxIdx)
     } else {
-        selectedIndex.toFloat()
+        settledIndex.toFloat()
     }
     val pillSlot by animateFloatAsState(
         targetValue = pillTarget,
-        animationSpec = spring(dampingRatio = 0.88f, stiffness = 310f),
+        animationSpec = spring(dampingRatio = 0.90f, stiffness = 560f),
         label = "bezelPillSlot",
     )
 
@@ -262,11 +267,12 @@ fun EdgeBezelCapsule(
     val isDark = Brand.dark
     val accentColor = Brand.Accent
     val onAccentColor = Brand.OnAccent
-    val idleLipTint = Brand.Ink.copy(alpha = if (isDark) 0.34f else 0.20f)
 
     Box(modifier.fillMaxSize()) {
         if (expandProgress > 0.008f) {
-            val scrimAlpha = (if (isDark) 0.28f else 0.10f) * expandProgress.coerceIn(0f, 1f)
+            val pClamped = expandProgress.coerceIn(0f, 1f)
+            val scrimCurve = if (isPressed) pClamped else pClamped.pow(1.7f)
+            val scrimAlpha = (if (isDark) 0.28f else 0.10f) * scrimCurve
             Box(
                 Modifier
                     .fillMaxSize()
@@ -310,6 +316,7 @@ fun EdgeBezelCapsule(
             // Органическая вылазка от рамки экрана, всплывающая на высоте нажатия пальца.
             if (expandProgress > 0.004f) {
                 val bulgeTopPx = (smoothAnchorY - halfBulgePx).roundToInt()
+                val isClosing = !isPressed
                 Box(
                     Modifier
                         .align(if (isRight) Alignment.TopEnd else Alignment.TopStart)
@@ -317,39 +324,83 @@ fun EdgeBezelCapsule(
                         .size(width = bulgeW, height = bulgeH),
                 ) {
                     Canvas(Modifier.fillMaxSize()) {
-                        val p = expandProgress.coerceAtLeast(0f)
-                        val bodyW = lerp(5.dp.toPx(), 180.dp.toPx(), p)
-                        val bodyH = lerp(74.dp.toPx(), 216.dp.toPx(), p)
-                        val shoulder = lerp(10.dp.toPx(), 32.dp.toPx(), p)
-                        val cornerR = lerp(4.dp.toPx(), 26.dp.toPx(), p)
+                        val p = expandProgress.coerceIn(0f, 1f)
+                        val widthProgress = if (isClosing) {
+                            p.pow(1.48f)
+                        } else {
+                            1f - (1f - p).pow(1.25f)
+                        }
+                        val heightProgress = if (isClosing) {
+                            sin(p * (PI.toFloat() * 0.5f)).pow(0.72f)
+                        } else {
+                            sin(p * (PI.toFloat() * 0.5f))
+                        }
+                        val tensionWave = sin(p * PI.toFloat())
+                        val bodyW = lerp(0f, 180.dp.toPx(), widthProgress)
+                        val bodyH = lerp(32.dp.toPx(), 216.dp.toPx(), heightProgress)
+                        val shoulder = lerp(8.dp.toPx(), 32.dp.toPx(), heightProgress) +
+                            tensionWave * (if (isClosing) 10.dp.toPx() else 4.dp.toPx())
+                        val cornerR = lerp(2.dp.toPx(), 26.dp.toPx(), widthProgress)
                             .coerceAtMost(bodyW * 0.85f)
                             .coerceAtMost(bodyH * 0.45f)
 
-                        drawBezelBulgePath(
-                            path = bulgePath,
-                            isRight = isRight,
-                            bodyW = bodyW,
-                            bodyH = bodyH,
-                            shoulder = shoulder,
-                            cornerR = cornerR,
-                        )
-
-                        val fillBlend = (p / 0.30f).coerceIn(0f, 1f)
-                        val fillColor = lerp(idleLipTint, BezelObsidian, fillBlend)
-                        drawPath(path = bulgePath, color = fillColor)
-
-                        if (p > 0.04f) {
-                            val rimAlpha = (if (isDark) 0.18f else 0.12f) * p.coerceAtMost(1f)
-                            drawPath(
+                        if (bodyW > 0.5f) {
+                            drawBezelBulgePath(
                                 path = bulgePath,
-                                color = Color.White.copy(alpha = rimAlpha),
-                                style = Stroke(width = 1.dp.toPx()),
+                                isRight = isRight,
+                                bodyW = bodyW,
+                                bodyH = bodyH,
+                                shoulder = shoulder,
+                                cornerR = cornerR,
+                            )
+
+                            drawPath(path = bulgePath, color = BezelObsidian)
+
+                            if (widthProgress > 0.04f) {
+                                val rimAlpha = (if (isDark) 0.20f else 0.14f) * widthProgress
+                                drawPath(
+                                    path = bulgePath,
+                                    color = Color.White.copy(alpha = rimAlpha),
+                                    style = Stroke(width = 1.dp.toPx()),
+                                )
+                            }
+                        }
+
+                        // Акцентный световой импульс «запечатывания» в рамку при отпускании.
+                        if (isClosing && p in 0.015f..0.60f) {
+                            val gleamPhase = ((p - 0.015f) / (0.60f - 0.015f)).coerceIn(0f, 1f)
+                            val gleamIntensity = sin(gleamPhase * PI.toFloat()).coerceIn(0f, 1f)
+                            val itemFraction = if (items.isNotEmpty()) {
+                                ((settledIndex + 0.5f) / items.size.toFloat()).coerceIn(0.12f, 0.88f)
+                            } else {
+                                0.5f
+                            }
+                            val gleamCenterY = size.height * 0.5f - bodyH * 0.44f + bodyH * 0.88f * itemFraction
+                            val gleamH = 44.dp.toPx() * (0.7f + 0.5f * gleamIntensity)
+                            val gleamTop = (gleamCenterY - gleamH * 0.5f).coerceIn(0f, size.height)
+                            val gleamBottom = (gleamCenterY + gleamH * 0.5f).coerceIn(gleamTop, size.height)
+                            val gleamW = lerp(2.dp.toPx(), 3.5.dp.toPx(), gleamIntensity)
+                            val gleamX = if (isRight) size.width - gleamW else 0f
+                            val gleamBrush = Brush.verticalGradient(
+                                0.0f to Color.Transparent,
+                                0.5f to accentColor.copy(alpha = 0.92f * gleamIntensity),
+                                1.0f to Color.Transparent,
+                                startY = gleamTop,
+                                endY = gleamBottom,
+                            )
+                            drawRoundRect(
+                                brush = gleamBrush,
+                                topLeft = Offset(gleamX, gleamTop),
+                                size = Size(gleamW, (gleamBottom - gleamTop).coerceAtLeast(1f)),
+                                cornerRadius = CornerRadius(gleamW * 0.5f, gleamW * 0.5f),
                             )
                         }
 
                         // Тонкие тактильные риски вдоль края, как на диске управления iPhone.
-                        if (p > 0.22f && items.size > 1) {
-                            val dialAlpha = ((p - 0.22f) / 0.52f).coerceIn(0f, 1f)
+                        val dialThreshold = if (isClosing) 0.36f else 0.22f
+                        if (p > dialThreshold && items.size > 1) {
+                            val dialAlpha = ((p - dialThreshold) / (1f - dialThreshold).coerceAtLeast(0.2f))
+                                .coerceIn(0f, 1f)
                             val spanTop = size.height * 0.5f - bodyH * 0.40f
                             val spanH = bodyH * 0.80f
                             val xEdge = if (isRight) size.width else 0f
@@ -382,11 +433,20 @@ fun EdgeBezelCapsule(
                     }
 
                     // Контейнер вкладок внутри вылазки с плавающей плашкой выбора.
-                    val contentAlpha = ((expandProgress - 0.12f) / 0.52f).coerceIn(0f, 1f)
-                    if (contentAlpha > 0.01f) {
-                        val contentReveal = contentAlpha
+                    val contentProgress = if (isClosing) {
+                        ((expandProgress - 0.34f) / 0.66f).coerceIn(0f, 1f)
+                    } else {
+                        ((expandProgress - 0.14f) / 0.62f).coerceIn(0f, 1f)
+                    }
+                    val easedContent = contentProgress * contentProgress * (3f - 2f * contentProgress)
+                    if (easedContent > 0.01f) {
                         val shiftPx = with(density) {
-                            (1f - expandProgress.coerceAtMost(1f)) * 28.dp.toPx() * (if (isRight) 1f else -1f)
+                            (1f - easedContent) * (if (isClosing) 38.dp else 26.dp).toPx() * (if (isRight) 1f else -1f)
+                        }
+                        val pivotY = if (items.isNotEmpty()) {
+                            ((settledIndex + 0.5f) / items.size.toFloat()).coerceIn(0.12f, 0.88f)
+                        } else {
+                            0.5f
                         }
                         val stepPx = with(density) { 50.dp.toPx() }
                         val pillOffsetY = (pillSlot * stepPx).roundToInt()
@@ -401,11 +461,11 @@ fun EdgeBezelCapsule(
                                 .width(148.dp)
                                 .height(196.dp)
                                 .graphicsLayer {
-                                    alpha = contentAlpha
+                                    alpha = easedContent
                                     translationX = shiftPx
-                                    scaleX = lerp(0.84f, 1f, contentReveal)
-                                    scaleY = lerp(0.92f, 1f, contentReveal)
-                                    transformOrigin = TransformOrigin(if (isRight) 1f else 0f, 0.5f)
+                                    scaleX = lerp(if (isClosing) 0.72f else 0.84f, 1f, easedContent)
+                                    scaleY = lerp(if (isClosing) 0.84f else 0.92f, 1f, easedContent)
+                                    transformOrigin = TransformOrigin(if (isRight) 1f else 0f, pivotY)
                                 },
                         ) {
                             Box(
@@ -429,7 +489,7 @@ fun EdgeBezelCapsule(
                                         focus,
                                     )
                                     val iconScale = lerp(1f, 1.08f, focus)
-                                    val isHighlighted = if (isPressed) idx == previewIndex else idx == selectedIndex
+                                    val isHighlighted = idx == (if (isPressed) previewIndex else settledIndex)
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -525,6 +585,7 @@ fun EdgeBezelCapsule(
                             anchorY = clampedY
                             hasCustomAnchor = true
                             previewIndex = startIdx
+                            settledIndex = startIdx
                             analogSlot = startIdx.toFloat()
                             isPressed = true
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -547,16 +608,20 @@ fun EdgeBezelCapsule(
                                         .coerceIn(0, currentItems.lastIndex.coerceAtLeast(0))
                                     if (candidateIdx != previewIndex) {
                                         previewIndex = candidateIdx
+                                        settledIndex = candidateIdx
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     }
                                 }
                             } finally {
-                                isPressed = false
                                 if (liftedNormally && currentItems.isNotEmpty()) {
                                     val commitIdx = previewIndex.coerceIn(0, currentItems.lastIndex)
+                                    settledIndex = commitIdx
+                                    isPressed = false
                                     if (commitIdx != currentSelectedIndex) {
                                         currentItems[commitIdx].onClick()
                                     }
+                                } else {
+                                    isPressed = false
                                 }
                             }
                         }
