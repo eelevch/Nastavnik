@@ -205,6 +205,16 @@ fun EdgeBezelCapsule(
         animationSpec = spring(dampingRatio = 0.82f, stiffness = 680f),
         label = "bezelSlot",
     )
+    val magneticTarget = if (isPressed) {
+        selectedIndex + (analogSlot - selectedIndex) * 0.20f
+    } else {
+        selectedIndex.toFloat()
+    }
+    val pillSlot by animateFloatAsState(
+        targetValue = magneticTarget,
+        animationSpec = spring(dampingRatio = 0.74f, stiffness = 560f),
+        label = "bezelPillSlot",
+    )
 
     val bulgePath = remember { Path() }
     val clampedBias = (verticalBias.coerceIn(0.15f, 0.88f) * 2f - 1f)
@@ -320,7 +330,7 @@ fun EdgeBezelCapsule(
                         (1f - expandProgress.coerceAtMost(1f)) * 36.dp.toPx() * (if (isRight) 1f else -1f)
                     }
                     val stepPx = with(density) { 50.dp.toPx() }
-                    val pillOffsetY = (smoothSlot * stepPx).roundToInt()
+                    val pillOffsetY = (pillSlot * stepPx).roundToInt()
 
                     Box(
                         Modifier
