@@ -13,7 +13,6 @@ import app.nastavnik.BuildConfig
 import app.nastavnik.R
 import app.nastavnik.data.AppSettings
 import app.nastavnik.data.TelegramMetrics
-import app.nastavnik.theme.MascotVariant
 import app.nastavnik.theme.TabBarPosition
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Column
@@ -135,7 +134,6 @@ class MainActivity : ComponentActivity() {
                             when (screen) {
                                 SCREEN_CLEAN_TEST -> go(SCREEN_CLEAN)
                                 SCREEN_APPEARANCE -> go(SCREEN_SETTINGS)
-                                SCREEN_MASCOT_PREVIEW -> go(SCREEN_APPEARANCE)
                                 SCREEN_VIEWER -> go(SCREEN_NOTEBOOKS)
                                 SCREEN_NOTEBOOK -> go(SCREEN_NOTEBOOKS)
                                 SCREEN_LKS -> go(SCREEN_GRADES)
@@ -202,11 +200,7 @@ class MainActivity : ComponentActivity() {
                             resumeTick, onBack = home, openNotebook = openNotebook,
                             sharedFile = sharedHomework, onSharedUsed = { sharedHomework = null },
                         )
-                        SCREEN_APPEARANCE -> AppearanceScreen(
-                            onBack = { go(SCREEN_SETTINGS) },
-                            onPreviewMascots = { go(SCREEN_MASCOT_PREVIEW) },
-                        )
-                        SCREEN_MASCOT_PREVIEW -> MascotVariantsPreviewScreen(onBack = { go(SCREEN_APPEARANCE) })
+                        SCREEN_APPEARANCE -> AppearanceScreen(onBack = { go(SCREEN_SETTINGS) })
                         SCREEN_HISTORY -> HistoryScreen(onBack = home, onCleanReady = { go(SCREEN_CLEAN) })
                         SCREEN_SEARCH -> SearchScreen(
                             onBack = home,
@@ -233,6 +227,8 @@ class MainActivity : ComponentActivity() {
                             tab = phoneTab,
                             onTab = { phoneTab = it },
                             tabBarPosition = TabBarPosition.forPhone(st.phoneTabBar),
+                            sideCapsuleBias = st.sideCapsuleBias,
+                            onSideCapsuleBiasChange = { app.settings.setSideCapsuleBias(it) },
                             resumeTick = resumeTick,
                             go = go,
                         )
@@ -297,9 +293,6 @@ class MainActivity : ComponentActivity() {
             }
             intent.getStringExtra("debug_phone_tab_bar")?.let {
                 app.settings.setPhoneTabBar(TabBarPosition.forPhone(it))
-            }
-            intent.getStringExtra("debug_mascot")?.let {
-                app.settings.setMascotVariant(MascotVariant.fromId(it))
             }
             if (intent.getBooleanExtra("debug_skip_onboarding", false)) {
                 app.settings.setOnboardingDone(true)
@@ -410,7 +403,6 @@ class MainActivity : ComponentActivity() {
         const val SCREEN_TRAINING = "training"
         const val SCREEN_SEARCH = "search"
         const val SCREEN_APPEARANCE = "appearance"
-        const val SCREEN_MASCOT_PREVIEW = "mascot_preview"
         const val SCREEN_EXAMS = "exams"
         const val SCREEN_NOTEBOOK = "notebook"
         const val SCREEN_SCHEDULE = "schedule"
@@ -452,5 +444,4 @@ internal fun appearanceOf(st: AppSettings) = Appearance(
     accent = st.accent,
     backdrop = runCatching { Backdrop.valueOf(st.backdrop) }.getOrDefault(Backdrop.PLAIN),
     textScale = st.textScale,
-    mascotVariant = MascotVariant.fromId(st.mascotVariant),
 )

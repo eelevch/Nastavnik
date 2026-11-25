@@ -11,7 +11,6 @@ import app.nastavnik.ai.ProxyConfig
 import app.nastavnik.ai.ModelPresets
 import app.nastavnik.ai.OpenAiCompatPresets
 import app.nastavnik.ai.Strictness
-import app.nastavnik.theme.MascotVariant
 import app.nastavnik.theme.TabBarPosition
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -71,8 +70,8 @@ data class AppSettings(
     val tabletTabBar: String = TabBarPosition.LEFT.id,
     /** Расположение панели вкладок на телефоне ("BOTTOM" / "BOTTOM_CAPSULE" / "LEFT" / "RIGHT"). */
     val phoneTabBar: String = TabBarPosition.BOTTOM.id,
-    /** Вариант дизайна маскота ("CLASSIC" / "COSMIC_ORB" / "DUAL_ORBIT" / "GLASS_VISOR"). */
-    val mascotVariant: String = MascotVariant.CLASSIC.id,
+    /** Вертикальная позиция боковой капсулы на телефоне (0.15..0.90). */
+    val sideCapsuleBias: Float = 0.78f,
 )
 
 /**
@@ -129,7 +128,7 @@ class SettingsRepo(private val context: Context) {
         ttsVoice = ttsVoice(),
         tabletTabBar = tabletTabBar(),
         phoneTabBar = phoneTabBar(),
-        mascotVariant = mascotVariant(),
+        sideCapsuleBias = sideCapsuleBias(),
     )
 
     /**
@@ -181,8 +180,8 @@ class SettingsRepo(private val context: Context) {
     fun phoneTabBar(): String = TabBarPosition.forPhone(prefs.getString(K_PHONE_TAB_BAR, TabBarPosition.BOTTOM.id)).id
     fun setPhoneTabBar(pos: TabBarPosition) = prefs.edit { putString(K_PHONE_TAB_BAR, TabBarPosition.forPhone(pos.id).id) }
 
-    fun mascotVariant(): String = MascotVariant.fromId(prefs.getString(K_MASCOT_VARIANT, MascotVariant.CLASSIC.id)).id
-    fun setMascotVariant(variant: MascotVariant) = prefs.edit { putString(K_MASCOT_VARIANT, variant.id) }
+    fun sideCapsuleBias(): Float = prefs.getFloat(K_SIDE_CAPSULE_BIAS, 0.78f).coerceIn(0.15f, 0.90f)
+    fun setSideCapsuleBias(bias: Float) = prefs.edit { putFloat(K_SIDE_CAPSULE_BIAS, bias.coerceIn(0.15f, 0.90f)) }
 
     /** Поток настроек: выдаёт текущее значение и каждое изменение. */
     fun flow(): Flow<AppSettings> = callbackFlow {
@@ -574,6 +573,6 @@ class SettingsRepo(private val context: Context) {
         private const val K_TTS_VOICE = "tts_voice"
         private const val K_TABLET_TAB_BAR = "tablet_tab_bar"
         private const val K_PHONE_TAB_BAR = "phone_tab_bar"
-        private const val K_MASCOT_VARIANT = "mascot_variant"
+        private const val K_SIDE_CAPSULE_BIAS = "side_capsule_bias"
     }
 }

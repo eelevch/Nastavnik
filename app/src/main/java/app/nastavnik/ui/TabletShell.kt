@@ -1,20 +1,21 @@
 package app.nastavnik.ui
 
-import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,16 +23,17 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -39,30 +41,27 @@ import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.BlurEffect
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.TileMode
-import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.layer.GraphicsLayer
-import androidx.compose.ui.graphics.layer.drawLayer
-import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -70,13 +69,15 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.nastavnik.R
 import app.nastavnik.app
-import app.nastavnik.data.DeviceProfile
 import app.nastavnik.theme.TabBarPosition
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 enum class TabletTab(val title: String, val icon: Int) {
     HOME("Главная", R.drawable.ic_home),
@@ -93,7 +94,7 @@ data class CapsuleTabItem(
 )
 
 /**
- * Планшетная оболочка с плавающей полупрозрачной капсульной панелью вкладок (слева или справа по выбору).
+ * Планшетная оболочка с плотной плавающей капсульной панелью вкладок (слева или справа по выбору).
  */
 @Composable
 fun TabletShell(
@@ -104,12 +105,6 @@ fun TabletShell(
     go: (String) -> Unit,
     openNotebook: (Long) -> Unit,
 ) {
-    val context = LocalContext.current
-    val isWeak = remember(context) { DeviceProfile.isWeakDevice(context) }
-    val useRealBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !isWeak
-    val contentLayer = rememberGraphicsLayer()
-    var rootOrigin by remember { mutableStateOf(Offset.Zero) }
-
     val side = TabBarPosition.forTablet(tabBarPosition.id)
     val railItems = TabletTab.entries.map { entry ->
         CapsuleTabItem(
@@ -125,22 +120,9 @@ fun TabletShell(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .onGloballyPositioned { rootOrigin = it.positionInWindow() }
-                    .then(
-                        if (useRealBlur) {
-                            Modifier.drawWithContent {
-                                contentLayer.record {
-                                    this@drawWithContent.drawContent()
-                                }
-                                drawLayer(contentLayer)
-                            }
-                        } else {
-                            Modifier
-                        },
-                    )
                     .padding(
-                        start = if (side == TabBarPosition.LEFT) 96.dp else 0.dp,
-                        end = if (side == TabBarPosition.RIGHT) 96.dp else 0.dp,
+                        start = if (side == TabBarPosition.LEFT) 98.dp else 0.dp,
+                        end = if (side == TabBarPosition.RIGHT) 98.dp else 0.dp,
                     ),
             ) {
                 AnimatedContent(
@@ -173,8 +155,6 @@ fun TabletShell(
 
         CapsuleSideRail(
             items = railItems,
-            contentLayer = if (useRealBlur) contentLayer else null,
-            rootOriginInWindow = rootOrigin,
             modifier = Modifier
                 .align(if (side == TabBarPosition.RIGHT) Alignment.CenterEnd else Alignment.CenterStart)
                 .systemBarsPadding()
@@ -184,113 +164,154 @@ fun TabletShell(
 }
 
 /**
- * Единый полупрозрачный контейнер «матового стекла» с живым размытием фона (Android 12+) и световой кромкой.
+ * Плотная возвышенная капсула с чёткой кромкой и реальной тенью (без «полустекла»).
  */
 @Composable
-private fun FrostedCapsuleBox(
-    shape: Shape,
-    contentLayer: GraphicsLayer?,
-    rootOriginInWindow: Offset,
+private fun CapsuleSurface(
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit,
 ) {
-    val density = LocalDensity.current
-    var boxOrigin by remember { mutableStateOf(Offset.Zero) }
-    val canBlur = contentLayer != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-
-    val glassTint = if (Brand.dark) {
-        Brush.verticalGradient(
-            listOf(
-                Color(0xFF232834).copy(alpha = if (canBlur) 0.46f else 0.64f),
-                Color(0xFF141821).copy(alpha = if (canBlur) 0.36f else 0.54f),
-            ),
-        )
-    } else {
-        Brush.verticalGradient(
-            listOf(
-                Color.White.copy(alpha = if (canBlur) 0.52f else 0.72f),
-                Brand.Glass.copy(alpha = if (canBlur) 0.38f else 0.58f),
-            ),
-        )
-    }
-
-    val rimBorder = Brush.verticalGradient(
-        listOf(
-            Color.White.copy(alpha = if (Brand.dark) 0.28f else 0.85f),
-            Brand.Line.copy(alpha = if (Brand.dark) 0.26f else 0.42f),
-            Color.White.copy(alpha = if (Brand.dark) 0.14f else 0.48f),
-        ),
-    )
-
+    val surfaceColor = if (Brand.dark) lerp(Brand.Glass, Color.White, 0.06f) else Brand.Glass
+    val borderColor = if (Brand.dark) Color.White.copy(alpha = 0.11f) else Brand.Line.copy(alpha = 0.72f)
     Box(
         modifier = modifier
-            .onGloballyPositioned { boxOrigin = it.positionInWindow() }
-            .clip(shape),
-    ) {
-        if (canBlur) {
-            Box(
-                Modifier
-                    .matchParentSize()
-                    .clipToBounds()
-                    .graphicsLayer {
-                        val r = with(density) { 24.dp.toPx() }
-                        renderEffect = BlurEffect(r, r, TileMode.Clamp)
-                    }
-                    .drawWithContent {
-                        if (contentLayer.size.width > 0 && contentLayer.size.height > 0) {
-                            translate(
-                                left = -(boxOrigin.x - rootOriginInWindow.x),
-                                top = -(boxOrigin.y - rootOriginInWindow.y),
-                            ) {
-                                drawLayer(contentLayer)
-                            }
-                        }
-                    },
+            .shadow(
+                elevation = if (Brand.dark) 18.dp else 12.dp,
+                shape = CircleShape,
+                ambientColor = Color.Black.copy(alpha = if (Brand.dark) 0.50f else 0.16f),
+                spotColor = Color.Black.copy(alpha = if (Brand.dark) 0.60f else 0.22f),
             )
-        }
+            .clip(CircleShape)
+            .background(surfaceColor)
+            .border(1.dp, borderColor, CircleShape),
+        content = content,
+    )
+}
 
-        Box(
-            Modifier
-                .matchParentSize()
-                .background(glassTint)
-                .border(1.dp, rimBorder, shape),
-        )
-
-        content()
+/** Пружинное вычисление границ перетекающей «ртутной» плашки активной вкладки. */
+@Composable
+private fun rememberMercuryPillBounds(
+    selectedIndex: Int,
+    slots: List<Pair<Float, Float>>,
+): Pair<Float, Float> {
+    var lastIdx by remember { mutableIntStateOf(selectedIndex) }
+    var movingForward by remember { mutableStateOf(true) }
+    if (selectedIndex != lastIdx) {
+        movingForward = selectedIndex > lastIdx
+        lastIdx = selectedIndex
     }
+    val fastSpec = remember { spring<Float>(dampingRatio = 0.78f, stiffness = 580f) }
+    val tailSpec = remember { spring<Float>(dampingRatio = 0.75f, stiffness = 360f) }
+    val slot = slots.getOrNull(selectedIndex) ?: (0f to 0f)
+    val targetStart = slot.first
+    val targetEnd = slot.first + slot.second
+
+    val animStart by animateFloatAsState(
+        targetValue = targetStart,
+        animationSpec = if (movingForward) tailSpec else fastSpec,
+        label = "mercuryPillStart",
+    )
+    val animEnd by animateFloatAsState(
+        targetValue = targetEnd,
+        animationSpec = if (movingForward) fastSpec else tailSpec,
+        label = "mercuryPillEnd",
+    )
+    return animStart to animEnd
+}
+
+/** Поиск индекса вкладки по координате пальца вдоль оси капсулы. */
+private fun hitSlotIndex(pos: Float, slots: List<Pair<Float, Float>>): Int {
+    if (slots.isEmpty()) return 0
+    val exact = slots.indexOfFirst { (start, len) -> len > 0f && pos >= start && pos <= start + len }
+    if (exact >= 0) return exact
+    return slots.indices.minByOrNull { i ->
+        val (s, l) = slots[i]
+        abs(pos - (s + l * 0.5f))
+    } ?: 0
 }
 
 /**
- * Вертикальная плавающая полупрозрачная капсульная панель вкладок для планшета.
+ * Вертикальная капсульная панель вкладок для планшета с тактильным скраббингом и «ртутной» плашкой.
  */
 @Composable
 fun CapsuleSideRail(
     items: List<CapsuleTabItem>,
-    contentLayer: GraphicsLayer? = null,
-    rootOriginInWindow: Offset = Offset.Zero,
     modifier: Modifier = Modifier,
 ) {
-    val capsuleShape = RoundedCornerShape(999.dp)
-    FrostedCapsuleBox(
-        shape = capsuleShape,
-        contentLayer = contentLayer,
-        rootOriginInWindow = rootOriginInWindow,
+    val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
+    val slots = remember(items.size) { mutableStateListOf<Pair<Float, Float>>().apply { repeat(items.size) { add(0f to 0f) } } }
+    val selectedIndex = items.indexOfFirst { it.isSelected }.coerceAtLeast(0)
+    val (pillStart, pillEnd) = rememberMercuryPillBounds(selectedIndex, slots)
+    val pillHeightPx = (pillEnd - pillStart).coerceAtLeast(0f)
+
+    fun selectIndex(idx: Int) {
+        if (idx in items.indices && idx != selectedIndex) {
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            items[idx].onClick()
+        }
+    }
+
+    CapsuleSurface(
         modifier = modifier
-            .width(76.dp)
+            .width(80.dp)
             .height(IntrinsicSize.Min),
     ) {
-        Column(
-            modifier = Modifier
+        Box(
+            Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 6.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                .padding(horizontal = 6.dp, vertical = 8.dp)
+                .pointerInput(items.size) {
+                    val touchSlop = viewConfiguration.touchSlop
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        val startY = down.position.y
+                        var scrubbing = false
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) break
+                            if (!scrubbing && abs(change.position.y - startY) > touchSlop) {
+                                scrubbing = true
+                            }
+                            if (scrubbing) {
+                                change.consume()
+                                selectIndex(hitSlotIndex(change.position.y, slots))
+                            }
+                        }
+                    }
+                },
         ) {
-            items.forEach { item ->
-                CapsuleNavButton(
-                    item = item,
-                    modifier = Modifier.fillMaxWidth(),
+            if (pillHeightPx > 1f) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(with(density) { pillHeightPx.toDp() })
+                        .offset { IntOffset(0, pillStart.roundToInt()) }
+                        .clip(CircleShape)
+                        .background(Brand.Accent),
                 )
+            }
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                items.forEachIndexed { idx, item ->
+                    CapsuleNavButton(
+                        item = item,
+                        onClick = { selectIndex(idx) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onGloballyPositioned { coords ->
+                                val pos = coords.positionInParent().y
+                                val len = coords.size.height.toFloat()
+                                if (idx < slots.size && slots[idx] != (pos to len)) {
+                                    slots[idx] = pos to len
+                                }
+                            },
+                    )
+                }
             }
         }
     }
@@ -299,38 +320,26 @@ fun CapsuleSideRail(
 @Composable
 private fun CapsuleNavButton(
     item: CapsuleTabItem,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val pillShape = RoundedCornerShape(999.dp)
     val src = remember(item.title) { MutableInteractionSource() }
-    val fillAlpha = if (item.isSelected) {
-        if (Brand.dark) 0.28f else 0.17f
-    } else {
-        0f
-    }
     val tint by animateColorAsState(
-        targetValue = if (item.isSelected) Brand.Accent else Brand.Ink.copy(alpha = 0.70f),
+        targetValue = if (item.isSelected) Brand.OnAccent else Brand.InkSoft,
         animationSpec = tween(220),
         label = "capsuleTint",
+    )
+    val iconScale by animateFloatAsState(
+        targetValue = if (item.isSelected) 1.08f else 1f,
+        animationSpec = spring(dampingRatio = 0.62f, stiffness = 520f),
+        label = "capsuleIconScale",
     )
 
     Column(
         modifier = modifier
-            .clip(pillShape)
-            .background(Brand.Accent.copy(alpha = fillAlpha))
-            .then(
-                if (item.isSelected) {
-                    Modifier.border(
-                        width = 0.8.dp,
-                        color = Brand.Accent.copy(alpha = if (Brand.dark) 0.42f else 0.28f),
-                        shape = pillShape,
-                    )
-                } else {
-                    Modifier
-                },
-            )
-            .clickable(interactionSource = src, indication = ripple(bounded = true), onClick = item.onClick)
-            .padding(vertical = 9.dp, horizontal = 2.dp)
+            .clip(CircleShape)
+            .clickable(interactionSource = src, indication = ripple(bounded = true), onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 2.dp)
             .semantics {
                 contentDescription = item.title
                 selected = item.isSelected
@@ -342,7 +351,9 @@ private fun CapsuleNavButton(
             painterResource(item.icon),
             contentDescription = null,
             tint = tint,
-            modifier = Modifier.size(22.dp),
+            modifier = Modifier
+                .size(22.dp)
+                .graphicsLayer { scaleX = iconScale; scaleY = iconScale },
         )
         Text(
             item.title,
@@ -358,147 +369,176 @@ private fun CapsuleNavButton(
 }
 
 /**
- * Эргономичный боковой мини-док под большой палец на телефоне:
- * только значки в узкой полупрозрачной капсуле внизу сбоку и сворачивание в мини-кружок.
+ * Тактильная боковая капсула для телефона:
+ * - плотная возвышенная поверхность без сворачивания;
+ * - мгновенное проведение пальцем переключает вкладки;
+ * - удержание + перетаскивание перемещает капсулу по высоте вдоль края экрана.
  */
 @Composable
-fun PhoneThumbSideCapsule(
+fun PhoneSideCapsule(
     items: List<CapsuleTabItem>,
-    isRight: Boolean,
-    contentLayer: GraphicsLayer? = null,
-    rootOriginInWindow: Offset = Offset.Zero,
+    sideBias: Float,
+    containerHeightPx: Float,
+    verticalPaddingPx: Float,
+    onBiasCommit: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var collapsed by rememberSaveable { mutableStateOf(false) }
-    val activeItem = items.firstOrNull { it.isSelected } ?: items.first()
+    val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
+    val slots = remember(items.size) { mutableStateListOf<Pair<Float, Float>>().apply { repeat(items.size) { add(0f to 0f) } } }
+    val selectedIndex = items.indexOfFirst { it.isSelected }.coerceAtLeast(0)
+    val (pillStart, pillEnd) = rememberMercuryPillBounds(selectedIndex, slots)
+    val pillHeightPx = (pillEnd - pillStart).coerceAtLeast(0f)
 
-    AnimatedContent(
-        targetState = collapsed,
-        transitionSpec = {
-            (fadeIn(tween(200, easing = Motion.Decelerate)) + scaleIn(tween(220, easing = Motion.Emphasized), initialScale = 0.86f))
-                .togetherWith(fadeOut(tween(150, easing = Motion.Accelerate)) + scaleOut(tween(160), targetScale = 0.86f))
-        },
-        label = "thumbCapsuleCollapse",
+    var dragging by remember { mutableStateOf(false) }
+    var localBias by remember(sideBias) { mutableFloatStateOf(sideBias.coerceIn(0.15f, 0.90f)) }
+    var capsuleTopInContainerPx by remember { mutableFloatStateOf(0f) }
+    var capsuleHeightPx by remember { mutableFloatStateOf(0f) }
+
+    val capsuleScale by animateFloatAsState(
+        targetValue = if (dragging) 1.07f else 1f,
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = 480f),
+        label = "sideCapsuleDragScale",
+    )
+
+    fun selectIndex(idx: Int) {
+        if (idx in items.indices && idx != selectedIndex) {
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            items[idx].onClick()
+        }
+    }
+
+    CapsuleSurface(
         modifier = modifier
-            .navigationBarsPadding()
-            .padding(horizontal = 8.dp, vertical = 18.dp),
-    ) { isCollapsed ->
-        if (isCollapsed) {
-            val orbSrc = remember { MutableInteractionSource() }
-            FrostedCapsuleBox(
-                shape = CircleShape,
-                contentLayer = contentLayer,
-                rootOriginInWindow = rootOriginInWindow,
-                modifier = Modifier.size(44.dp),
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .clickable(interactionSource = orbSrc, indication = ripple(bounded = false, radius = 22.dp)) {
-                            collapsed = false
-                        }
-                        .semantics { contentDescription = "Развернуть панель вкладок" },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        painterResource(activeItem.icon),
-                        contentDescription = null,
-                        tint = Brand.Accent,
-                        modifier = Modifier.size(21.dp),
-                    )
-                }
+            .width(54.dp)
+            .height(IntrinsicSize.Min)
+            .graphicsLayer {
+                scaleX = capsuleScale
+                scaleY = capsuleScale
             }
-        } else {
-            FrostedCapsuleBox(
-                shape = RoundedCornerShape(999.dp),
-                contentLayer = contentLayer,
-                rootOriginInWindow = rootOriginInWindow,
-                modifier = Modifier
-                    .width(46.dp)
-                    .height(IntrinsicSize.Min),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    items.forEach { item ->
-                        val src = remember(item.title) { MutableInteractionSource() }
-                        val tint by animateColorAsState(
-                            targetValue = if (item.isSelected) Brand.Accent else Brand.Ink.copy(alpha = 0.72f),
-                            animationSpec = tween(220),
-                            label = "thumbCapsuleTint",
-                        )
-                        val fillAlpha = if (item.isSelected) {
-                            if (Brand.dark) 0.28f else 0.17f
-                        } else {
-                            0f
+            .onGloballyPositioned { coords ->
+                capsuleTopInContainerPx = coords.positionInParent().y
+                capsuleHeightPx = coords.size.height.toFloat()
+            },
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(6.dp)
+                .pointerInput(items.size, containerHeightPx, verticalPaddingPx) {
+                    val touchSlop = viewConfiguration.touchSlop
+                    val longPressMs = viewConfiguration.longPressTimeoutMillis
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        val startY = down.position.y
+                        var mode = 0 // 0 = undecided, 1 = scrub, 2 = drag position
+                        var grabOffsetY = down.position.y
+
+                        // Ждём движения > touchSlop (скраб) или удержания longPressMs (перемещение капсулы).
+                        val timedOut = withTimeoutOrNull(longPressMs) {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: return@withTimeoutOrNull false
+                                if (!change.pressed) return@withTimeoutOrNull false
+                                if (abs(change.position.y - startY) > touchSlop) {
+                                    mode = 1
+                                    change.consume()
+                                    selectIndex(hitSlotIndex(change.position.y, slots))
+                                    return@withTimeoutOrNull false
+                                }
+                            }
                         }
-                        Box(
-                            Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(Brand.Accent.copy(alpha = fillAlpha))
-                                .then(
-                                    if (item.isSelected) {
-                                        Modifier.border(
-                                            width = 0.8.dp,
-                                            color = Brand.Accent.copy(alpha = if (Brand.dark) 0.42f else 0.28f),
-                                            shape = CircleShape,
-                                        )
-                                    } else {
-                                        Modifier
-                                    },
-                                )
-                                .clickable(
-                                    interactionSource = src,
-                                    indication = ripple(bounded = false, radius = 18.dp),
-                                    onClick = item.onClick,
-                                )
-                                .semantics {
-                                    contentDescription = item.title
-                                    selected = item.isSelected
-                                },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                painterResource(item.icon),
-                                contentDescription = null,
-                                tint = tint,
-                                modifier = Modifier.size(19.dp),
-                            )
+                        if (timedOut == null) {
+                            mode = 2
+                            dragging = true
+                            grabOffsetY = startY + with(density) { 6.dp.toPx() }
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+
+                        if (mode == 1) {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) break
+                                change.consume()
+                                selectIndex(hitSlotIndex(change.position.y, slots))
+                            }
+                        } else if (mode == 2) {
+                            try {
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (!change.pressed) break
+                                    change.consume()
+                                    val travel = (containerHeightPx - verticalPaddingPx - capsuleHeightPx).coerceAtLeast(1f)
+                                    val innerPadTop = with(density) { 6.dp.toPx() }
+                                    val fingerInContainerY = capsuleTopInContainerPx + innerPadTop + change.position.y
+                                    val topPad = verticalPaddingPx * 0.5f
+                                    localBias = ((fingerInContainerY - topPad - grabOffsetY) / travel).coerceIn(0.15f, 0.90f)
+                                    onBiasCommit(localBias)
+                                }
+                            } finally {
+                                dragging = false
+                            }
                         }
                     }
-
-                    Box(
-                        Modifier
-                            .padding(horizontal = 11.dp, vertical = 2.dp)
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(Brand.Line.copy(alpha = 0.35f)),
+                },
+        ) {
+            if (pillHeightPx > 1f) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(with(density) { pillHeightPx.toDp() })
+                        .offset { IntOffset(0, pillStart.roundToInt()) }
+                        .clip(CircleShape)
+                        .background(Brand.Accent),
+                )
+            }
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                items.forEachIndexed { idx, item ->
+                    val src = remember(item.title) { MutableInteractionSource() }
+                    val tint by animateColorAsState(
+                        targetValue = if (item.isSelected) Brand.OnAccent else Brand.InkSoft,
+                        animationSpec = tween(220),
+                        label = "sideIconTint",
                     )
-
-                    val collapseSrc = remember { MutableInteractionSource() }
+                    val iconScale by animateFloatAsState(
+                        targetValue = if (item.isSelected) 1.08f else 1f,
+                        animationSpec = spring(dampingRatio = 0.62f, stiffness = 520f),
+                        label = "sideIconScale",
+                    )
                     Box(
                         Modifier
-                            .size(28.dp)
+                            .size(42.dp)
                             .clip(CircleShape)
                             .clickable(
-                                interactionSource = collapseSrc,
-                                indication = ripple(bounded = false, radius = 14.dp),
-                            ) { collapsed = true }
-                            .semantics { contentDescription = "Свернуть панель" },
+                                interactionSource = src,
+                                indication = ripple(bounded = false, radius = 21.dp),
+                            ) { selectIndex(idx) }
+                            .onGloballyPositioned { coords ->
+                                val pos = coords.positionInParent().y
+                                val len = coords.size.height.toFloat()
+                                if (idx < slots.size && slots[idx] != (pos to len)) {
+                                    slots[idx] = pos to len
+                                }
+                            }
+                            .semantics {
+                                contentDescription = item.title
+                                selected = item.isSelected
+                            },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            painterResource(R.drawable.ic_chevron),
+                            painterResource(item.icon),
                             contentDescription = null,
-                            tint = Brand.InkSoft,
+                            tint = tint,
                             modifier = Modifier
-                                .size(15.dp)
-                                .graphicsLayer { rotationZ = if (isRight) 0f else 180f },
+                                .size(21.dp)
+                                .graphicsLayer { scaleX = iconScale; scaleY = iconScale },
                         )
                     }
                 }
@@ -508,89 +548,132 @@ fun PhoneThumbSideCapsule(
 }
 
 /**
- * Компактная плавающая полупрозрачная капсула снизу для телефона:
- * активная вкладка мягко раскрывает подпись, остальные остаются аккуратными значками.
+ * Компактная плотная капсула снизу для телефона:
+ * живая «ртутная» акцентная плашка, скраббинг проведением пальца и раскрытие подписи активной вкладки.
  */
 @Composable
 fun PhoneBottomCapsule(
     items: List<CapsuleTabItem>,
-    contentLayer: GraphicsLayer? = null,
-    rootOriginInWindow: Offset = Offset.Zero,
     modifier: Modifier = Modifier,
 ) {
-    val capsuleShape = RoundedCornerShape(999.dp)
-    FrostedCapsuleBox(
-        shape = capsuleShape,
-        contentLayer = contentLayer,
-        rootOriginInWindow = rootOriginInWindow,
+    val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
+    val slots = remember(items.size) { mutableStateListOf<Pair<Float, Float>>().apply { repeat(items.size) { add(0f to 0f) } } }
+    val selectedIndex = items.indexOfFirst { it.isSelected }.coerceAtLeast(0)
+    val (pillStart, pillEnd) = rememberMercuryPillBounds(selectedIndex, slots)
+    val pillWidthPx = (pillEnd - pillStart).coerceAtLeast(0f)
+
+    fun selectIndex(idx: Int) {
+        if (idx in items.indices && idx != selectedIndex) {
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            items[idx].onClick()
+        }
+    }
+
+    CapsuleSurface(
         modifier = modifier
             .navigationBarsPadding()
             .padding(horizontal = 20.dp, vertical = 10.dp)
             .height(IntrinsicSize.Min),
     ) {
-        Row(
-            modifier = Modifier
-                .padding(horizontal = 6.dp, vertical = 6.dp)
-                .animateContentSize(tween(240, easing = Motion.Emphasized)),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Box(
+            Modifier
+                .padding(6.dp)
+                .height(40.dp)
+                .pointerInput(items.size) {
+                    val touchSlop = viewConfiguration.touchSlop
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        val startX = down.position.x
+                        var scrubbing = false
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) break
+                            if (!scrubbing && abs(change.position.x - startX) > touchSlop) {
+                                scrubbing = true
+                            }
+                            if (scrubbing) {
+                                change.consume()
+                                selectIndex(hitSlotIndex(change.position.x, slots))
+                            }
+                        }
+                    }
+                },
         ) {
-            items.forEach { item ->
-                val pillShape = RoundedCornerShape(999.dp)
-                val src = remember(item.title) { MutableInteractionSource() }
-                val fillAlpha = if (item.isSelected) {
-                    if (Brand.dark) 0.26f else 0.16f
-                } else {
-                    0f
-                }
-                val tint by animateColorAsState(
-                    targetValue = if (item.isSelected) Brand.Accent else Brand.Ink.copy(alpha = 0.72f),
-                    animationSpec = tween(220),
-                    label = "bottomCapsuleTint",
+            if (pillWidthPx > 1f) {
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .width(with(density) { pillWidthPx.toDp() })
+                        .offset { IntOffset(pillStart.roundToInt(), 0) }
+                        .clip(CircleShape)
+                        .background(Brand.Accent),
                 )
-
-                val itemMod = if (item.isSelected) {
-                    Modifier
-                        .height(38.dp)
-                        .clip(pillShape)
-                        .background(Brand.Accent.copy(alpha = fillAlpha))
-                        .border(
-                            width = 0.8.dp,
-                            color = Brand.Accent.copy(alpha = if (Brand.dark) 0.42f else 0.28f),
-                            shape = pillShape,
-                        )
-                        .padding(horizontal = 14.dp)
-                } else {
-                    Modifier
-                        .size(width = 42.dp, height = 38.dp)
-                        .clip(pillShape)
-                }
-
-                Row(
-                    modifier = itemMod
-                        .clickable(interactionSource = src, indication = ripple(bounded = true), onClick = item.onClick)
-                        .semantics {
-                            contentDescription = item.title
-                            selected = item.isSelected
-                        },
-                    horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        painterResource(item.icon),
-                        contentDescription = null,
-                        tint = tint,
-                        modifier = Modifier.size(20.dp),
+            }
+            Row(
+                modifier = Modifier.animateContentSize(tween(240, easing = Motion.Emphasized)),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                items.forEachIndexed { idx, item ->
+                    val src = remember(item.title) { MutableInteractionSource() }
+                    val tint by animateColorAsState(
+                        targetValue = if (item.isSelected) Brand.OnAccent else Brand.InkSoft,
+                        animationSpec = tween(220),
+                        label = "bottomCapsuleTint",
                     )
-                    if (item.isSelected) {
-                        Text(
-                            item.title,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = tint,
-                            maxLines = 1,
-                            softWrap = false,
+                    val iconScale by animateFloatAsState(
+                        targetValue = if (item.isSelected) 1.08f else 1f,
+                        animationSpec = spring(dampingRatio = 0.62f, stiffness = 520f),
+                        label = "bottomCapsuleIconScale",
+                    )
+
+                    val sizeMod = if (item.isSelected) {
+                        Modifier.height(40.dp)
+                    } else {
+                        Modifier.size(width = 44.dp, height = 40.dp)
+                    }
+
+                    Row(
+                        modifier = sizeMod
+                            .onGloballyPositioned { coords ->
+                                val pos = coords.positionInParent().x
+                                val len = coords.size.width.toFloat()
+                                if (idx < slots.size && slots[idx] != (pos to len)) {
+                                    slots[idx] = pos to len
+                                }
+                            }
+                            .clip(CircleShape)
+                            .clickable(interactionSource = src, indication = ripple(bounded = true)) {
+                                selectIndex(idx)
+                            }
+                            .then(if (item.isSelected) Modifier.padding(horizontal = 16.dp) else Modifier)
+                            .semantics {
+                                contentDescription = item.title
+                                selected = item.isSelected
+                            },
+                        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            painterResource(item.icon),
+                            contentDescription = null,
+                            tint = tint,
+                            modifier = Modifier
+                                .size(20.dp)
+                                .graphicsLayer { scaleX = iconScale; scaleY = iconScale },
                         )
+                        if (item.isSelected) {
+                            Text(
+                                item.title,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = tint,
+                                maxLines = 1,
+                                softWrap = false,
+                            )
+                        }
                     }
                 }
             }

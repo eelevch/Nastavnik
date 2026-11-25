@@ -33,14 +33,4 @@ class NavigationAndMascotTest {
             TabBarPosition.PHONE_OPTIONS,
         )
     }
-
-    @Test
-    fun `mascot variants expose all four options and parse case insensitively`() {
-        assertEquals(4, MascotVariant.entries.size)
-        assertEquals(MascotVariant.CLASSIC, MascotVariant.fromId(null))
-        assertEquals(MascotVariant.CLASSIC, MascotVariant.fromId("nope"))
-        assertEquals(MascotVariant.DUAL_ORBIT, MascotVariant.fromId("dual_orbit"))
-        assertEquals(MascotVariant.PARALLEL_ORBIT, MascotVariant.fromId("PARALLEL_ORBIT"))
-        assertEquals(MascotVariant.ECLIPSE_DUO, MascotVariant.fromId("ECLIPSE_DUO"))
-    }
 }
