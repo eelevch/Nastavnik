@@ -195,7 +195,7 @@ fun TabBarSettingsCard(
         if (tablet) {
             FieldLabel(
                 "Сторона на планшете",
-                "Зажми у края экрана — появится вылазка со всеми вкладками; веди вверх и вниз для выбора, отпусти — скроется.",
+                "Зажми край экрана на любой высоте — плавно выедет вылазка с вкладками; веди вверх и вниз, отпусти для перехода.",
             )
             Segmented(
                 listOf(
@@ -210,7 +210,7 @@ fun TabBarSettingsCard(
         } else {
             FieldLabel(
                 "Стиль и сторона на телефоне",
-                "Зажми у края экрана — появится вылазка со всеми вкладками; веди вверх и вниз для выбора, отпусти — скроется.",
+                "Зажми край экрана на любой высоте — плавно выедет вылазка с вкладками; веди вверх и вниз, отпусти для перехода.",
             )
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Segmented(
@@ -234,18 +234,6 @@ fun TabBarSettingsCard(
                     onChanged()
                 }
             }
-        }
-        if (tablet || current.isSide()) {
-            FieldLabel("Высота язычка у края")
-            AppSlider(
-                value = s.sideCapsuleBias.coerceIn(0.20f, 0.85f),
-                onValueChange = {
-                    repo.setSideCapsuleBias(it)
-                    onChanged()
-                },
-                onValueChangeFinished = {},
-                valueRange = 0.20f..0.85f,
-            )
         }
     }
 }

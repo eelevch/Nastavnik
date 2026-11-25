@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -43,6 +44,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -59,17 +61,21 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -89,6 +95,7 @@ import app.nastavnik.R
 import app.nastavnik.app
 import app.nastavnik.theme.TabBarPosition
 import kotlin.math.abs
+import kotlin.math.floor
 import kotlin.math.roundToInt
 
 enum class TabletTab(val title: String, val icon: Int) {
@@ -179,7 +186,7 @@ fun TabletShell(
 fun EdgeBezelCapsule(
     items: List<CapsuleTabItem>,
     isRight: Boolean,
-    verticalBias: Float,
+    verticalBias: Float = 0.55f,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -188,43 +195,77 @@ fun EdgeBezelCapsule(
     val selectedIndex = items.indexOfFirst { it.isSelected }.coerceAtLeast(0)
     val currentSelectedIndex by rememberUpdatedState(selectedIndex)
 
+    val bulgeW = 196.dp
+    val bulgeH = 284.dp
+    val bulgeHpx = with(density) { bulgeH.toPx() }
+    val halfBulgePx = bulgeHpx * 0.5f
+
+    var containerHeightPx by remember { mutableFloatStateOf(0f) }
+    var anchorY by remember { mutableFloatStateOf(0f) }
+    var hasCustomAnchor by remember { mutableStateOf(false) }
     var isPressed by remember { mutableStateOf(false) }
+    var previewIndex by remember { mutableIntStateOf(selectedIndex) }
     var analogSlot by remember { mutableFloatStateOf(selectedIndex.toFloat()) }
+
+    LaunchedEffect(selectedIndex) {
+        if (!isPressed) {
+            previewIndex = selectedIndex
+            analogSlot = selectedIndex.toFloat()
+        }
+    }
 
     val expandProgress by animateFloatAsState(
         targetValue = if (isPressed) 1f else 0f,
         animationSpec = if (isPressed) {
-            spring(dampingRatio = 0.72f, stiffness = 460f)
+            spring(dampingRatio = 0.86f, stiffness = 320f)
         } else {
-            spring(dampingRatio = 0.86f, stiffness = 520f)
+            spring(dampingRatio = 0.92f, stiffness = 240f)
         },
         label = "bezelExpand",
     )
+
+    val defaultAnchorY = if (containerHeightPx > 0f) {
+        (containerHeightPx * verticalBias.coerceIn(0.18f, 0.82f))
+            .coerceIn(halfBulgePx, (containerHeightPx - halfBulgePx).coerceAtLeast(halfBulgePx))
+    } else {
+        0f
+    }
+    val targetAnchorY = if (hasCustomAnchor) anchorY else defaultAnchorY
+    val smoothAnchorY by animateFloatAsState(
+        targetValue = targetAnchorY,
+        animationSpec = if (expandProgress < 0.03f) {
+            snap()
+        } else {
+            spring(dampingRatio = 0.92f, stiffness = 280f)
+        },
+        label = "bezelAnchorY",
+    )
+
+    val maxIdx = (items.size - 1).coerceAtLeast(0)
     val smoothSlot by animateFloatAsState(
         targetValue = if (isPressed) analogSlot else selectedIndex.toFloat(),
-        animationSpec = spring(dampingRatio = 0.82f, stiffness = 680f),
+        animationSpec = spring(dampingRatio = 0.90f, stiffness = 340f),
         label = "bezelSlot",
     )
-    val magneticTarget = if (isPressed) {
-        selectedIndex + (analogSlot - selectedIndex) * 0.20f
+    val pillTarget = if (isPressed) {
+        continuousSlotCurve(analogSlot, maxIdx)
     } else {
         selectedIndex.toFloat()
     }
     val pillSlot by animateFloatAsState(
-        targetValue = magneticTarget,
-        animationSpec = spring(dampingRatio = 0.74f, stiffness = 560f),
+        targetValue = pillTarget,
+        animationSpec = spring(dampingRatio = 0.88f, stiffness = 310f),
         label = "bezelPillSlot",
     )
 
     val bulgePath = remember { Path() }
-    val clampedBias = (verticalBias.coerceIn(0.15f, 0.88f) * 2f - 1f)
     val isDark = Brand.dark
-    val idleLipTint = Brand.Ink.copy(alpha = if (isDark) 0.38f else 0.24f)
     val accentColor = Brand.Accent
     val onAccentColor = Brand.OnAccent
+    val idleLipTint = Brand.Ink.copy(alpha = if (isDark) 0.34f else 0.20f)
 
     Box(modifier.fillMaxSize()) {
-        if (expandProgress > 0.01f) {
+        if (expandProgress > 0.008f) {
             val scrimAlpha = (if (isDark) 0.28f else 0.10f) * expandProgress.coerceIn(0f, 1f)
             Box(
                 Modifier
@@ -236,216 +277,312 @@ fun EdgeBezelCapsule(
         Box(
             Modifier
                 .fillMaxSize()
-                .systemBarsPadding(),
+                .systemBarsPadding()
+                .onSizeChanged { containerHeightPx = it.height.toFloat() },
         ) {
-            Box(
-                Modifier
-                    .align(BiasAlignment(horizontalBias = if (isRight) 1f else -1f, verticalBias = clampedBias))
-                    .size(width = 196.dp, height = 284.dp),
-            ) {
-                // Органическая вылазка от рамки экрана + iPhone dial-риски.
-                Canvas(Modifier.fillMaxSize()) {
-                    val p = expandProgress.coerceAtLeast(0f)
-                    val bodyW = lerp(5.dp.toPx(), 180.dp.toPx(), p)
-                    val bodyH = lerp(74.dp.toPx(), 216.dp.toPx(), p)
-                    val shoulder = lerp(10.dp.toPx(), 32.dp.toPx(), p)
-                    val cornerR = lerp(4.dp.toPx(), 26.dp.toPx(), p)
-                        .coerceAtMost(bodyW * 0.85f)
-                        .coerceAtMost(bodyH * 0.45f)
-
-                    drawBezelBulgePath(
-                        path = bulgePath,
-                        isRight = isRight,
-                        bodyW = bodyW,
-                        bodyH = bodyH,
-                        shoulder = shoulder,
-                        cornerR = cornerR,
-                    )
-
-                    val fillBlend = (p / 0.35f).coerceIn(0f, 1f)
-                    val fillColor = lerp(idleLipTint, BezelObsidian, fillBlend)
-                    drawPath(path = bulgePath, color = fillColor)
-
-                    if (p > 0.05f) {
-                        val rimAlpha = (if (isDark) 0.18f else 0.12f) * p.coerceAtMost(1f)
-                        drawPath(
-                            path = bulgePath,
-                            color = Color.White.copy(alpha = rimAlpha),
-                            style = Stroke(width = 1.dp.toPx()),
-                        )
-                    }
-
-                    // Деликатный акцентный штрих в состоянии покоя.
-                    if (p < 0.4f) {
-                        val restAlpha = ((1f - p * 2.5f).coerceIn(0f, 1f)) * 0.85f
-                        val barW = 2.5.dp.toPx()
-                        val barH = 20.dp.toPx()
-                        val barX = if (isRight) size.width - barW - 1.dp.toPx() else 1.dp.toPx()
-                        drawRoundRect(
-                            color = accentColor.copy(alpha = restAlpha),
-                            topLeft = Offset(barX, size.height * 0.5f - barH * 0.5f),
-                            size = Size(barW, barH),
-                            cornerRadius = CornerRadius(barW * 0.5f, barW * 0.5f),
-                        )
-                    }
-
-                    // Тонкие тактильные риски вдоль края, как на диске управления iPhone.
-                    if (p > 0.25f && items.size > 1) {
-                        val dialAlpha = ((p - 0.25f) / 0.55f).coerceIn(0f, 1f)
-                        val spanTop = size.height * 0.5f - bodyH * 0.40f
-                        val spanH = bodyH * 0.80f
-                        val xEdge = if (isRight) size.width else 0f
-                        val dir = if (isRight) -1f else 1f
-                        val tickInset = 4.dp.toPx()
-                        val totalTicks = 13
-                        for (i in 0 until totalTicks) {
-                            val tNorm = i.toFloat() / (totalTicks - 1)
-                            val y = spanTop + tNorm * spanH
-                            val slotPos = tNorm * (items.size - 1)
-                            val isMajor = i % 4 == 0
-                            val dist = abs(slotPos - smoothSlot)
-                            val focus = (1f - dist).coerceIn(0f, 1f)
-                            val len = (if (isMajor) 7.dp else 4.dp).toPx() + focus * 2.dp.toPx()
-                            val baseAlpha = (if (isMajor) 0.42f else 0.18f) * dialAlpha
-                            val color = lerp(
-                                Color.White.copy(alpha = baseAlpha),
-                                accentColor.copy(alpha = dialAlpha),
-                                focus,
-                            )
-                            drawLine(
-                                color = color,
-                                start = Offset(xEdge + dir * tickInset, y),
-                                end = Offset(xEdge + dir * (tickInset + len), y),
-                                strokeWidth = (if (isMajor) 1.5.dp else 1.dp).toPx(),
-                                cap = StrokeCap.Round,
-                            )
-                        }
-                    }
-                }
-
-                // Контейнер вкладок внутри вылазки с плавающей плашкой выбора.
-                val contentAlpha = ((expandProgress - 0.15f) / 0.55f).coerceIn(0f, 1f)
-                if (contentAlpha > 0.01f) {
-                    val shiftPx = with(density) {
-                        (1f - expandProgress.coerceAtMost(1f)) * 36.dp.toPx() * (if (isRight) 1f else -1f)
-                    }
-                    val stepPx = with(density) { 50.dp.toPx() }
-                    val pillOffsetY = (pillSlot * stepPx).roundToInt()
-
-                    Box(
-                        Modifier
-                            .align(if (isRight) Alignment.CenterEnd else Alignment.CenterStart)
-                            .padding(
-                                end = if (isRight) 20.dp else 0.dp,
-                                start = if (!isRight) 20.dp else 0.dp,
-                            )
-                            .width(148.dp)
-                            .height(196.dp)
-                            .graphicsLayer {
-                                alpha = contentAlpha
-                                translationX = shiftPx
-                            },
-                    ) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(46.dp)
-                                .offset { IntOffset(0, pillOffsetY) }
-                                .clip(CircleShape)
-                                .background(accentColor),
-                        )
-
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            items.forEachIndexed { idx, item ->
-                                val active = idx == selectedIndex
-                                val tint by animateColorAsState(
-                                    targetValue = if (active) onAccentColor else Color.White.copy(alpha = 0.72f),
-                                    animationSpec = tween(160),
-                                    label = "bezelItemTint",
-                                )
-                                val iconScale by animateFloatAsState(
-                                    targetValue = if (active) 1.08f else 1f,
-                                    animationSpec = spring(dampingRatio = 0.65f, stiffness = 540f),
-                                    label = "bezelIconScale",
-                                )
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(46.dp)
-                                        .clip(CircleShape)
-                                        .padding(horizontal = 14.dp)
-                                        .semantics {
-                                            contentDescription = item.title
-                                            selected = active
-                                        },
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                ) {
-                                    Icon(
-                                        painterResource(item.icon),
-                                        contentDescription = null,
-                                        tint = tint,
-                                        modifier = Modifier
-                                            .size(20.dp)
-                                            .graphicsLayer { scaleX = iconScale; scaleY = iconScale },
-                                    )
-                                    Text(
-                                        item.title,
-                                        fontSize = 13.sp,
-                                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                                        color = tint,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Невидимая сенсорная зона у края: зажал и ведёшь вверх/вниз — отпустил и всё скрылось.
-                Box(
+            // Деликатный намёк вдоль всего активного края экрана в состоянии покоя.
+            val idleStripAlpha = ((1f - expandProgress * 3.2f).coerceIn(0f, 1f)) * 0.55f
+            if (idleStripAlpha > 0.01f) {
+                Canvas(
                     Modifier
                         .align(if (isRight) Alignment.CenterEnd else Alignment.CenterStart)
-                        .size(width = 28.dp, height = 152.dp)
-                        .systemGestureExclusion()
-                        .semantics { contentDescription = "Панель вкладок" }
-                        .pointerInput(items.size) {
-                            val stepPx = 36.dp.toPx()
-                            awaitEachGesture {
-                                val down = awaitFirstDown(requireUnconsumed = false)
-                                val startY = down.position.y
-                                val startIdx = currentSelectedIndex.toFloat()
-                                isPressed = true
-                                analogSlot = startIdx
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                try {
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                        if (!change.pressed) break
-                                        change.consume()
-                                        val dy = change.position.y - startY
-                                        val maxIdx = (currentItems.size - 1).coerceAtLeast(0).toFloat()
-                                        analogSlot = (startIdx + dy / stepPx).coerceIn(0f, maxIdx)
-                                        val targetIdx = analogSlot.roundToInt().coerceIn(0, currentItems.lastIndex)
-                                        if (targetIdx != currentSelectedIndex) {
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            currentItems[targetIdx].onClick()
-                                        }
+                        .fillMaxHeight(0.76f)
+                        .width(4.dp),
+                ) {
+                    val lineW = 2.dp.toPx()
+                    val x = if (isRight) size.width - lineW - 0.5.dp.toPx() else 0.5.dp.toPx()
+                    val brush = Brush.verticalGradient(
+                        0.00f to Color.Transparent,
+                        0.15f to accentColor.copy(alpha = idleStripAlpha * 0.65f),
+                        0.50f to accentColor.copy(alpha = idleStripAlpha),
+                        0.85f to accentColor.copy(alpha = idleStripAlpha * 0.65f),
+                        1.00f to Color.Transparent,
+                    )
+                    drawRoundRect(
+                        brush = brush,
+                        topLeft = Offset(x, 0f),
+                        size = Size(lineW, size.height),
+                        cornerRadius = CornerRadius(lineW * 0.5f, lineW * 0.5f),
+                    )
+                }
+            }
+
+            // Органическая вылазка от рамки экрана, всплывающая на высоте нажатия пальца.
+            if (expandProgress > 0.004f) {
+                val bulgeTopPx = (smoothAnchorY - halfBulgePx).roundToInt()
+                Box(
+                    Modifier
+                        .align(if (isRight) Alignment.TopEnd else Alignment.TopStart)
+                        .offset { IntOffset(0, bulgeTopPx) }
+                        .size(width = bulgeW, height = bulgeH),
+                ) {
+                    Canvas(Modifier.fillMaxSize()) {
+                        val p = expandProgress.coerceAtLeast(0f)
+                        val bodyW = lerp(5.dp.toPx(), 180.dp.toPx(), p)
+                        val bodyH = lerp(74.dp.toPx(), 216.dp.toPx(), p)
+                        val shoulder = lerp(10.dp.toPx(), 32.dp.toPx(), p)
+                        val cornerR = lerp(4.dp.toPx(), 26.dp.toPx(), p)
+                            .coerceAtMost(bodyW * 0.85f)
+                            .coerceAtMost(bodyH * 0.45f)
+
+                        drawBezelBulgePath(
+                            path = bulgePath,
+                            isRight = isRight,
+                            bodyW = bodyW,
+                            bodyH = bodyH,
+                            shoulder = shoulder,
+                            cornerR = cornerR,
+                        )
+
+                        val fillBlend = (p / 0.30f).coerceIn(0f, 1f)
+                        val fillColor = lerp(idleLipTint, BezelObsidian, fillBlend)
+                        drawPath(path = bulgePath, color = fillColor)
+
+                        if (p > 0.04f) {
+                            val rimAlpha = (if (isDark) 0.18f else 0.12f) * p.coerceAtMost(1f)
+                            drawPath(
+                                path = bulgePath,
+                                color = Color.White.copy(alpha = rimAlpha),
+                                style = Stroke(width = 1.dp.toPx()),
+                            )
+                        }
+
+                        // Тонкие тактильные риски вдоль края, как на диске управления iPhone.
+                        if (p > 0.22f && items.size > 1) {
+                            val dialAlpha = ((p - 0.22f) / 0.52f).coerceIn(0f, 1f)
+                            val spanTop = size.height * 0.5f - bodyH * 0.40f
+                            val spanH = bodyH * 0.80f
+                            val xEdge = if (isRight) size.width else 0f
+                            val dir = if (isRight) -1f else 1f
+                            val tickInset = 4.dp.toPx()
+                            val totalTicks = 13
+                            for (i in 0 until totalTicks) {
+                                val tNorm = i.toFloat() / (totalTicks - 1)
+                                val y = spanTop + tNorm * spanH
+                                val slotPos = tNorm * (items.size - 1)
+                                val isMajor = i % 4 == 0
+                                val dist = abs(slotPos - smoothSlot)
+                                val focus = (1f - dist).coerceIn(0f, 1f)
+                                val len = (if (isMajor) 7.dp else 4.dp).toPx() + focus * 2.dp.toPx()
+                                val baseAlpha = (if (isMajor) 0.42f else 0.18f) * dialAlpha
+                                val color = lerp(
+                                    Color.White.copy(alpha = baseAlpha),
+                                    accentColor.copy(alpha = dialAlpha),
+                                    focus,
+                                )
+                                drawLine(
+                                    color = color,
+                                    start = Offset(xEdge + dir * tickInset, y),
+                                    end = Offset(xEdge + dir * (tickInset + len), y),
+                                    strokeWidth = (if (isMajor) 1.5.dp else 1.dp).toPx(),
+                                    cap = StrokeCap.Round,
+                                )
+                            }
+                        }
+                    }
+
+                    // Контейнер вкладок внутри вылазки с плавающей плашкой выбора.
+                    val contentAlpha = ((expandProgress - 0.12f) / 0.52f).coerceIn(0f, 1f)
+                    if (contentAlpha > 0.01f) {
+                        val contentReveal = contentAlpha
+                        val shiftPx = with(density) {
+                            (1f - expandProgress.coerceAtMost(1f)) * 28.dp.toPx() * (if (isRight) 1f else -1f)
+                        }
+                        val stepPx = with(density) { 50.dp.toPx() }
+                        val pillOffsetY = (pillSlot * stepPx).roundToInt()
+
+                        Box(
+                            Modifier
+                                .align(if (isRight) Alignment.CenterEnd else Alignment.CenterStart)
+                                .padding(
+                                    end = if (isRight) 20.dp else 0.dp,
+                                    start = if (!isRight) 20.dp else 0.dp,
+                                )
+                                .width(148.dp)
+                                .height(196.dp)
+                                .graphicsLayer {
+                                    alpha = contentAlpha
+                                    translationX = shiftPx
+                                    scaleX = lerp(0.84f, 1f, contentReveal)
+                                    scaleY = lerp(0.92f, 1f, contentReveal)
+                                    transformOrigin = TransformOrigin(if (isRight) 1f else 0f, 0.5f)
+                                },
+                        ) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(46.dp)
+                                    .offset { IntOffset(0, pillOffsetY) }
+                                    .clip(CircleShape)
+                                    .background(accentColor),
+                            )
+
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                items.forEachIndexed { idx, item ->
+                                    val focus = (1f - abs(idx - pillSlot)).coerceIn(0f, 1f)
+                                    val tint = lerp(
+                                        Color.White.copy(alpha = 0.72f),
+                                        onAccentColor,
+                                        focus,
+                                    )
+                                    val iconScale = lerp(1f, 1.08f, focus)
+                                    val isHighlighted = if (isPressed) idx == previewIndex else idx == selectedIndex
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(46.dp)
+                                            .clip(CircleShape)
+                                            .padding(horizontal = 14.dp)
+                                            .semantics {
+                                                contentDescription = item.title
+                                                selected = isHighlighted
+                                            },
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        Icon(
+                                            painterResource(item.icon),
+                                            contentDescription = null,
+                                            tint = tint,
+                                            modifier = Modifier
+                                                .size(20.dp)
+                                                .graphicsLayer { scaleX = iconScale; scaleY = iconScale },
+                                        )
+                                        Text(
+                                            item.title,
+                                            fontSize = 13.sp,
+                                            fontWeight = if (isHighlighted) FontWeight.SemiBold else FontWeight.Medium,
+                                            color = tint,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
                                     }
-                                } finally {
-                                    isPressed = false
                                 }
                             }
-                        },
+                        }
+                    }
+                }
+            }
+
+            // Полновысотная сенсорная полоса вдоль края (с динамическим 200dp systemGestureExclusion):
+            // зажим на любой высоте края открывает вылазку под пальцем, смена вкладки происходит при отпускании.
+            val exclusionHalfPx = with(density) { 100.dp.toPx() }
+            val exclusionTopPx = (smoothAnchorY - exclusionHalfPx)
+                .coerceIn(0f, (containerHeightPx - exclusionHalfPx * 2f).coerceAtLeast(0f))
+                .roundToInt()
+
+            Box(
+                Modifier
+                    .align(if (isRight) Alignment.CenterEnd else Alignment.CenterStart)
+                    .fillMaxHeight()
+                    .width(26.dp)
+                    .semantics { contentDescription = "Панель вкладок" }
+                    .pointerInput(items.size, isRight) {
+                        val stepPx = 40.dp.toPx()
+                        val touchSlopPx = viewConfiguration.touchSlop
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val downX = down.position.x
+                            val downY = down.position.y
+                            val clampedY = if (containerHeightPx > 0f) {
+                                downY.coerceIn(
+                                    halfBulgePx,
+                                    (containerHeightPx - halfBulgePx).coerceAtLeast(halfBulgePx),
+                                )
+                            } else {
+                                downY
+                            }
+
+                            // Даём 60 мс на распознавание быстрого горизонтального системного свайпа «Назад».
+                            val quickCancel = withTimeoutOrNull(60L) {
+                                var canceledAsBack = false
+                                while (true) {
+                                    val ev = awaitPointerEvent(PointerEventPass.Initial)
+                                    val ch = ev.changes.firstOrNull { it.id == down.id }
+                                    if (ch == null || ch.changedToUpIgnoreConsumed() || !ch.pressed) {
+                                        canceledAsBack = true
+                                        break
+                                    }
+                                    val dx = ch.position.x - downX
+                                    val dy = ch.position.y - downY
+                                    val inwardDx = if (isRight) -dx else dx
+                                    if (inwardDx > touchSlopPx && inwardDx > abs(dy) * 1.4f) {
+                                        canceledAsBack = true
+                                        break
+                                    }
+                                    if (abs(dy) > touchSlopPx) {
+                                        break
+                                    }
+                                }
+                                canceledAsBack
+                            }
+                            if (quickCancel == true) return@awaitEachGesture
+
+                            val startIdx = currentSelectedIndex.coerceIn(0, (currentItems.size - 1).coerceAtLeast(0))
+                            anchorY = clampedY
+                            hasCustomAnchor = true
+                            previewIndex = startIdx
+                            analogSlot = startIdx.toFloat()
+                            isPressed = true
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+
+                            var liftedNormally = false
+                            try {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (change.changedToUpIgnoreConsumed() || !change.pressed) {
+                                        liftedNormally = true
+                                        break
+                                    }
+                                    change.consume()
+                                    val dy = change.position.y - downY
+                                    val maxSlot = (currentItems.size - 1).coerceAtLeast(0).toFloat()
+                                    val nextSlot = (startIdx + dy / stepPx).coerceIn(0f, maxSlot)
+                                    analogSlot = nextSlot
+                                    val candidateIdx = nextSlot.roundToInt()
+                                        .coerceIn(0, currentItems.lastIndex.coerceAtLeast(0))
+                                    if (candidateIdx != previewIndex) {
+                                        previewIndex = candidateIdx
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
+                                }
+                            } finally {
+                                isPressed = false
+                                if (liftedNormally && currentItems.isNotEmpty()) {
+                                    val commitIdx = previewIndex.coerceIn(0, currentItems.lastIndex)
+                                    if (commitIdx != currentSelectedIndex) {
+                                        currentItems[commitIdx].onClick()
+                                    }
+                                }
+                            }
+                        }
+                    },
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(200.dp)
+                        .offset { IntOffset(0, exclusionTopPx) }
+                        .systemGestureExclusion(),
                 )
             }
         }
     }
+}
+
+/** C¹/C²-непрерывная кривая магнитного притяжения к центрам вкладок без резких скачков. */
+private fun continuousSlotCurve(slot: Float, maxIdx: Int): Float {
+    if (maxIdx <= 0) return 0f
+    val clamped = slot.coerceIn(0f, maxIdx.toFloat())
+    val base = floor(clamped).toInt().coerceIn(0, (maxIdx - 1).coerceAtLeast(0))
+    val frac = (clamped - base).coerceIn(0f, 1f)
+    val s = frac * frac * (3f - 2f * frac)
+    val smoother = s * s * (3f - 2f * s)
+    return (base + smoother).coerceIn(0f, maxIdx.toFloat())
 }
 
 /** Органическая форма вылазки, плавно вытягивающаяся из рамки экрана с вогнутыми плечами. */
