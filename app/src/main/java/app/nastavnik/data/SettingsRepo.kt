@@ -11,6 +11,7 @@ import app.nastavnik.ai.ProxyConfig
 import app.nastavnik.ai.ModelPresets
 import app.nastavnik.ai.OpenAiCompatPresets
 import app.nastavnik.ai.Strictness
+import app.nastavnik.theme.MascotColor
 import app.nastavnik.theme.TabBarPosition
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -74,6 +75,8 @@ data class AppSettings(
     val sideCapsuleBias: Float = 0.78f,
     /** Показывать текстовые подписи рядом со значками в боковой вылазке. */
     val sideCapsuleShowLabels: Boolean = true,
+    /** Цвет сферы маскота-наставника. */
+    val mascotColor: String = MascotColor.SUNSET.id,
 )
 
 /**
@@ -132,6 +135,7 @@ class SettingsRepo(private val context: Context) {
         phoneTabBar = phoneTabBar(),
         sideCapsuleBias = sideCapsuleBias(),
         sideCapsuleShowLabels = sideCapsuleShowLabels(),
+        mascotColor = mascotColor(),
     )
 
     /**
@@ -188,6 +192,9 @@ class SettingsRepo(private val context: Context) {
 
     fun sideCapsuleShowLabels(): Boolean = prefs.getBoolean(K_SIDE_CAPSULE_LABELS, true)
     fun setSideCapsuleShowLabels(show: Boolean) = prefs.edit { putBoolean(K_SIDE_CAPSULE_LABELS, show) }
+
+    fun mascotColor(): String = MascotColor.fromId(prefs.getString(K_MASCOT_COLOR, MascotColor.SUNSET.id)).id
+    fun setMascotColor(color: MascotColor) = prefs.edit { putString(K_MASCOT_COLOR, color.id) }
 
     /** Поток настроек: выдаёт текущее значение и каждое изменение. */
     fun flow(): Flow<AppSettings> = callbackFlow {
@@ -581,5 +588,6 @@ class SettingsRepo(private val context: Context) {
         private const val K_PHONE_TAB_BAR = "phone_tab_bar"
         private const val K_SIDE_CAPSULE_BIAS = "side_capsule_bias"
         private const val K_SIDE_CAPSULE_LABELS = "side_capsule_show_labels"
+        private const val K_MASCOT_COLOR = "mascot_color"
     }
 }

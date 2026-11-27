@@ -11,6 +11,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,10 +26,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,17 +46,22 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.nastavnik.R
 import app.nastavnik.app
 import app.nastavnik.data.AppSettings
 import app.nastavnik.data.SettingsRepo
+import app.nastavnik.theme.MascotColor
 import app.nastavnik.theme.TabBarPosition
 import kotlinx.coroutines.launch
+import kotlin.math.sin
 
 /** Вход в «Оформление» из настроек: мини-палитра текущей темы и стрелка. */
 @Composable
@@ -85,9 +95,8 @@ fun AppearanceEntry(onOpen: () -> Unit) {
 @Composable
 fun AppearanceScreen(onBack: () -> Unit) {
     val repo = LocalContext.current.app.settings
-    // Локальные копии — чтобы выбор отзывался мгновенно, а настройки сохранялись следом.
-    var s by remember { mutableStateOf(repo.load()) }
-    fun refresh() { s = repo.load() }
+    val s by remember { repo.flow() }.collectAsStateWithLifecycle(initialValue = repo.load())
+    fun refresh() {}
     val context = LocalContext.current
     val tablet = remember(s.deviceRole) { context.app.isTablet() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -106,6 +115,12 @@ fun AppearanceScreen(onBack: () -> Unit) {
 
     ScreenScaffold(title = "Оформление", onBack = onBack) {
         SheetPreview()
+
+        MascotStyleCard(
+            s = s,
+            repo = repo,
+            onChanged = { refresh() },
+        )
 
         SectionCard("Режим") {
             Segmented(ThemeMode.entries.map { it to it.label }, mode) { repo.setThemeMode(it.name); refresh() }
@@ -194,24 +209,36 @@ fun TabBarSettingsCard(
         val current = if (tablet) TabBarPosition.forTablet(s.tabletTabBar) else TabBarPosition.forPhone(s.phoneTabBar)
         if (tablet) {
             FieldLabel(
-                "Сторона на планшете",
-                "Зажми край экрана на любой высоте — плавно выедет вылазка с вкладками; веди вверх и вниз, отпусти для перехода.",
+                "Стиль и сторона на планшете",
+                "Капсула снизу или вылазка по краям на любой высоте: зажми и проведи или дважды нажми на край (убирается так же двумя нажатиями).",
             )
-            Segmented(
-                listOf(
-                    TabBarPosition.LEFT to "Слева",
-                    TabBarPosition.RIGHT to "Справа",
-                    TabBarPosition.BOTH to "С двух сторон",
-                ),
-                current,
-            ) {
-                repo.setTabletTabBar(it)
-                onChanged()
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Segmented(
+                    listOf(
+                        TabBarPosition.BOTTOM_CAPSULE to "Капсула снизу",
+                        TabBarPosition.BOTTOM to "Обычная",
+                    ),
+                    current,
+                ) {
+                    repo.setTabletTabBar(it)
+                    onChanged()
+                }
+                Segmented(
+                    listOf(
+                        TabBarPosition.LEFT to "Слева",
+                        TabBarPosition.RIGHT to "Справа",
+                        TabBarPosition.BOTH to "С двух сторон",
+                    ),
+                    current,
+                ) {
+                    repo.setTabletTabBar(it)
+                    onChanged()
+                }
             }
         } else {
             FieldLabel(
                 "Стиль и сторона на телефоне",
-                "Зажми край экрана на любой высоте — плавно выедет вылазка с вкладками; веди вверх и вниз, отпусти для перехода.",
+                "Зажми край на любой высоте (отпускание скроет) или дважды нажми на край, чтобы закрепить вылазку (убирается тоже двумя нажатиями).",
             )
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Segmented(
@@ -237,7 +264,7 @@ fun TabBarSettingsCard(
                 }
             }
         }
-        if (tablet || current.isSide()) {
+        if (current.isSide()) {
             FieldLabel(
                 "Подписи рядом со значками",
                 "Можно оставить названия вкладок или включить компактную вылазку только со значками.",
@@ -407,5 +434,219 @@ private fun AccentDot(c: Color, selected: Boolean, onClick: () -> Unit) {
     ) {
         Box(Modifier.size((26 + 6 * k).dp).clip(CircleShape).background(c))
         if (k > 0.01f) Box(Modifier.size(40.dp).graphicsLayer { alpha = k }.border(2.dp, c, CircleShape))
+    }
+}
+
+private enum class MascotDemoMode(val label: String) {
+    IDLE("Живой"),
+    THINKING("Думает"),
+    WRITING("Пишет"),
+    LISTENING("Слушает"),
+    SPEAKING("Говорит"),
+}
+
+/** Интерактивная витрина живой сферы наставника и выбор её цвета. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun MascotStyleCard(
+    s: AppSettings,
+    repo: SettingsRepo,
+    onChanged: () -> Unit = {},
+) {
+    val current = MascotColor.fromId(s.mascotColor)
+    var demoMode by remember { mutableStateOf(MascotDemoMode.IDLE) }
+    var wavePhase by remember { mutableFloatStateOf(0f) }
+    val needVoiceWave = demoMode == MascotDemoMode.LISTENING || demoMode == MascotDemoMode.SPEAKING
+    LaunchedEffect(needVoiceWave) {
+        if (!needVoiceWave) {
+            wavePhase = 0f
+        } else {
+            val start = withFrameNanos { it }
+            while (true) {
+                withFrameNanos { now -> wavePhase = (now - start) / 1_000_000_000f }
+            }
+        }
+    }
+    val simulatedVoice = if (needVoiceWave) {
+        (0.45f + 0.42f * sin(wavePhase * 6.5f) * 0.5f + 0.25f * sin(wavePhase * 15f)).coerceIn(0.1f, 1f)
+    } else {
+        0f
+    }
+
+    val stops = current.resolveStops(Brand.Accent.toArgb())
+    val stageGlow = Color(stops.haloArgb)
+
+    SectionCard("Облик наставника") {
+        // Контрастная тёмная сцена с живым свечением сферы и переключателем состояний.
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color(0xFF101218))
+                .border(1.dp, Color(0x22FFFFFF), RoundedCornerShape(24.dp))
+                .padding(horizontal = 16.dp, vertical = 18.dp),
+        ) {
+            Canvas(Modifier.matchParentSize()) {
+                val c = Offset(size.width * 0.5f, size.height * 0.38f)
+                val rad = size.maxDimension * 0.62f
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        0.0f to stageGlow.copy(alpha = 0.24f),
+                        0.55f to stageGlow.copy(alpha = 0.08f),
+                        1.0f to Color.Transparent,
+                        center = c,
+                        radius = rad,
+                    ),
+                    radius = rad,
+                    center = c,
+                )
+            }
+            Column(
+                Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                MascotIcon(
+                    writing = demoMode == MascotDemoMode.WRITING,
+                    thinking = demoMode == MascotDemoMode.THINKING,
+                    speaking = demoMode == MascotDemoMode.SPEAKING,
+                    listening = demoMode == MascotDemoMode.LISTENING,
+                    voiceLevel = simulatedVoice,
+                    sizeDp = 92.dp,
+                    colorOverride = current,
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    MascotDemoMode.entries.forEach { mode ->
+                        val active = mode == demoMode
+                        Box(
+                            Modifier
+                                .clip(CircleShape)
+                                .background(if (active) Color.White else Color(0x18FFFFFF))
+                                .border(
+                                    width = 1.dp,
+                                    color = if (active) Color.White else Color(0x28FFFFFF),
+                                    shape = CircleShape,
+                                )
+                                .clickable { demoMode = mode }
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                        ) {
+                            Text(
+                                mode.label,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                                color = if (active) Color(0xFF101218) else Color(0xFFDCE0EB),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        FieldLabel(
+            "Цвет сферы наставника",
+            "Применяется в тетради, на главном экране и на плавающей кнопке.",
+        )
+
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            MascotColor.entries.forEach { preset ->
+                MascotColorSwatch(
+                    preset = preset,
+                    selected = preset == current,
+                    themeAccentArgb = Brand.Accent.toArgb(),
+                    onClick = {
+                        repo.setMascotColor(preset)
+                        onChanged()
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MascotColorSwatch(
+    preset: MascotColor,
+    selected: Boolean,
+    themeAccentArgb: Int,
+    onClick: () -> Unit,
+) {
+    val lift by animateFloatAsState(
+        targetValue = if (selected) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.62f, stiffness = 460f),
+        label = "swatchLift",
+    )
+    val stops = preset.resolveStops(themeAccentArgb)
+    Column(
+        Modifier
+            .width(68.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = "Цвет маскота ${preset.title}" }
+            .padding(vertical = 6.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            Modifier
+                .size(48.dp)
+                .graphicsLayer {
+                    val sc = 1f + lift * 0.06f
+                    scaleX = sc
+                    scaleY = sc
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            if (lift > 0.01f) {
+                Box(
+                    Modifier
+                        .size(48.dp)
+                        .graphicsLayer { alpha = lift }
+                        .border(2.2.dp, Color(stops.midArgb), CircleShape),
+                )
+            }
+            Canvas(Modifier.size(38.dp)) {
+                val r = size.minDimension * 0.5f
+                val c = Offset(size.width * 0.5f, size.height * 0.5f)
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        0.0f to Color(stops.coreArgb),
+                        0.52f to Color(stops.midArgb),
+                        0.88f to Color(stops.rimArgb),
+                        1.0f to Color(stops.rimArgb),
+                        center = Offset(c.x - r * 0.10f, c.y - r * 0.10f),
+                        radius = r * 1.24f,
+                    ),
+                    radius = r,
+                    center = c,
+                )
+                val eyeOffX = r * 0.26f
+                val eyeW = r * 0.28f
+                val eyeH = r * 0.44f
+                for (sign in listOf(-1f, 1f)) {
+                    drawRoundRect(
+                        color = Color.White,
+                        topLeft = Offset(c.x + sign * eyeOffX - eyeW * 0.5f, c.y - eyeH * 0.5f),
+                        size = Size(eyeW, eyeH),
+                        cornerRadius = CornerRadius(eyeW * 0.5f, eyeW * 0.5f),
+                    )
+                }
+            }
+        }
+        Text(
+            preset.title,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) Brand.Ink else Brand.InkSoft,
+            maxLines = 1,
+        )
     }
 }

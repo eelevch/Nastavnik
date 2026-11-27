@@ -20,13 +20,15 @@ enum class TabBarPosition(val id: String, val label: String) {
     fun hasRightEdge(): Boolean = this == RIGHT || this == BOTH
 
     companion object {
-        val TABLET_OPTIONS = listOf(LEFT, RIGHT, BOTH)
+        val TABLET_OPTIONS = listOf(BOTTOM_CAPSULE, LEFT, RIGHT, BOTH)
         val PHONE_OPTIONS = listOf(BOTTOM, BOTTOM_CAPSULE, LEFT, RIGHT, BOTH)
 
-        /** Безопасный разбор настройки планшета: допустимы LEFT, RIGHT или BOTH. */
+        /** Безопасный разбор настройки планшета: допустимы все боковые и нижние варианты, по умолчанию LEFT. */
         fun forTablet(raw: String?): TabBarPosition = when {
             raw.equals(RIGHT.id, ignoreCase = true) -> RIGHT
             raw.equals(BOTH.id, ignoreCase = true) -> BOTH
+            raw.equals(BOTTOM_CAPSULE.id, ignoreCase = true) -> BOTTOM_CAPSULE
+            raw.equals(BOTTOM.id, ignoreCase = true) -> BOTTOM
             else -> LEFT
         }
 

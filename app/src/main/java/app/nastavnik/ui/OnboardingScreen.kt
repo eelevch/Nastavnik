@@ -131,13 +131,21 @@ fun OnboardingScreen(resumeTick: Int, onDone: () -> Unit, onSkip: () -> Unit) {
                 .padding(26.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Box(
-                Modifier
-                    .size(56.dp)
-                    .glass(RoundedCornerShape(18.dp), 4.dp, strong = true),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(painterResource(icons[index.coerceIn(0, icons.lastIndex)]), contentDescription = null, tint = Brand.Ink, modifier = Modifier.size(26.dp))
+            if (index == 0 || index == steps.lastIndex) {
+                MascotIcon(
+                    writing = index == steps.lastIndex,
+                    thinking = index == 0,
+                    sizeDp = 56.dp,
+                )
+            } else {
+                Box(
+                    Modifier
+                        .size(56.dp)
+                        .glass(RoundedCornerShape(18.dp), 4.dp, strong = true),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(painterResource(icons[index.coerceIn(0, icons.lastIndex)]), contentDescription = null, tint = Brand.Ink, modifier = Modifier.size(26.dp))
+                }
             }
             Text(step.title, style = MaterialTheme.typography.headlineMedium)
             Text(step.why, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)

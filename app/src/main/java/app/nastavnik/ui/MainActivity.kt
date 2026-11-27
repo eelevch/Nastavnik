@@ -13,6 +13,7 @@ import app.nastavnik.BuildConfig
 import app.nastavnik.R
 import app.nastavnik.data.AppSettings
 import app.nastavnik.data.TelegramMetrics
+import app.nastavnik.theme.MascotColor
 import app.nastavnik.theme.TabBarPosition
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Column
@@ -302,6 +303,9 @@ class MainActivity : ComponentActivity() {
             if (intent.hasExtra("debug_side_labels")) {
                 app.settings.setSideCapsuleShowLabels(intent.getBooleanExtra("debug_side_labels", true))
             }
+            intent.getStringExtra("debug_mascot_color")?.let {
+                app.settings.setMascotColor(MascotColor.fromId(it))
+            }
         }
         val s = intent.getStringExtra(EXTRA_SCREEN) ?: return null
         fromOverlay = intent.getBooleanExtra(EXTRA_FROM_OVERLAY, false)
@@ -449,4 +453,5 @@ internal fun appearanceOf(st: AppSettings) = Appearance(
     accent = st.accent,
     backdrop = runCatching { Backdrop.valueOf(st.backdrop) }.getOrDefault(Backdrop.PLAIN),
     textScale = st.textScale,
+    mascotColor = MascotColor.fromId(st.mascotColor),
 )

@@ -1,12 +1,12 @@
 package app.nastavnik.ui
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -16,35 +16,34 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.nastavnik.theme.MascotColor
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
-private val MascotRingBlueLight = Color(0xFF2563EB)
-private val MascotRingBlueDark = Color(0xFF3B82F6)
-private val MascotSparkBlue = Color(0xFF93C5FD)
-
 /**
- * Процедурный векторный маскот-бот в стиле Grok (120 FPS, всегда с фирменным синим кольцом):
- * - Непрерывная физика на базе кадровых наносекунд и пружинное смешивание всех состояний без резких скачков.
- * - Постоянно живой: невесомое парение с инерцией кольца и лёгкой гироскопической прецессией,
- *   живой саккадный взгляд с 3D-перспективой глаз и плавным двойным/одинарным морганием.
- * - Пока человек пишет ([writing]): улыбка и плавно выезжающая машущая рука с живым кистевым движением.
- * - Пока наставник думает ([thinking]): бесшовная 360° комета с затухающим хвостом и искрой на орбите.
- * - В голосовом режиме ([speaking] / [listening]): расходящиеся звуковые волны и пульсация взгляда.
+ * Живой сферический маскот-наставник (120 FPS):
+ * - Объёмная 3D-сфера с динамическим смещением ядра радиального градиента и внутренними биолюминесцентными бликами.
+ * - Саккадный взгляд с 3D-перспективой глаз, плавным одинарным и двойным морганием и микро-наклонами головы.
+ * - В режиме [writing]: плавный морфинг глаз в радостные дуги `^ ^`, мягкое оживлённое подпрыгивание и тёплое сияние.
+ * - В режиме [thinking]: вихрь светящихся внутренних потоков внутри сферы и встречные орбитальные дуги по краю.
+ * - В голосовом режиме ([speaking] / [listening]): концентрические звуковые волны и отзывчивое расширение сферы.
  */
 @Composable
 fun MascotIcon(
@@ -54,13 +53,20 @@ fun MascotIcon(
     listening: Boolean = false,
     voiceLevel: Float = 0f,
     sizeDp: Dp = 26.dp,
+    colorOverride: MascotColor? = null,
     modifier: Modifier = Modifier,
 ) {
-    val ink = Brand.Ink
-    val paper = Brand.Paper
-    val ringBlue = if (Brand.dark) MascotRingBlueDark else MascotRingBlueLight
+    val activePreset = colorOverride ?: Brand.mascotColor
+    val stops = activePreset.resolveStops(Brand.Accent.toArgb())
 
-    // Непрерывный таймер без обнуления циклов (120 FPS без аллокаций).
+    val colorSpec = tween<Color>(380)
+    val coreColor by animateColorAsState(Color(stops.coreArgb), colorSpec, label = "mascotCore")
+    val midColor by animateColorAsState(Color(stops.midArgb), colorSpec, label = "mascotMid")
+    val rimColor by animateColorAsState(Color(stops.rimArgb), colorSpec, label = "mascotRim")
+    val haloColor by animateColorAsState(Color(stops.haloArgb), colorSpec, label = "mascotHalo")
+    val sparkColor by animateColorAsState(Color(stops.sparkArgb), colorSpec, label = "mascotSpark")
+
+    // Непрерывный таймер (120 FPS) без сброса фазы.
     var timeSec by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(Unit) {
         val start = withFrameNanos { it }
@@ -69,7 +75,7 @@ fun MascotIcon(
         }
     }
 
-    // Плавные пружинные переходы между всеми состояниями (никаких резких переключений за 1 кадр).
+    // Плавные пружинные переходы между всеми состояниями.
     val writingMix by animateFloatAsState(
         targetValue = if (writing) 1f else 0f,
         animationSpec = spring(dampingRatio = 0.65f, stiffness = 360f),
@@ -96,295 +102,260 @@ fun MascotIcon(
         label = "smoothVoice",
     )
 
+    val sphereClip = remember { Path() }
+
     Canvas(modifier = modifier.size(sizeDp)) {
         val minDim = size.minDimension
-        val hoverSin = sin(timeSec * 2.3f)
-        val hoverCos = cos(timeSec * 2.3f)
-        val writeBounce = sin(timeSec * 9.5f) * minDim * 0.014f * writingMix
-        val floatY = hoverSin * minDim * 0.032f + writeBounce
+        val r = minDim * 0.41f
+        val hoverSin = sin(timeSec * 2.2f)
+        val hoverCos = cos(timeSec * 2.2f)
+        val writeBounce = sin(timeSec * 9.2f) * minDim * 0.015f * writingMix
+        val floatY = hoverSin * minDim * 0.028f + writeBounce
 
         val cx = size.width * 0.5f
-        val cy = size.height * 0.52f + floatY
-        val r = minDim * 0.35f
+        val cy = size.height * 0.51f + floatY
+        val center = Offset(cx, cy)
 
-        // Инерционное отставание орбитального кольца для ощущения невесомости.
-        val ringLagY = (sin(timeSec * 2.3f - 0.48f) - hoverSin) * minDim * 0.012f
-        val ringCy = cy + ringLagY
+        // Вектор взгляда: саккады в покое, круговое слежение за светом в размышлении, внимательная фиксация при голосе.
+        val headRad = (timeSec * (2f * PI.toFloat() / 1.45f))
+        val saccadeX = saccadeValue(timeSec) * r * 0.11f
+        val saccadeY = saccadeYValue(timeSec) * r * 0.045f
+        val thinkLookX = cos(headRad) * r * 0.14f
+        val thinkLookY = sin(headRad * 2f) * r * 0.045f - r * 0.02f
 
-        // Живое дыхание наклона и глубины эллипса орбиты.
-        val idleTilt = sin(timeSec * 1.9f) * 5.2f
-        val writeTilt = sin(timeSec * 9.5f) * 6.5f
-        val speakTilt = sin(timeSec * 8.2f) * 7.5f
-        val thinkTilt = sin(timeSec * 5.2f) * 4.5f
-        val ringAngle = -32f +
-            idleTilt * (1f - writingMix) * (1f - thinkingMix) * (1f - speakingMix) +
-            writeTilt * writingMix +
-            thinkTilt * thinkingMix +
-            speakTilt * speakingMix
+        val idleWeight = (1f - thinkingMix) * (1f - writingMix) * (1f - maxOf(speakingMix, listeningMix) * 0.75f)
+        val lookX = saccadeX * idleWeight + thinkLookX * thinkingMix * (1f - writingMix * 0.5f)
+        val lookY = saccadeY * idleWeight + thinkLookY * thinkingMix * (1f - writingMix * 0.5f)
+        val normLookX = (lookX / (r * 0.14f)).coerceIn(-1f, 1f)
 
-        val ringRx = r * 1.32f
-        val ringRy = r * (0.44f + 0.028f * sin(timeSec * 1.9f + 0.8f) + 0.025f * thinkingMix)
-        val ringTopLeft = Offset(cx - ringRx, ringCy - ringRy)
-        val ringSize = Size(ringRx * 2f, ringRy * 2f)
-        val ringStroke = Stroke(width = (r * 0.16f).coerceAtLeast(1.8f), cap = StrokeCap.Round)
+        val voicePresence = maxOf(speakingMix, listeningMix)
+        val activeAura = maxOf(thinkingMix, speakingMix, listeningMix, writingMix * 0.65f)
 
-        val headDeg = ((timeSec / 1.15f) * 360f) % 360f
-        val activeAura = maxOf(thinkingMix, speakingMix, listeningMix)
+        // 1. Внешнее свечение и концентрические звуковые волны.
+        val haloAlpha = (0.16f + 0.20f * activeAura + 0.04f * hoverSin + 0.08f * smoothVoice * voicePresence)
+            .coerceIn(0.05f, 0.48f)
+        val haloRadius = r * (1.28f + 0.16f * activeAura + 0.16f * smoothVoice * voicePresence)
+        drawCircle(
+            brush = Brush.radialGradient(
+                0.0f to haloColor.copy(alpha = haloAlpha),
+                0.6f to haloColor.copy(alpha = haloAlpha * 0.38f),
+                1.0f to Color.Transparent,
+                center = center,
+                radius = haloRadius,
+            ),
+            radius = haloRadius,
+            center = center,
+        )
 
-        // 1. Внешнее синее свечение и расходящиеся звуковые волны.
-        if (activeAura > 0.01f) {
-            val corePulse = (0.13f + 0.10f * sin(timeSec * 5.4f)) * activeAura
-            val voiceSpread = listeningMix * (0.14f + smoothVoice * 0.28f) +
-                speakingMix * (0.16f + 0.10f * sin(timeSec * 9.0f)) +
-                thinkingMix * 0.10f
-            drawCircle(
-                color = ringBlue.copy(alpha = corePulse),
-                radius = r * (1.20f + voiceSpread),
-                center = Offset(cx, cy),
+        if (voicePresence > 0.01f) {
+            for (waveIdx in 0..2) {
+                val p = ((timeSec * 0.90f) + waveIdx / 3f) % 1f
+                val waveRadius = r * (1.03f + p * (0.48f + smoothVoice * 0.30f))
+                val fade = (1f - p)
+                val waveAlpha = fade * fade * 0.55f * voicePresence
+                if (waveAlpha > 0.01f) {
+                    drawCircle(
+                        color = haloColor.copy(alpha = waveAlpha),
+                        radius = waveRadius,
+                        center = center,
+                        style = Stroke(width = (r * (0.075f - p * 0.042f)).coerceAtLeast(1.1f)),
+                    )
+                }
+            }
+        }
+
+        // 2. Встречные светящиеся орбитальные дуги в режиме размышления.
+        if (thinkingMix > 0.01f) {
+            val arcR = r * 1.12f
+            val arcTopLeft = Offset(cx - arcR, cy - arcR)
+            val arcSize = Size(arcR * 2f, arcR * 2f)
+            val arcStroke = Stroke(width = (r * 0.085f).coerceAtLeast(1.4f), cap = StrokeCap.Round)
+            val spinA = (timeSec * 220f) % 360f
+            val spinB = (-timeSec * 155f + 135f) % 360f
+            drawArc(
+                color = sparkColor.copy(alpha = 0.85f * thinkingMix),
+                startAngle = spinA,
+                sweepAngle = 72f,
+                useCenter = false,
+                topLeft = arcTopLeft,
+                size = arcSize,
+                style = arcStroke,
             )
-            val voicePresence = maxOf(speakingMix, listeningMix)
-            if (voicePresence > 0.01f) {
-                for (waveIdx in 0..1) {
-                    val p = ((timeSec * 0.85f) + waveIdx * 0.5f) % 1f
-                    val waveRadius = r * (1.08f + p * (0.56f + smoothVoice * 0.26f))
-                    val waveAlpha = (1f - p) * (1f - p) * 0.52f * voicePresence
-                    if (waveAlpha > 0.01f) {
-                        drawCircle(
-                            color = ringBlue.copy(alpha = waveAlpha),
-                            radius = waveRadius,
-                            center = Offset(cx, cy),
-                            style = Stroke(width = (r * (0.085f - p * 0.045f)).coerceAtLeast(1.1f)),
+            drawArc(
+                color = midColor.copy(alpha = 0.65f * thinkingMix),
+                startAngle = spinB,
+                sweepAngle = 54f,
+                useCenter = false,
+                topLeft = arcTopLeft,
+                size = arcSize,
+                style = arcStroke,
+            )
+        }
+
+        // 3. Сфера-наставник с 3D squash & stretch, микро-наклоном и внутренним плазменным градиентом.
+        val voicePulse = 1f +
+            0.045f * listeningMix +
+            0.055f * smoothVoice * voicePresence +
+            0.022f * sin(timeSec * 12.5f) * speakingMix
+        val stretchY = (1f + hoverCos * 0.018f + 0.020f * abs(sin(timeSec * 9.2f)) * writingMix) * voicePulse
+        val stretchX = (1f - hoverCos * 0.014f + 0.020f * sin(timeSec * 4.6f) * writingMix) * voicePulse
+        val tiltDeg = normLookX * 3.2f * idleWeight +
+            sin(timeSec * 8.6f) * 5.2f * writingMix +
+            sin(timeSec * 2.4f) * 3.0f * thinkingMix
+
+        rotate(degrees = tiltDeg, pivot = center) {
+            scale(scaleX = stretchX, scaleY = stretchY, pivot = center) {
+                sphereClip.reset()
+                sphereClip.addOval(Rect(cx - r, cy - r, cx + r, cy + r))
+
+                clipPath(sphereClip) {
+                    // Базовый обод сферы.
+                    drawCircle(color = rimColor, radius = r, center = center)
+
+                    // Динамическое смещение ядра градиента (3D параллакс за взглядом + плавный органический дрейф).
+                    val driftX = sin(timeSec * 1.35f) * r * 0.08f
+                    val driftY = cos(timeSec * 1.05f) * r * 0.08f
+                    val coreCenter = Offset(cx + lookX * 0.78f + driftX, cy + lookY * 0.78f + driftY)
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            0.0f to coreColor,
+                            0.50f to midColor,
+                            0.86f to rimColor,
+                            1.0f to rimColor,
+                            center = coreCenter,
+                            radius = r * 1.24f,
+                        ),
+                        radius = r,
+                        center = center,
+                    )
+
+                    // Внутренний биолюминесцентный вихрь (в покое — лёгкое дыхание, в размышлении — яркий поток).
+                    val swirlSpeed = 0.9f + thinkingMix * 2.1f + writingMix * 1.1f
+                    val blobAlphaA = (0.14f + thinkingMix * 0.28f + writingMix * 0.16f + smoothVoice * voicePresence * 0.14f)
+                        .coerceIn(0f, 0.55f)
+                    val blobACenter = Offset(
+                        cx + cos(timeSec * swirlSpeed) * r * (0.24f + 0.16f * thinkingMix),
+                        cy + sin(timeSec * swirlSpeed * 1.18f) * r * (0.24f + 0.16f * thinkingMix),
+                    )
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            0.0f to sparkColor.copy(alpha = blobAlphaA),
+                            1.0f to Color.Transparent,
+                            center = blobACenter,
+                            radius = r * 0.78f,
+                        ),
+                        radius = r * 0.78f,
+                        center = blobACenter,
+                    )
+
+                    val blobAlphaB = (0.10f + thinkingMix * 0.26f + speakingMix * 0.16f).coerceIn(0f, 0.45f)
+                    val blobBCenter = Offset(
+                        cx - cos(timeSec * swirlSpeed * 0.85f + 1.2f) * r * 0.30f,
+                        cy + sin(timeSec * swirlSpeed * 0.95f + 0.5f) * r * 0.28f,
+                    )
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            0.0f to coreColor.copy(alpha = blobAlphaB),
+                            1.0f to Color.Transparent,
+                            center = blobBCenter,
+                            radius = r * 0.70f,
+                        ),
+                        radius = r * 0.70f,
+                        center = blobBCenter,
+                    )
+
+                    // Верхний мягкий внутренний рефлекс света на поверхности сферы.
+                    val sheenCenter = Offset(cx - r * 0.12f, cy - r * 0.58f)
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            0.0f to Color.White.copy(alpha = 0.20f + 0.08f * writingMix),
+                            1.0f to Color.Transparent,
+                            center = sheenCenter,
+                            radius = r * 0.72f,
+                        ),
+                        radius = r * 0.72f,
+                        center = sheenCenter,
+                    )
+                }
+
+                // Тонкая световая кромка для чёткого контура на светлом и тёмном фоне.
+                val rimStrokeWidth = (r * 0.042f).coerceIn(0.8f, 1.5f.dp.toPx())
+                drawCircle(
+                    brush = Brush.verticalGradient(
+                        0.0f to Color.White.copy(alpha = 0.30f),
+                        0.5f to Color.White.copy(alpha = 0.06f),
+                        1.0f to Color.White.copy(alpha = 0.14f),
+                        startY = cy - r,
+                        endY = cy + r,
+                    ),
+                    radius = r - rimStrokeWidth * 0.5f,
+                    center = center,
+                    style = Stroke(width = rimStrokeWidth),
+                )
+
+                // 4. Фирменные белые вертикальные глаза-капсулы в стиле Bencho.
+                val eyeY = cy - r * 0.02f
+                val eyeOffX = r * 0.26f
+                val eyeW = r * 0.285f
+                val eyeH = r * 0.45f
+
+                val blinkOpen = blinkOpenFactor(timeSec)
+                val speakPulse = 0.82f + (0.20f + 0.16f * smoothVoice) * ((sin(timeSec * 14f) * 0.65f + cos(timeSec * 23f) * 0.35f + 1f) * 0.5f)
+                val listenWiden = 1f + 0.10f * listeningMix + 0.14f * smoothVoice * listeningMix
+                val thinkFocus = 1f - 0.16f * thinkingMix
+
+                val baseEyeH = eyeH *
+                    (blinkOpen * (1f - speakingMix) + speakPulse * speakingMix) *
+                    listenWiden *
+                    thinkFocus
+
+                val capsuleAlpha = (1f - writingMix * 1.18f).coerceIn(0f, 1f)
+                if (capsuleAlpha > 0.01f) {
+                    val eyeShadowOffset = (r * 0.03f).coerceAtLeast(0.6f)
+                    for (sign in listOf(-1f, 1f)) {
+                        val perspectiveScale = 1f - sign * normLookX * 0.12f
+                        val w = eyeW * perspectiveScale
+                        val h = baseEyeH.coerceAtLeast(eyeH * 0.15f)
+                        val ex = cx + sign * eyeOffX * (1f - abs(normLookX) * 0.04f) + lookX
+                        val ey = eyeY + lookY
+                        val topLeft = Offset(ex - w * 0.5f, ey - h * 0.5f)
+                        val eyeSize = Size(w, h)
+                        val cr = CornerRadius(w * 0.5f, w * 0.5f)
+
+                        drawRoundRect(
+                            color = Color(0x26000000).copy(alpha = 0.15f * capsuleAlpha),
+                            topLeft = Offset(topLeft.x, topLeft.y + eyeShadowOffset),
+                            size = eyeSize,
+                            cornerRadius = cr,
+                        )
+                        drawRoundRect(
+                            color = Color.White.copy(alpha = capsuleAlpha),
+                            topLeft = topLeft,
+                            size = eyeSize,
+                            cornerRadius = cr,
                         )
                     }
                 }
-            }
-        }
 
-        // 2. Задняя дуга орбиты + задняя часть хвоста кометы (без резких стыков на 180°/360°).
-        rotate(degrees = ringAngle, pivot = Offset(cx, ringCy)) {
-            drawArc(
-                color = ringBlue.copy(alpha = 0.45f - 0.10f * thinkingMix),
-                startAngle = 180f,
-                sweepAngle = 180f,
-                useCenter = false,
-                topLeft = ringTopLeft,
-                size = ringSize,
-                style = ringStroke,
-            )
-            if (thinkingMix > 0.01f) {
-                drawOrbitCometHalf(
-                    isFront = false,
-                    headDeg = headDeg,
-                    tailLen = 105f,
-                    ringTopLeft = ringTopLeft,
-                    ringSize = ringSize,
-                    baseWidth = (r * 0.16f).coerceAtLeast(1.8f),
-                    color = ringBlue,
-                    alphaScale = thinkingMix,
-                )
-            }
-        }
-
-        // 3. Основная сфера-голова с мягким squash & stretch при парении и внимании.
-        val stretchY = 1f + hoverCos * 0.016f + 0.025f * listeningMix
-        val stretchX = 1f - hoverCos * 0.014f + 0.025f * listeningMix
-
-        scale(scaleX = stretchX, scaleY = stretchY, pivot = Offset(cx, cy)) {
-            drawCircle(
-                color = ink,
-                radius = r,
-                center = Offset(cx, cy),
-            )
-
-            // 4. Органические глаза: саккадный взгляд, 3D-перспектива сферы, плавное моргание и морфинг в ^ ^.
-            val eyeY = cy - r * 0.06f
-            val eyeOffX = r * 0.30f
-            val eyeW = r * 0.22f
-            val eyeH = r * 0.34f
-
-            // Саккадный живой взгляд в покое (~7.5 с цикл с плавными фиксациями).
-            val saccadeX = saccadeValue(timeSec) * r * 0.085f
-            val saccadeY = saccadeYValue(timeSec) * r * 0.032f
-
-            // Взгляд в размышлении — следит за орбитальной кометой.
-            val headRad = Math.toRadians(headDeg.toDouble())
-            val thinkLookX = cos(headRad).toFloat() * r * 0.14f
-            val thinkLookY = sin(headRad).toFloat() * r * 0.045f - r * 0.03f
-
-            val idleWeight = (1f - thinkingMix) * (1f - writingMix) * (1f - speakingMix * 0.6f)
-            val lookX = saccadeX * idleWeight + thinkLookX * thinkingMix
-            val lookY = saccadeY * idleWeight + thinkLookY * thinkingMix
-            val normLookX = (lookX / (r * 0.14f)).coerceIn(-1f, 1f)
-
-            // Плавное одинарное и периодическое двойное моргание.
-            val blinkOpen = blinkOpenFactor(timeSec)
-            val speakPulse = 0.85f + 0.24f * ((sin(timeSec * 14f) + 1f) * 0.5f)
-            val listenWiden = 1f + 0.12f * listeningMix + 0.14f * smoothVoice * listeningMix
-            val thinkFocus = 1f - 0.16f * thinkingMix
-
-            val baseEyeH = eyeH *
-                (blinkOpen * (1f - speakingMix) + speakPulse * speakingMix) *
-                listenWiden *
-                thinkFocus
-
-            // Капсульные глаза плавно растворяются при появлении весёлой улыбки ^ ^.
-            val capsuleAlpha = (1f - writingMix * 1.15f).coerceIn(0f, 1f)
-            if (capsuleAlpha > 0.01f) {
-                for (sign in listOf(-1f, 1f)) {
-                    // Лёгкое сужение дальнего от центра глаза при повороте взгляда — ощущение объёмной сферы.
-                    val perspectiveScale = 1f - sign * normLookX * 0.10f
-                    val w = eyeW * perspectiveScale
-                    val h = baseEyeH.coerceAtLeast(eyeH * 0.14f)
-                    val ex = cx + sign * eyeOffX + lookX
-                    val ey = eyeY + lookY
-                    drawRoundRect(
-                        color = paper.copy(alpha = capsuleAlpha),
-                        topLeft = Offset(ex - w * 0.5f, ey - h * 0.5f),
-                        size = Size(w, h),
-                        cornerRadius = CornerRadius(w * 0.5f, w * 0.5f),
-                    )
+                // Радостные белые дуги `^ ^` при письме.
+                if (writingMix > 0.01f) {
+                    val stroke = Stroke(width = (r * 0.145f).coerceAtLeast(1.4f), cap = StrokeCap.Round)
+                    val arcScale = 0.74f + 0.26f * writingMix
+                    for (sign in listOf(-1f, 1f)) {
+                        val ex = cx + sign * eyeOffX
+                        val arcW = eyeW * 1.24f * arcScale
+                        val arcH = eyeH * 0.76f * arcScale
+                        drawArc(
+                            color = Color.White.copy(alpha = writingMix),
+                            startAngle = 195f,
+                            sweepAngle = 150f,
+                            useCenter = false,
+                            topLeft = Offset(ex - arcW * 0.5f, eyeY - eyeH * 0.26f + (1f - writingMix) * r * 0.07f),
+                            size = Size(arcW, arcH),
+                            style = stroke,
+                        )
+                    }
                 }
-            }
-
-            // Радостные дуги ^ ^ и плавно выезжающая машущая рука при письме.
-            if (writingMix > 0.01f) {
-                val stroke = Stroke(width = (r * 0.14f).coerceAtLeast(1.5f), cap = StrokeCap.Round)
-                val arcScale = 0.72f + 0.28f * writingMix
-                for (sign in listOf(-1f, 1f)) {
-                    val ex = cx + sign * eyeOffX
-                    val arcW = eyeW * 1.3f * arcScale
-                    val arcH = eyeH * 0.9f * arcScale
-                    drawArc(
-                        color = paper.copy(alpha = writingMix),
-                        startAngle = 195f,
-                        sweepAngle = 150f,
-                        useCenter = false,
-                        topLeft = Offset(ex - arcW * 0.5f, eyeY - eyeH * 0.35f + (1f - writingMix) * r * 0.08f),
-                        size = Size(arcW, arcH),
-                        style = stroke,
-                    )
-                }
-                val handPivot = Offset(cx + r * (0.72f + 0.20f * writingMix), cy + r * 0.15f)
-                val waveAngle = 18f + sin(timeSec * 10.5f) * 24f + sin(timeSec * 21f) * 4f
-                val armLenX = r * 0.36f * writingMix
-                val armLenY = r * 0.52f * writingMix
-                rotate(degrees = waveAngle, pivot = handPivot) {
-                    drawLine(
-                        color = ink.copy(alpha = writingMix),
-                        start = handPivot,
-                        end = Offset(handPivot.x + armLenX, handPivot.y - armLenY),
-                        strokeWidth = (r * 0.24f * writingMix).coerceAtLeast(1.6f),
-                        cap = StrokeCap.Round,
-                    )
-                    drawCircle(
-                        color = ringBlue.copy(alpha = writingMix),
-                        radius = r * 0.13f * writingMix,
-                        center = Offset(handPivot.x + armLenX, handPivot.y - armLenY),
-                    )
-                }
-            }
-        }
-
-        // 5. Передняя дуга синего орбитального кольца + плавная комета и искра.
-        rotate(degrees = ringAngle, pivot = Offset(cx, ringCy)) {
-            drawArc(
-                color = ringBlue.copy(alpha = 1f - 0.55f * thinkingMix),
-                startAngle = 0f,
-                sweepAngle = 180f,
-                useCenter = false,
-                topLeft = ringTopLeft,
-                size = ringSize,
-                style = ringStroke,
-            )
-            if (thinkingMix > 0.01f) {
-                drawOrbitCometHalf(
-                    isFront = true,
-                    headDeg = headDeg,
-                    tailLen = 105f,
-                    ringTopLeft = ringTopLeft,
-                    ringSize = ringSize,
-                    baseWidth = (r * 0.16f).coerceAtLeast(1.8f),
-                    color = ringBlue,
-                    alphaScale = thinkingMix,
-                )
-                if (headDeg in 0f..180f) {
-                    val rad = Math.toRadians(headDeg.toDouble())
-                    val horizonFade = sin(rad).toFloat().coerceIn(0f, 1f)
-                    val sparkAlpha = (horizonFade * 1.45f).coerceIn(0f, 1f) * thinkingMix
-                    val dotX = cx + ringRx * cos(rad).toFloat()
-                    val dotY = ringCy + ringRy * sin(rad).toFloat()
-                    drawCircle(
-                        color = MascotSparkBlue.copy(alpha = sparkAlpha * 0.42f),
-                        radius = (r * 0.26f).coerceAtLeast(2.8f),
-                        center = Offset(dotX, dotY),
-                    )
-                    drawCircle(
-                        color = MascotSparkBlue.copy(alpha = sparkAlpha),
-                        radius = (r * 0.16f).coerceAtLeast(2.0f),
-                        center = Offset(dotX, dotY),
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * Отрисовка затухающего хвоста кометы (12 сегментов) без рывков при переходе через 0° и 180°.
- */
-private fun DrawScope.drawOrbitCometHalf(
-    isFront: Boolean,
-    headDeg: Float,
-    tailLen: Float,
-    ringTopLeft: Offset,
-    ringSize: Size,
-    baseWidth: Float,
-    color: Color,
-    alphaScale: Float,
-) {
-    val segments = 12
-    val step = tailLen / segments
-    val minHalf = if (isFront) 0f else 180f
-    val maxHalf = if (isFront) 180f else 360f
-
-    for (i in 0 until segments) {
-        val t = (i + 0.5f) / segments // 0 = хвост, 1 = голова
-        val rawStart = headDeg - tailLen + i * step
-        val rawEnd = rawStart + step + 0.6f
-        val normStart = ((rawStart % 360f) + 360f) % 360f
-        val normEnd = normStart + (rawEnd - rawStart)
-
-        // Разбиваем сегмент, если он пересекает 360° -> 0°.
-        if (normEnd > 360f) {
-            val parts = listOf(normStart to 360f, 0f to (normEnd - 360f))
-            for ((p0, p1) in parts) {
-                val s = maxOf(minHalf, p0)
-                val e = minOf(maxHalf, p1)
-                if (e > s) {
-                    drawArc(
-                        color = color.copy(alpha = (0.08f + 0.92f * t * t) * alphaScale),
-                        startAngle = s,
-                        sweepAngle = e - s,
-                        useCenter = false,
-                        topLeft = ringTopLeft,
-                        size = ringSize,
-                        style = Stroke(width = baseWidth * (0.65f + 0.72f * t), cap = StrokeCap.Round),
-                    )
-                }
-            }
-        } else {
-            val s = maxOf(minHalf, normStart)
-            val e = minOf(maxHalf, normEnd)
-            if (e > s) {
-                drawArc(
-                    color = color.copy(alpha = (0.08f + 0.92f * t * t) * alphaScale),
-                    startAngle = s,
-                    sweepAngle = e - s,
-                    useCenter = false,
-                    topLeft = ringTopLeft,
-                    size = ringSize,
-                    style = Stroke(width = baseWidth * (0.65f + 0.72f * t), cap = StrokeCap.Round),
-                )
             }
         }
     }
@@ -444,26 +415,24 @@ private fun blinkOpenFactor(timeSec: Float): Float {
     return open
 }
 
-/** Круглый бейдж с живым маскотом для карточек главного экрана. */
+/** Компактный живой бейдж с маскотом-сферой для карточек главного экрана и шапок. */
 @Composable
 fun MascotBadge(
     writing: Boolean = false,
     thinking: Boolean = false,
     size: Dp = 32.dp,
+    colorOverride: MascotColor? = null,
     modifier: Modifier = Modifier,
 ) {
-    val bg = if (Brand.dark) Brand.Glass.copy(alpha = 0.6f) else Brand.Paper
     Box(
-        modifier
-            .size(size)
-            .clip(CircleShape)
-            .background(bg),
+        modifier = modifier.size(size),
         contentAlignment = Alignment.Center,
     ) {
         MascotIcon(
             writing = writing,
             thinking = thinking,
-            sizeDp = (size.value * 0.82f).dp,
+            sizeDp = (size.value * 0.94f).dp,
+            colorOverride = colorOverride,
         )
     }
 }

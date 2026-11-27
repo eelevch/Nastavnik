@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.nastavnik.R
+import app.nastavnik.theme.MascotColor
 import app.nastavnik.theme.ThemeSpec
 import app.nastavnik.theme.ThemeTokens
 
@@ -171,6 +172,7 @@ data class Appearance(
     val accent: Int = 0,
     val backdrop: Backdrop = Backdrop.PLAIN,
     val textScale: Float = 1f,
+    val mascotColor: MascotColor = MascotColor.SUNSET,
 ) {
     fun resolve(systemDark: Boolean): Palette {
         val useDark = when (mode) {
@@ -194,6 +196,7 @@ data class Appearance(
 object Brand {
     var current by mutableStateOf(Palettes.PAPER)
     var backdrop by mutableStateOf(Backdrop.PLAIN)
+    var mascotColor by mutableStateOf(MascotColor.SUNSET)
 
     /** Своя картинка фона (для [Backdrop.IMAGE]). */
     var backdropImage by mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null)
@@ -318,6 +321,7 @@ fun NastavnikTheme(appearance: Appearance = Appearance(), content: @Composable (
     val palette = target.copy(paper = paper, ink = ink, inkSoft = inkSoft, accent = accent, onAccent = onAccent, glass = glass, line = line, blobA = a, blobB = b, blobC = c)
     Brand.current = palette
     Brand.backdrop = appearance.backdrop
+    Brand.mascotColor = appearance.mascotColor
     // Своя картинка фона — загружаем, когда выбрана (и заново, если её сменили).
     val context = androidx.compose.ui.platform.LocalContext.current
     val image by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, appearance.backdrop, CustomImages.version) {

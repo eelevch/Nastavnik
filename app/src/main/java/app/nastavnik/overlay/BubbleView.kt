@@ -1,24 +1,30 @@
 package app.nastavnik.overlay
 
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.RadialGradient
+import android.graphics.RectF
 import android.graphics.Shader
-import android.animation.ValueAnimator
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
-import androidx.core.content.ContextCompat
-import app.nastavnik.R
+import android.view.animation.LinearInterpolator
+import app.nastavnik.data.DeviceProfile
+import app.nastavnik.theme.MascotColor
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.sin
 
 /**
- * Круглая плавающая кнопка. Реагирует только на палец: касание стилусом или ластиком
+ * Круглая плавающая кнопка-сфера наставника. Реагирует только на палец: касание стилусом или ластиком
  * не нажимает кнопку, а сообщает [Listener.onStylus], чтобы окно временно стало «прозрачным» для касаний.
  */
 @SuppressLint("ViewConstructor")
@@ -34,38 +40,64 @@ class BubbleView(context: Context, private val listener: Listener) : View(contex
     }
 
     private val density = resources.displayMetrics.density
-    // Стеклянный круг: светлый, полупрозрачный, с бликом сверху, светлой кромкой и мягкой тенью.
-    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        setShadowLayer(7 * density, 0f, 2.5f * density, 0x3316161A)
+    private val isWeakDevice = DeviceProfile.isWeakDevice(context)
+
+    private var stops = MascotColor.SUNSET.resolveStops(0xFF2563EB.toInt())
+
+    var mascotColor: MascotColor = MascotColor.SUNSET
+        set(value) {
+            if (field == value) return
+            field = value
+            stops = value.resolveStops(themeAccentArgb)
+            rebuildShaders()
+            invalidate()
+        }
+
+    var themeAccentArgb: Int = 0xFF2563EB.toInt()
+        set(value) {
+            if (field == value) return
+            field = value
+            if (mascotColor == MascotColor.THEME) {
+                stops = mascotColor.resolveStops(value)
+                rebuildShaders()
+                invalidate()
+            }
+        }
+
+    private val spherePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        setShadowLayer(6f * density, 0f, 2.5f * density, 0x380A0C14)
     }
-    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 1.4f * density
+        strokeWidth = 1.1f * density
+        color = Color.argb(65, 255, 255, 255)
     }
-    private val hairline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 0.9f * density
-        color = Color.argb(40, 20, 20, 30)
+    private val eyeShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(40, 0, 0, 0)
     }
-    // Графитовая дуга бежит по кромке, пока наставник думает.
-    private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val eyePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+    }
+    private val thinkArcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 2.6f * density
         strokeCap = Paint.Cap.ROUND
-        color = 0xFF16161A.toInt()
+        color = stops.sparkArgb
     }
-    private val arcRect = android.graphics.RectF()
-    private val icon = ContextCompat.getDrawable(context, R.drawable.ic_sparkle)!!.mutate().apply { setTint(0xFF16161A.toInt()) }
-    private var angle = 0f
-    private var spinner: ValueAnimator? = null
+    private val arcRect = RectF()
+    private val eyeRect = RectF()
+    private val shaderMatrix = Matrix()
+    private var sphereGradient: RadialGradient? = null
 
-    /** Пока нейросеть думает, по кромке бежит дуга. */
+    private var animTimeSec = 0f
+    private var lifeAnimator: ValueAnimator? = null
+
+    /** Пока нейросеть думает, вокруг сферы вращается светящаяся дуга, а внутреннее ядро ускоряется. */
     var busy: Boolean = false
         set(value) {
             if (field == value) return
             field = value
-            spinner?.cancel()
-            spinner = if (value) Rainbow.spinner(1400) { angle = it; invalidate() }.also { it.start() } else null
+            syncAnimatorState()
             invalidate()
         }
 
@@ -81,7 +113,7 @@ class BubbleView(context: Context, private val listener: Listener) : View(contex
     private val dotBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
     private val flashRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 4f * density
+        strokeWidth = 3.6f * density
     }
     private var flashUntil = 0L
 
@@ -111,46 +143,137 @@ class BubbleView(context: Context, private val listener: Listener) : View(contex
     init {
         contentDescription = "Наставник"
         isHapticFeedbackEnabled = true
-    }
-
-    init {
-        // Тень у круга рисуется только программно.
+        // Тень у круга рисуется программно.
         setLayerType(LAYER_TYPE_SOFTWARE, null)
     }
 
+    private fun rebuildShaders() {
+        val pad = 5f * density
+        val r = (width.coerceAtMost(height) / 2f - pad).coerceAtLeast(1f)
+        sphereGradient = RadialGradient(
+            0f,
+            0f,
+            r * 1.24f,
+            intArrayOf(stops.coreArgb, stops.midArgb, stops.rimArgb, stops.rimArgb),
+            floatArrayOf(0f, 0.50f, 0.86f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        thinkArcPaint.color = stops.sparkArgb
+    }
+
+    private fun syncAnimatorState() {
+        val shouldAnimate = isAttachedToWindow &&
+            windowVisibility == VISIBLE &&
+            visibility == VISIBLE &&
+            (!isWeakDevice || busy)
+        if (shouldAnimate) {
+            if (lifeAnimator == null) {
+                lifeAnimator = ValueAnimator.ofFloat(0f, 3600f).apply {
+                    duration = 3_600_000L
+                    repeatCount = ValueAnimator.INFINITE
+                    interpolator = LinearInterpolator()
+                    addUpdateListener {
+                        animTimeSec = it.animatedValue as Float
+                        invalidate()
+                    }
+                    start()
+                }
+            }
+        } else {
+            lifeAnimator?.cancel()
+            lifeAnimator = null
+        }
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        val top = h * 0.1f
-        val bottom = h * 0.9f
-        fill.shader = LinearGradient(0f, top, 0f, bottom, Color.argb(235, 255, 255, 255), Color.argb(190, 246, 246, 250), Shader.TileMode.CLAMP)
-        ring.shader = LinearGradient(0f, top, 0f, bottom, Color.argb(255, 255, 255, 255), Color.argb(70, 255, 255, 255), Shader.TileMode.CLAMP)
+        rebuildShaders()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        syncAnimatorState()
+    }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        syncAnimatorState()
+    }
+
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, visibility)
+        syncAnimatorState()
     }
 
     override fun onDetachedFromWindow() {
-        spinner?.cancel()
-        spinner = null
+        lifeAnimator?.cancel()
+        lifeAnimator = null
         super.onDetachedFromWindow()
     }
 
     override fun onDraw(canvas: Canvas) {
         val pad = 5 * density
         val r = width.coerceAtMost(height) / 2f - pad
+        if (r <= 1f) return
         val cx = width / 2f
         val cy = height / 2f
-        canvas.drawCircle(cx, cy, r, fill)
-        canvas.drawCircle(cx, cy, r, hairline)
-        if (System.currentTimeMillis() < flashUntil) {
-            canvas.drawCircle(cx, cy, r - flashRing.strokeWidth / 2, flashRing)
-        } else {
-            canvas.drawCircle(cx, cy + 0.6f * density, r - ring.strokeWidth, ring)
-            if (busy) {
-                val ar = r - arc.strokeWidth / 2
-                arcRect.set(cx - ar, cy - ar, cx + ar, cy + ar)
-                canvas.drawArc(arcRect, angle - 90f, 70f, false, arc)
-            }
+        val t = animTimeSec
+
+        // 1. Вектор взгляда: саккады в покое, орбитальное слежение в размышлении.
+        val saccadeX = bubbleSaccadeX(t) * r * 0.11f
+        val saccadeY = bubbleSaccadeY(t) * r * 0.045f
+        val orbitRad = t * (2f * PI.toFloat() / 1.45f)
+        val thinkX = cos(orbitRad) * r * 0.14f
+        val thinkY = sin(orbitRad * 2f) * r * 0.045f - r * 0.02f
+        val lookX = if (busy) thinkX else saccadeX
+        val lookY = if (busy) thinkY else saccadeY
+        val normLookX = (lookX / (r * 0.14f)).coerceIn(-1f, 1f)
+
+        // 2. Живой радиальный градиент сферы без аллокаций в кадре.
+        val driftSpeed = if (busy) 2.6f else 1.15f
+        val driftX = sin(t * driftSpeed) * r * (if (busy) 0.18f else 0.08f)
+        val driftY = cos(t * driftSpeed * 0.85f) * r * (if (busy) 0.18f else 0.08f)
+        sphereGradient?.let { grad ->
+            shaderMatrix.setTranslate(cx + lookX * 0.72f + driftX, cy + lookY * 0.72f + driftY)
+            grad.setLocalMatrix(shaderMatrix)
+            spherePaint.shader = grad
         }
-        val s = (r * 0.86f).toInt()
-        icon.setBounds((cx - s / 2).toInt(), (cy - s / 2).toInt(), (cx + s / 2).toInt(), (cy + s / 2).toInt())
-        icon.draw(canvas)
+        canvas.drawCircle(cx, cy, r, spherePaint)
+        canvas.drawCircle(cx, cy, r - rimPaint.strokeWidth * 0.5f, rimPaint)
+
+        // 3. Индикатор вспышки или орбитального размышления.
+        if (System.currentTimeMillis() < flashUntil) {
+            canvas.drawCircle(cx, cy, r - flashRing.strokeWidth / 2f, flashRing)
+        } else if (busy) {
+            val ar = r - thinkArcPaint.strokeWidth / 2f
+            arcRect.set(cx - ar, cy - ar, cx + ar, cy + ar)
+            val spin = (t * 235f) % 360f
+            canvas.drawArc(arcRect, spin - 90f, 78f, false, thinkArcPaint)
+        }
+
+        // 4. Белые вертикальные капсулы глаз с морганием и 3D-перспективой.
+        val eyeY = cy - r * 0.02f
+        val eyeOffX = r * 0.26f
+        val eyeW = r * 0.285f
+        val eyeH = r * 0.45f
+        val blink = bubbleBlinkFactor(t) * (if (busy) 0.86f else 1f)
+        val shadowOffset = (r * 0.03f).coerceAtLeast(0.6f)
+        for (i in 0..1) {
+            val sign = if (i == 0) -1f else 1f
+            val perspective = 1f - sign * normLookX * 0.12f
+            val w = eyeW * perspective
+            val h = (eyeH * blink).coerceAtLeast(eyeH * 0.15f)
+            val ex = cx + sign * eyeOffX * (1f - abs(normLookX) * 0.04f) + lookX
+            val ey = eyeY + lookY
+            val rx = w * 0.5f
+
+            eyeRect.set(ex - w * 0.5f, ey - h * 0.5f + shadowOffset, ex + w * 0.5f, ey + h * 0.5f + shadowOffset)
+            canvas.drawRoundRect(eyeRect, rx, rx, eyeShadowPaint)
+
+            eyeRect.set(ex - w * 0.5f, ey - h * 0.5f, ex + w * 0.5f, ey + h * 0.5f)
+            canvas.drawRoundRect(eyeRect, rx, rx, eyePaint)
+        }
+
+        // 5. Зелёная точка фонового слежения.
         if (watching) {
             val dr = 4.5f * density
             val dx = cx + r * 0.68f
@@ -236,4 +359,55 @@ class BubbleView(context: Context, private val listener: Listener) : View(contex
         super.performClick()
         return true
     }
+}
+
+private fun bubbleSmoothstep(edge0: Float, edge1: Float, x: Float): Float {
+    val t = ((x - edge0) / (edge1 - edge0)).coerceIn(0f, 1f)
+    return t * t * (3f - 2f * t)
+}
+
+private fun bubbleSaccadeX(timeSec: Float): Float {
+    val cycle = 7.6f
+    val p = (timeSec % cycle) / cycle
+    return when {
+        p < 0.25f -> 0f
+        p < 0.34f -> bubbleSmoothstep(0.25f, 0.34f, p) * 0.75f
+        p < 0.48f -> 0.75f
+        p < 0.57f -> 0.75f - bubbleSmoothstep(0.48f, 0.57f, p) * 1.45f
+        p < 0.70f -> -0.70f
+        p < 0.80f -> -0.70f + bubbleSmoothstep(0.70f, 0.80f, p) * 0.70f
+        else -> 0f
+    }
+}
+
+private fun bubbleSaccadeY(timeSec: Float): Float {
+    val cycle = 7.6f
+    val p = (timeSec % cycle) / cycle
+    return when {
+        p < 0.48f -> 0f
+        p < 0.57f -> -bubbleSmoothstep(0.48f, 0.57f, p) * 0.5f
+        p < 0.70f -> -0.5f
+        p < 0.80f -> -0.5f + bubbleSmoothstep(0.70f, 0.80f, p) * 0.5f
+        else -> 0f
+    }
+}
+
+private fun bubbleBlinkFactor(timeSec: Float): Float {
+    val cycleLen = 3.8f
+    val cycleIndex = (timeSec / cycleLen).toInt()
+    val local = timeSec - cycleIndex * cycleLen
+    val isDouble = (cycleIndex % 3) == 2
+
+    fun single(t: Float, center: Float): Float {
+        val dt = abs(t - center)
+        if (dt >= 0.095f) return 1f
+        val k = bubbleSmoothstep(0f, 0.095f, dt)
+        return 0.14f + 0.86f * k
+    }
+
+    var open = single(local, 3.40f)
+    if (isDouble) {
+        open = minOf(open, single(local, 3.63f))
+    }
+    return open
 }

@@ -262,7 +262,7 @@ fun TabRowBar(
                         .clipToBounds()
                         .graphicsLayer {
                             val r = with(density) { 28.dp.toPx() }
-                            renderEffect = BlurEffect(r, r, TileMode.Clamp)
+                            renderEffect = BlurEffect(r, r, TileMode.Mirror)
                         }
                         .drawWithContent {
                             if (contentLayer.size.width > 0 && contentLayer.size.height > 0) {

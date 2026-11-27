@@ -18,6 +18,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,6 +50,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -143,9 +145,10 @@ fun TabletShell(
             onClick = { onTab(entry) },
         )
     }
+    val bottomInset = if (side.isSide()) 24.dp else 88.dp
 
     Box(Modifier.fillMaxSize().paperBackdrop()) {
-        CompositionLocalProvider(LocalBottomBarInset provides 24.dp) {
+        CompositionLocalProvider(LocalBottomBarInset provides bottomInset) {
             Box(Modifier.fillMaxSize()) {
                 AnimatedContent(
                     targetState = tab,
@@ -175,14 +178,21 @@ fun TabletShell(
             }
         }
 
-        EdgeBezelCapsule(
-            items = railItems,
-            enableLeft = side.hasLeftEdge(),
-            enableRight = side.hasRightEdge(),
-            showLabels = showSideCapsuleLabels,
-            verticalBias = sideCapsuleBias,
-            modifier = Modifier.fillMaxSize(),
-        )
+        if (side.isSide()) {
+            EdgeBezelCapsule(
+                items = railItems,
+                enableLeft = side.hasLeftEdge(),
+                enableRight = side.hasRightEdge(),
+                showLabels = showSideCapsuleLabels,
+                verticalBias = sideCapsuleBias,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            PhoneBottomCapsule(
+                items = railItems,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
     }
 }
 
@@ -220,14 +230,20 @@ fun EdgeBezelCapsule(
     var anchorY by remember { mutableFloatStateOf(0f) }
     var hasCustomAnchor by remember { mutableStateOf(false) }
     var isPressed by remember { mutableStateOf(false) }
+    var isLockedOpen by remember { mutableStateOf(false) }
+    var lastEdgeTapTime by remember { mutableLongStateOf(0L) }
+    var lastEdgeTapY by remember { mutableFloatStateOf(0f) }
+    var lastEdgeTapRight by remember { mutableStateOf(false) }
     var activeIsRight by remember { mutableStateOf(enableRight && !enableLeft) }
     var previewIndex by remember { mutableIntStateOf(selectedIndex) }
     var settledIndex by remember { mutableIntStateOf(selectedIndex) }
     var analogSlot by remember { mutableFloatStateOf(selectedIndex.toFloat()) }
 
+    val isPanelOpen = isPressed || isLockedOpen
+
     val expandProgress by animateFloatAsState(
-        targetValue = if (isPressed) 1f else 0f,
-        animationSpec = if (isPressed) {
+        targetValue = if (isPanelOpen) 1f else 0f,
+        animationSpec = if (isPanelOpen) {
             spring(dampingRatio = 0.86f, stiffness = 520f, visibilityThreshold = 0.002f)
         } else {
             spring(dampingRatio = 1.0f, stiffness = 920f, visibilityThreshold = 0.003f)
@@ -235,16 +251,19 @@ fun EdgeBezelCapsule(
         label = "bezelExpand",
     )
 
-    LaunchedEffect(selectedIndex, isPressed, expandProgress < 0.02f) {
-        if (!isPressed && expandProgress < 0.02f) {
+    LaunchedEffect(selectedIndex, isPanelOpen, expandProgress < 0.02f) {
+        if (!isPanelOpen && expandProgress < 0.02f) {
             settledIndex = selectedIndex
             previewIndex = selectedIndex
             analogSlot = selectedIndex.toFloat()
         }
     }
 
-    LaunchedEffect(enableLeft, enableRight, isPressed, expandProgress < 0.02f) {
-        if (!isPressed && expandProgress < 0.02f) {
+    LaunchedEffect(enableLeft, enableRight, isPanelOpen, expandProgress < 0.02f) {
+        if (isLockedOpen && ((activeIsRight && !enableRight) || (!activeIsRight && !enableLeft))) {
+            isLockedOpen = false
+        }
+        if (!isPanelOpen && expandProgress < 0.02f) {
             if (activeIsRight && !enableRight && enableLeft) {
                 activeIsRight = false
             } else if (!activeIsRight && !enableLeft && enableRight) {
@@ -297,12 +316,27 @@ fun EdgeBezelCapsule(
     Box(modifier.fillMaxSize()) {
         if (expandProgress > 0.008f) {
             val pClamped = expandProgress.coerceIn(0f, 1f)
-            val scrimCurve = if (isPressed) pClamped else pClamped.pow(1.45f)
+            val scrimCurve = if (isPanelOpen) pClamped else pClamped.pow(1.45f)
             val scrimAlpha = (if (isDark) 0.28f else 0.10f) * scrimCurve
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = scrimAlpha)),
+                    .background(Color.Black.copy(alpha = scrimAlpha))
+                    .then(
+                        if (isLockedOpen) {
+                            Modifier.pointerInput(Unit) {
+                                detectTapGestures(
+                                    onDoubleTap = {
+                                        isLockedOpen = false
+                                        lastEdgeTapTime = 0L
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    },
+                                )
+                            }
+                        } else {
+                            Modifier
+                        },
+                    ),
             )
         }
 
@@ -312,29 +346,10 @@ fun EdgeBezelCapsule(
                 .systemBarsPadding()
                 .onSizeChanged { containerHeightPx = it.height.toFloat() },
         ) {
-            // Деликатный намёк вдоль активных краёв экрана в состоянии покоя.
-            val idleStripAlpha = ((1f - expandProgress * 3.0f).coerceIn(0f, 1f)) * 0.55f
-            if (idleStripAlpha > 0.01f) {
-                if (enableLeft) {
-                    IdleEdgeWhisper(
-                        isRight = false,
-                        accentColor = accentColor,
-                        idleStripAlpha = idleStripAlpha,
-                    )
-                }
-                if (enableRight) {
-                    IdleEdgeWhisper(
-                        isRight = true,
-                        accentColor = accentColor,
-                        idleStripAlpha = idleStripAlpha,
-                    )
-                }
-            }
-
             // Органическая вылазка от рамки экрана: клиппируем содержимое по контуру капли и двигаем синхронно со стенкой.
             if (expandProgress > 0.003f) {
                 val bulgeTopPx = (smoothAnchorY - halfBulgePx).roundToInt()
-                val isClosing = !isPressed
+                val isClosing = !isPanelOpen
                 val p = expandProgress.coerceIn(0f, 1f)
                 val widthProgress = if (isClosing) {
                     p.pow(1.22f)
@@ -350,6 +365,21 @@ fun EdgeBezelCapsule(
                         .align(if (activeIsRight) Alignment.TopEnd else Alignment.TopStart)
                         .offset { IntOffset(0, bulgeTopPx) }
                         .size(width = bulgeW, height = bulgeH)
+                        .then(
+                            if (isLockedOpen) {
+                                Modifier.pointerInput(Unit) {
+                                    detectTapGestures(
+                                        onDoubleTap = {
+                                            isLockedOpen = false
+                                            lastEdgeTapTime = 0L
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        },
+                                    )
+                                }
+                            } else {
+                                Modifier
+                            },
+                        )
                         .drawWithContent {
                             val bodyW = lerp(0f, maxBodyW.toPx(), widthProgress)
                             val bodyH = lerp(44.dp.toPx(), maxBodyH.toPx(), heightProgress)
@@ -504,12 +534,24 @@ fun EdgeBezelCapsule(
                                     )
                                     val iconScale = lerp(1f, 1.08f, focus)
                                     val isHighlighted = idx == (if (isPressed) previewIndex else settledIndex)
+                                    val rowClickMod = if (isLockedOpen && !isPressed) {
+                                        Modifier.clickable {
+                                            previewIndex = idx
+                                            settledIndex = idx
+                                            analogSlot = idx.toFloat()
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            item.onClick()
+                                        }
+                                    } else {
+                                        Modifier
+                                    }
                                     if (showLabels) {
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(46.dp)
                                                 .clip(CircleShape)
+                                                .then(rowClickMod)
                                                 .padding(horizontal = 14.dp)
                                                 .semantics {
                                                     contentDescription = item.title
@@ -541,6 +583,7 @@ fun EdgeBezelCapsule(
                                                 .fillMaxWidth()
                                                 .height(46.dp)
                                                 .clip(CircleShape)
+                                                .then(rowClickMod)
                                                 .semantics {
                                                     contentDescription = item.title
                                                     selected = isHighlighted
@@ -587,12 +630,20 @@ fun EdgeBezelCapsule(
                         .pointerInput(items.size, sideIsRight) {
                             val stepPx = 40.dp.toPx()
                             val touchSlopPx = viewConfiguration.touchSlop
+                            val doubleTapSlopPx = 120.dp.toPx()
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
                                 if (isPressed) return@awaitEachGesture
 
                                 val downX = down.position.x
                                 val downY = down.position.y
+                                val downTime = down.uptimeMillis
+                                val wasLockedOnDown = isLockedOpen
+                                val isDoubleTapCandidate = lastEdgeTapTime != 0L &&
+                                    (downTime - lastEdgeTapTime) <= 420L &&
+                                    lastEdgeTapRight == sideIsRight &&
+                                    abs(downY - lastEdgeTapY) <= doubleTapSlopPx
+
                                 val clampedY = if (containerHeightPx > 0f) {
                                     downY.coerceIn(
                                         halfBulgePx,
@@ -602,30 +653,67 @@ fun EdgeBezelCapsule(
                                     downY
                                 }
 
-                                // 38 мс на распознавание быстрого горизонтального системного свайпа «Назад».
-                                val quickCancel = withTimeoutOrNull(38L) {
-                                    var canceledAsBack = false
+                                // 175 мс на распознавание человеческого тапа (для двойного тапа) или системного свайпа «Назад».
+                                // При вертикальном движении сразу выходим без задержки, чтобы скраббинг начинался мгновенно.
+                                var quickLiftAsTap = false
+                                var quickUpTime = downTime
+                                val quickCancel = withTimeoutOrNull(175L) {
+                                    var canceled = false
                                     while (true) {
                                         val ev = awaitPointerEvent(PointerEventPass.Initial)
                                         val ch = ev.changes.firstOrNull { it.id == down.id }
-                                        if (ch == null || ch.changedToUpIgnoreConsumed() || !ch.pressed) {
-                                            canceledAsBack = true
+                                        if (ch == null) {
+                                            canceled = true
                                             break
                                         }
                                         val dx = ch.position.x - downX
                                         val dy = ch.position.y - downY
-                                        val inwardDx = if (sideIsRight) -dx else dx
-                                        if (inwardDx > touchSlopPx && inwardDx > abs(dy) * 1.4f) {
-                                            canceledAsBack = true
+                                        if (ch.changedToUpIgnoreConsumed() || !ch.pressed) {
+                                            if (abs(dx) + abs(dy) <= touchSlopPx * 1.6f) {
+                                                ch.consume()
+                                                quickLiftAsTap = true
+                                                quickUpTime = ch.uptimeMillis
+                                            }
+                                            canceled = true
                                             break
                                         }
-                                        if (abs(dy) > touchSlopPx) {
+                                        val inwardDx = if (sideIsRight) -dx else dx
+                                        if (inwardDx > touchSlopPx && inwardDx > abs(dy) * 1.4f) {
+                                            canceled = true
+                                            break
+                                        }
+                                        if (abs(dy) > touchSlopPx * 0.75f) {
                                             break
                                         }
                                     }
-                                    canceledAsBack
+                                    canceled
                                 }
-                                if (quickCancel == true || isPressed) return@awaitEachGesture
+                                if (quickLiftAsTap) {
+                                    if (isDoubleTapCandidate) {
+                                        val nextLocked = !wasLockedOnDown
+                                        if (nextLocked) {
+                                            val startIdx = currentSelectedIndex.coerceIn(0, (currentItems.size - 1).coerceAtLeast(0))
+                                            activeIsRight = sideIsRight
+                                            anchorY = clampedY
+                                            hasCustomAnchor = true
+                                            previewIndex = startIdx
+                                            settledIndex = startIdx
+                                            analogSlot = startIdx.toFloat()
+                                        }
+                                        isLockedOpen = nextLocked
+                                        lastEdgeTapTime = 0L
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    } else {
+                                        lastEdgeTapTime = quickUpTime
+                                        lastEdgeTapY = downY
+                                        lastEdgeTapRight = sideIsRight
+                                    }
+                                    return@awaitEachGesture
+                                }
+                                if (quickCancel == true || isPressed) {
+                                    lastEdgeTapTime = 0L
+                                    return@awaitEachGesture
+                                }
 
                                 val startIdx = currentSelectedIndex.coerceIn(0, (currentItems.size - 1).coerceAtLeast(0))
                                 activeIsRight = sideIsRight
@@ -634,14 +722,20 @@ fun EdgeBezelCapsule(
                                 previewIndex = startIdx
                                 settledIndex = startIdx
                                 analogSlot = startIdx.toFloat()
+                                isLockedOpen = false
                                 isPressed = true
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
 
                                 var liftedNormally = false
+                                var upTime = downTime
+                                var maxMovedPx = 0f
                                 try {
                                     while (true) {
                                         val event = awaitPointerEvent()
                                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                        val dist = abs(change.position.x - downX) + abs(change.position.y - downY)
+                                        if (dist > maxMovedPx) maxMovedPx = dist
+                                        upTime = change.uptimeMillis
                                         if (change.changedToUpIgnoreConsumed() || !change.pressed) {
                                             liftedNormally = true
                                             break
@@ -660,15 +754,38 @@ fun EdgeBezelCapsule(
                                         }
                                     }
                                 } finally {
-                                    if (liftedNormally && currentItems.isNotEmpty()) {
-                                        val commitIdx = previewIndex.coerceIn(0, currentItems.lastIndex)
-                                        settledIndex = commitIdx
+                                    val tapDuration = upTime - downTime
+                                    val wasHumanTap = liftedNormally && maxMovedPx <= touchSlopPx * 1.5f && tapDuration <= 220L
+                                    if (wasHumanTap) {
                                         isPressed = false
-                                        if (commitIdx != currentSelectedIndex) {
-                                            currentItems[commitIdx].onClick()
+                                        if (isDoubleTapCandidate) {
+                                            val nextLocked = !wasLockedOnDown
+                                            if (nextLocked) {
+                                                activeIsRight = sideIsRight
+                                                anchorY = clampedY
+                                                hasCustomAnchor = true
+                                            }
+                                            isLockedOpen = nextLocked
+                                            lastEdgeTapTime = 0L
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        } else {
+                                            lastEdgeTapTime = upTime
+                                            lastEdgeTapY = downY
+                                            lastEdgeTapRight = sideIsRight
                                         }
                                     } else {
-                                        isPressed = false
+                                        if (liftedNormally && currentItems.isNotEmpty() && maxMovedPx > touchSlopPx * 1.5f) {
+                                            val commitIdx = previewIndex.coerceIn(0, currentItems.lastIndex)
+                                            settledIndex = commitIdx
+                                            isPressed = false
+                                            isLockedOpen = false
+                                            if (commitIdx != currentSelectedIndex) {
+                                                currentItems[commitIdx].onClick()
+                                            }
+                                        } else {
+                                            isPressed = false
+                                        }
+                                        if (!liftedNormally) lastEdgeTapTime = 0L
                                     }
                                 }
                             }
@@ -684,36 +801,6 @@ fun EdgeBezelCapsule(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun BoxScope.IdleEdgeWhisper(
-    isRight: Boolean,
-    accentColor: Color,
-    idleStripAlpha: Float,
-) {
-    Canvas(
-        Modifier
-            .align(if (isRight) Alignment.CenterEnd else Alignment.CenterStart)
-            .fillMaxHeight(0.76f)
-            .width(4.dp),
-    ) {
-        val lineW = 2.dp.toPx()
-        val x = if (isRight) size.width - lineW - 0.5.dp.toPx() else 0.5.dp.toPx()
-        val brush = Brush.verticalGradient(
-            0.00f to Color.Transparent,
-            0.15f to accentColor.copy(alpha = idleStripAlpha * 0.65f),
-            0.50f to accentColor.copy(alpha = idleStripAlpha),
-            0.85f to accentColor.copy(alpha = idleStripAlpha * 0.65f),
-            1.00f to Color.Transparent,
-        )
-        drawRoundRect(
-            brush = brush,
-            topLeft = Offset(x, 0f),
-            size = Size(lineW, size.height),
-            cornerRadius = CornerRadius(lineW * 0.5f, lineW * 0.5f),
-        )
     }
 }
 

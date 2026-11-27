@@ -56,6 +56,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import app.nastavnik.study.TrainResult
+import app.nastavnik.theme.MascotColor
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -215,6 +216,8 @@ class BubbleService : LifecycleService(), BubbleView.Listener, SpeechInput.Callb
                 settings = s
                 overlay.fadeAlpha = s.noteFadeAlpha
                 bubble.watching = s.watchPauseSec > 0
+                bubble.mascotColor = MascotColor.fromId(s.mascotColor)
+                bubble.themeAccentArgb = if (s.accent != 0) s.accent else 0xFF2563EB.toInt()
                 if (old == null || old.bubbleSizeDp != s.bubbleSizeDp || old.bubbleAlpha != s.bubbleAlpha || old.bubbleSide != s.bubbleSide) {
                     applyBubbleLook(s)
                 }
@@ -353,6 +356,8 @@ class BubbleService : LifecycleService(), BubbleView.Listener, SpeechInput.Callb
         bubbleParams.width = size
         bubbleParams.height = size
         bubbleParams.alpha = s.bubbleAlpha.coerceAtMost(OverlayWindows.MAX_PASS_THROUGH_ALPHA)
+        bubble.mascotColor = MascotColor.fromId(s.mascotColor)
+        bubble.themeAccentArgb = if (s.accent != 0) s.accent else 0xFF2563EB.toInt()
         if (bubbleAdded) placeBubble(s.bubbleSide, s.bubbleYFraction)
     }
 

@@ -67,6 +67,11 @@ fun SettingsScreen(onBack: () -> Unit, onAppearance: () -> Unit = {}, onOnboardi
 
         AppearanceEntry(onAppearance)
 
+        MascotStyleCard(
+            s = s,
+            repo = repo,
+        )
+
         TabBarSettingsCard(
             tablet = tablet,
             s = s,

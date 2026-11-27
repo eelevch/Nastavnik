@@ -18,9 +18,9 @@ android {
         targetSdk = 36
         // Номер сборки GitHub Actions: каждая новая сборка «новее» предыдущей — по нему приложение
         // находит обновление в GitHub Releases и ставит его поверх.
-        val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 177
-        versionCode = maxOf(build, 10524)
-        versionName = "1.5.24"
+        val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 178
+        versionCode = maxOf(build, 10525)
+        versionName = "1.5.25"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testProguardFiles("proguard-rules.pro")
         buildConfigField("boolean", "STUDENT", "false")
