@@ -1,5 +1,13 @@
 # Решения, принятые по ходу работы
 
+## Версия 1.5.29 (Отказ от рисования и письма наставника на конспекте, иконка Material You)
+- **Полное удаление рисования, схем и записи наставника на листе**:
+  - Удалены модули `MathTypesetter.kt`, `AndroidMathMetrics.kt`, `MentorDiagram.kt`, `MentorNotebookWriter.kt` и соответствующие модульные тесты (`MathTypesetterTest.kt`, `MentorDiagramTest.kt`, `MentorNotebookWriterTest.kt`).
+  - Из `Prompts.kt`, `ScreenAnswer.kt`, `MentorSession.kt`, `NotebookController.kt`, `InkView.kt`, `Shapes.kt`, `MentorVisionLayer.kt`, `NotebookScreen.kt`, `MentorDock.kt` и `SettingsScreen.kt` убраны команды `WRITE_TEXT`, `DIAGRAM`, `DRAW_SHAPE`, `HIGHLIGHT`, `WRITE_ON_PAGE`, `DRAW_ON_PAGE`, пометки чернилами на листе и мини-превью `MentorActionPreview`. Наставник общается только голосом и текстом в речевом облаке и панели чата.
+- **Адаптивная иконка в стиле Material You (`ic_launcher_bg.xml`, `ic_launcher_foreground.xml`, `ic_launcher_monochrome.xml`)**:
+  - Плоская двухтональная композиция (`PrimaryContainer` `#E6ECFA`→`#DCE4F7` и `OnPrimaryContainer` `#1B243B`) с геометрией `evenOdd` (сквозные глаза и 4-лучевая искра) и идентичным монохромным слоем для системных тематических иконок Android 13+ (Dynamic Color).
+- **Главный экран**: оставлен без изменений (`HomeScreen.kt`, `HomeBoard.kt`, `HomeKit.kt` не модифицировались).
+
 ## Версия 1.5.28 (Наставник-компаньон на листе, 2D-формулы и схемы на конспекте, ровный чат и чертежи)
 - **Наставник на листе вместо шара на главных экранах (`MentorDock.kt`, `NotebookScreen.kt`, удаление `GlobalMentorOverlay.kt`)**:
   - Убран глобальный плавающий шар на Главной, Расписании, Оценках и Учёбе: вне тетради у наставника нет контекста листа. Настройка `showAmbientMentor` теперь управляет живым компаньоном на странице («Наставник на листе»).

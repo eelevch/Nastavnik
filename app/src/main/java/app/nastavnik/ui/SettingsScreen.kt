@@ -297,8 +297,8 @@ private fun MentorSettingsPage(tablet: Boolean, s: AppSettings, repo: SettingsRe
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 FieldLabel(
-                    "Спрашивать разрешение перед записью на лист",
-                    "Наставник сначала покажет список изменений (запись, рисунки, страницы) и выполнит после подтверждения.",
+                    "Спрашивать разрешение на действия с тетрадью",
+                    "Наставник сначала покажет список действий (страницы, бумага, очистка, название) и выполнит после подтверждения.",
                 )
             }
             AppSwitch(s.mentorRequirePermission) { repo.setMentorRequirePermission(it) }

@@ -97,8 +97,8 @@ class NotebookStoreTest {
                     actions = listOf(
                         app.nastavnik.ai.MentorPageAction(
                             id = "act_0",
-                            kind = app.nastavnik.ai.MentorActionKind.WRITE_TEXT,
-                            text = "(uv)' = u'v + uv'",
+                            kind = app.nastavnik.ai.MentorActionKind.RENAME_NOTEBOOK,
+                            text = "Производные",
                             after = 2,
                         )
                     ),
@@ -120,8 +120,8 @@ class NotebookStoreTest {
         assertEquals(1, decoded[1].answer!!.marks.size)
         assertEquals("Используй правило дифференцирования произведения", decoded[1].answer!!.marks[0].text)
         assertEquals(1, decoded[1].answer!!.actions.size)
-        assertEquals(app.nastavnik.ai.MentorActionKind.WRITE_TEXT, decoded[1].answer!!.actions[0].kind)
-        assertEquals("(uv)' = u'v + uv'", decoded[1].answer!!.actions[0].text)
+        assertEquals(app.nastavnik.ai.MentorActionKind.RENAME_NOTEBOOK, decoded[1].answer!!.actions[0].kind)
+        assertEquals("Производные", decoded[1].answer!!.actions[0].text)
         assertEquals("APPROVED", decodedStates[101L])
         assertTrue(decoded[1].answer!!.done)
 

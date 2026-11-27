@@ -126,9 +126,7 @@ data class ShotGeometry(
             )
         }
         val ref = PlaceRef(a.lines, a.after, px)
-        val hintLike = a.kind == app.nastavnik.ai.MentorActionKind.WRITE_TEXT ||
-            a.kind == app.nastavnik.ai.MentorActionKind.DIAGRAM ||
-            a.kind == app.nastavnik.ai.MentorActionKind.DRAW_SHAPE
+        val hintLike = false
         val v = map.resolveVerified(ref, hintLike = hintLike)
         val r = v.rect ?: return a
         val w = imageW.toFloat().coerceAtLeast(1f)

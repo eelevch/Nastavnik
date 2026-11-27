@@ -72,9 +72,9 @@ object Shapes {
     }
 
     /** Ломаная x,y → точки штриха x,y,нажим (углы остаются точными). */
-    internal fun densify(xy: FloatArray, pressure: Float = P): FloatArray {
+    private fun densify(xy: FloatArray): FloatArray {
         val n = xy.size / 2
-        return FloatArray(n * 3) { k -> if (k % 3 == 2) pressure else xy[(k / 3) * 2 + k % 3] }
+        return FloatArray(n * 3) { k -> if (k % 3 == 2) P else xy[(k / 3) * 2 + k % 3] }
     }
 
     // ---------------- распознавание ----------------

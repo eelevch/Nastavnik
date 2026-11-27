@@ -47,7 +47,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import kotlin.math.abs
 import kotlin.math.roundToInt
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -64,7 +63,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -72,12 +70,6 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.requiredWidth
-import androidx.compose.ui.graphics.nativeCanvas
-import app.nastavnik.ink.AndroidMathMetrics
-import app.nastavnik.ink.InkPage
-import app.nastavnik.ink.MentorNotebookWriter
-import app.nastavnik.ink.Stroke
-import app.nastavnik.ink.TextBox
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -817,7 +809,7 @@ private fun NotebookTopBar(
                     )
                 }
                 MascotBarButton(
-                    writing = ctl.writing || ctl.mentorWriting,
+                    writing = ctl.writing,
                     thinking = effectiveBusy,
                     autoCheckProgress = ctl.autoCheckProgress,
                     gazeTarget = gazeTarget,
@@ -1051,8 +1043,6 @@ internal class Ask(val action: QuickAction, val icon: Int, val title: String, va
 
 internal val ASKS = listOf(
     Ask(QuickAction.NEXT_STEP, R.drawable.ic_bulb, "Подсказка", "подскажет шаг"),
-    Ask(QuickAction.WRITE_ON_PAGE, R.drawable.ic_pen, "На лист", "запишет на странице"),
-    Ask(QuickAction.DRAW_ON_PAGE, R.drawable.ic_shapes, "Начертить", "график или схему"),
     Ask(QuickAction.FIND_ERROR, R.drawable.ic_search, "Где ошибка?", "проверит записи"),
     Ask(QuickAction.CHECK_ANSWER, R.drawable.ic_check, "Проверить ответ", "верно ли всё"),
     Ask(QuickAction.THEORY, R.drawable.ic_book, "Теория", "формулы и правила"),
@@ -1312,7 +1302,6 @@ private fun MentorPanel(
                                     streaming = latestAnswer?.streaming == true,
                                     isLatest = true,
                                     onLocate = { ctl.focusMark(i + 1) },
-                                    onWriteToPage = { ctl.writeMarkToPage(m, latestAnswer?.geometry) },
                                     onNotHere = { ctl.onMarkNotHere(i + 1) },
                                 )
                             }
@@ -1468,8 +1457,6 @@ private fun UserChatBubble(msg: NotebookController.MentorChatMessage) {
     ) {
         val label = when (msg.text) {
             QuickAction.NEXT_STEP.prompt -> "Подсказка"
-            QuickAction.WRITE_ON_PAGE.prompt -> "Записать на лист"
-            QuickAction.DRAW_ON_PAGE.prompt -> "Начертить"
             QuickAction.FIND_ERROR.prompt -> "Где ошибка?"
             QuickAction.CHECK_ANSWER.prompt -> "Проверить"
             QuickAction.THEORY.prompt -> "Теория"
@@ -1479,8 +1466,6 @@ private fun UserChatBubble(msg: NotebookController.MentorChatMessage) {
         }
         val icon = when (msg.text) {
             QuickAction.NEXT_STEP.prompt -> R.drawable.ic_bulb
-            QuickAction.WRITE_ON_PAGE.prompt -> R.drawable.ic_pen
-            QuickAction.DRAW_ON_PAGE.prompt -> R.drawable.ic_shapes
             QuickAction.FIND_ERROR.prompt -> R.drawable.ic_search
             QuickAction.CHECK_ANSWER.prompt -> R.drawable.ic_check
             QuickAction.THEORY.prompt -> R.drawable.ic_book
@@ -1554,7 +1539,6 @@ private fun AssistantChatBubble(
                         streaming = answer.streaming,
                         isLatest = isLatestTurn,
                         onLocate = { ctl.focusMark(i + 1) },
-                        onWriteToPage = { ctl.writeMarkToPage(m, answer.geometry) },
                         onNotHere = { ctl.onMarkNotHere(i + 1) },
                     )
                 }
@@ -1629,24 +1613,6 @@ private fun QuickAskChips(
                 highlight = false,
                 enabled = enabled,
                 onClick = { onAsk(QuickAction.NEXT_STEP.prompt, AskKind.QUICK) },
-            )
-        }
-        item {
-            QuickChip(
-                title = "На лист",
-                icon = R.drawable.ic_pen,
-                highlight = false,
-                enabled = enabled,
-                onClick = { onAsk(QuickAction.WRITE_ON_PAGE.prompt, AskKind.QUICK) },
-            )
-        }
-        item {
-            QuickChip(
-                title = "Начертить",
-                icon = R.drawable.ic_shapes,
-                highlight = false,
-                enabled = enabled,
-                onClick = { onAsk(QuickAction.DRAW_ON_PAGE.prompt, AskKind.QUICK) },
             )
         }
         item {
@@ -2050,7 +2016,6 @@ private fun CalmNoteCard(
     streaming: Boolean = false,
     isLatest: Boolean = true,
     onLocate: () -> Unit,
-    onWriteToPage: (() -> Unit)? = null,
     onNotHere: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
@@ -2142,17 +2107,6 @@ private fun CalmNoteCard(
                         modifier = Modifier.clickable { expanded = !expanded }.padding(vertical = 2.dp),
                     )
                 }
-                if (onWriteToPage != null && m.text.isNotBlank()) {
-                    Text(
-                        "На лист ✎",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Brand.Ink,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        softWrap = false,
-                        modifier = Modifier.clickable(onClick = onWriteToPage).padding(vertical = 2.dp),
-                    )
-                }
                 if (m.box != null && onNotHere != null) {
                     Text(
                         if (notHereReported) "✓ промах" else "Не здесь",
@@ -2233,9 +2187,6 @@ internal fun PermissionCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = Brand.InkSoft,
             )
-            if (act.kind == MentorActionKind.WRITE_TEXT || act.kind == MentorActionKind.DIAGRAM) {
-                MentorActionPreview(act)
-            }
         }
         if (state == "PENDING") {
             Row(
@@ -2245,74 +2196,6 @@ internal fun PermissionCard(
                 InkButton("Разрешить", modifier = Modifier.weight(1f), onClick = onApprove)
                 SoftButton("Отклонить", onClick = onDismiss)
             }
-        }
-    }
-}
-
-private data class PreviewBuilt(
-    val strokes: List<Stroke>,
-    val texts: List<TextBox>,
-    val left: Float,
-    val top: Float,
-    val width: Float,
-    val height: Float,
-)
-
-@Composable
-private fun MentorActionPreview(action: MentorPageAction) {
-    val preview = remember(action.id, action.text) {
-        val blank = InkPage(0L, Paper.BLANK)
-        val ink = android.graphics.Color.rgb(24, 24, 28)
-        val (strokes, texts) = when (action.kind) {
-            MentorActionKind.WRITE_TEXT -> {
-                val (s, t, _) = MentorNotebookWriter.buildWriteAddition(blank, action.text, null, ink, 22f, AndroidMathMetrics)
-                s to t
-            }
-            MentorActionKind.DIAGRAM -> {
-                val (s, t, _) = MentorNotebookWriter.buildDiagramAddition(blank, action.text, null, ink, AndroidMathMetrics)
-                s to t
-            }
-            else -> emptyList<Stroke>() to emptyList<TextBox>()
-        }
-        var minL = Float.MAX_VALUE
-        var minT = Float.MAX_VALUE
-        var maxR = -Float.MAX_VALUE
-        var maxB = -Float.MAX_VALUE
-        for (s in strokes) {
-            val b = s.bounds()
-            minL = minOf(minL, b[0]); minT = minOf(minT, b[1]); maxR = maxOf(maxR, b[2]); maxB = maxOf(maxB, b[3])
-        }
-        for (t in texts) {
-            val b = t.bounds()
-            minL = minOf(minL, b[0]); minT = minOf(minT, b[1]); maxR = maxOf(maxR, b[2]); maxB = maxOf(maxB, b[3])
-        }
-        if (minL >= maxR || minT >= maxB) null
-        else PreviewBuilt(strokes, texts, minL, minT, (maxR - minL).coerceAtLeast(30f), (maxB - minT).coerceAtLeast(24f))
-    } ?: return
-
-    val drawer = remember { PageDrawer().apply { dark = false } }
-    val aspect = (preview.width / preview.height).coerceIn(1.1f, 4.2f)
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .heightIn(min = 56.dp, max = 150.dp)
-            .aspectRatio(aspect, matchHeightConstraintsFirst = false)
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(PageDrawer.PAPER))
-            .border(0.6.dp, Brand.Line, RoundedCornerShape(12.dp))
-            .padding(8.dp),
-    ) {
-        Canvas(Modifier.fillMaxSize()) {
-            val scale = minOf(size.width / preview.width, size.height / preview.height).coerceAtLeast(0.05f)
-            val dx = (size.width - preview.width * scale) * 0.5f - preview.left * scale
-            val dy = (size.height - preview.height * scale) * 0.5f - preview.top * scale
-            val nc = drawContext.canvas.nativeCanvas
-            nc.save()
-            nc.translate(dx, dy)
-            nc.scale(scale, scale)
-            for (s in preview.strokes) drawer.drawStroke(nc, s)
-            for (t in preview.texts) drawer.drawText(nc, t)
-            nc.restore()
         }
     }
 }

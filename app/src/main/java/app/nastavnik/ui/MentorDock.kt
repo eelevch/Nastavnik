@@ -127,7 +127,7 @@ fun BoxScope.MentorDock(
     var dragDismissPx by remember(answer?.seq) { mutableFloatStateOf(0f) }
 
     val defaultEnd = !ctl.railRight
-    val penNearBottom = (ctl.writing || ctl.mentorWriting) && ctl.penNormY > 0.68f
+    val penNearBottom = ctl.writing && ctl.penNormY > 0.68f
     val dodge = penNearBottom && if (defaultEnd) ctl.penNormX > 0.60f else ctl.penNormX < 0.40f
     val alignEnd = if (dodge) !defaultEnd else defaultEnd
     val targetBias = if (alignEnd) 1f else -1f
@@ -330,11 +330,11 @@ fun BoxScope.MentorDock(
                     }
 
                     val primaryActions = remember {
-                        val wanted = setOf(QuickAction.NEXT_STEP, QuickAction.FIND_ERROR, QuickAction.WRITE_ON_PAGE)
+                        val wanted = setOf(QuickAction.NEXT_STEP, QuickAction.FIND_ERROR, QuickAction.CHECK_ANSWER)
                         ASKS.filter { it.action in wanted }
                     }
                     val extraActions = remember {
-                        val wanted = setOf(QuickAction.NEXT_STEP, QuickAction.FIND_ERROR, QuickAction.WRITE_ON_PAGE)
+                        val wanted = setOf(QuickAction.NEXT_STEP, QuickAction.FIND_ERROR, QuickAction.CHECK_ANSWER)
                         ASKS.filter { it.action !in wanted }
                     }
                     val shownChips = if (moreChips) primaryActions + extraActions else primaryActions
@@ -505,15 +505,6 @@ fun BoxScope.MentorDock(
                                         }.padding(vertical = 2.dp),
                                     )
                                 }
-                                Text(
-                                    "Записать",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = Brand.InkSoft,
-                                    modifier = Modifier.clickable {
-                                        bubbleTouchedAt = System.currentTimeMillis()
-                                        ctl.writeMarkToPage(firstMark, a.geometry)
-                                    }.padding(vertical = 2.dp),
-                                )
                                 Box(
                                     Modifier
                                         .size(26.dp)
@@ -595,7 +586,7 @@ fun BoxScope.MentorDock(
                     },
                 contentAlignment = Alignment.Center,
             ) {
-                val writingNow = ctl.writing || ctl.mentorWriting
+                val writingNow = ctl.writing
                 if (ctl.autoCheckProgress > 0.02f && !busy && !writingNow) {
                     Canvas(Modifier.fillMaxSize().padding(2.dp)) {
                         drawArc(

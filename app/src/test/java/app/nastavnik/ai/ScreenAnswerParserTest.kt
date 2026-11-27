@@ -178,7 +178,7 @@ class ScreenAnswerParserTest {
         val px = Prompts.mentorSystem(Strictness.HINTS, CoordMode.PIXELS_XY)
         assertTrue(px.contains("в пикселях"))
         assertTrue(px.contains("@@ error стр 4"))
-        assertFalse(Regex("""\{(STRICTNESS|COORDS|COORDS_RULE)\}""").containsMatchIn(px))
+        assertFalse(px.contains("{"))
         val g = Prompts.mentorSystem(Strictness.HINTS, CoordMode.NORM_YX)
         assertTrue(g.contains("box_2d"))
         assertEquals("Вопрос\n\n[Снимок экрана: 1383×864 пикселей]", Prompts.withShotSize("Вопрос", 1383, 864))
@@ -202,11 +202,7 @@ class ScreenAnswerParserTest {
     fun pageActionsAreParsedCleanly() {
         val raw = """
             @@ note
-            Запишу шаг на лист.
-            @@ write после 2
-            \frac{1}{2}x^2 + C
-            @@ draw axes 100 200 500 600
-            @@ highlight стр 2
+            Управляем тетрадью.
             @@ erase стр 1
             @@ page_add lined
             @@ page_goto 3
@@ -216,54 +212,26 @@ class ScreenAnswerParserTest {
         """.trimIndent()
         val a = ScreenAnswerParser.parse(raw, CoordMode.PIXELS_XY, 1000, 1000)
         assertEquals(1, a.marks.size)
-        assertEquals(9, a.actions.size)
-        assertEquals(MentorActionKind.WRITE_TEXT, a.actions[0].kind)
-        assertEquals("\\frac{1}{2}x^2 + C", a.actions[0].text)
-        assertEquals(2, a.actions[0].after)
-        assertEquals(MentorActionKind.DRAW_SHAPE, a.actions[1].kind)
-        assertEquals(DrawingKind.AXES, a.actions[1].shape)
-        assertNotNull(a.actions[1].box)
-        assertEquals(MentorActionKind.HIGHLIGHT, a.actions[2].kind)
-        assertEquals(2..2, a.actions[2].lines)
-        assertEquals(MentorActionKind.ERASE, a.actions[3].kind)
-        assertEquals(1..1, a.actions[3].lines)
-        assertEquals(MentorActionKind.ADD_PAGE, a.actions[4].kind)
-        assertEquals("LINED", a.actions[4].paper)
-        assertEquals(MentorActionKind.GOTO_PAGE, a.actions[5].kind)
-        assertEquals(3, a.actions[5].targetPage)
-        assertEquals(MentorActionKind.SET_PAPER, a.actions[6].kind)
-        assertEquals("GRID", a.actions[6].paper)
-        assertTrue(a.actions[6].applyAllPages)
-        assertEquals(MentorActionKind.RENAME_NOTEBOOK, a.actions[7].kind)
-        assertEquals("Интегралы", a.actions[7].text)
-        assertEquals(MentorActionKind.SET_SUBJECT, a.actions[8].kind)
-        assertEquals("Матанализ", a.actions[8].text)
+        assertEquals(6, a.actions.size)
+        assertEquals(MentorActionKind.ERASE, a.actions[0].kind)
+        assertEquals(1..1, a.actions[0].lines)
+        assertEquals(MentorActionKind.ADD_PAGE, a.actions[1].kind)
+        assertEquals("LINED", a.actions[1].paper)
+        assertEquals(MentorActionKind.GOTO_PAGE, a.actions[2].kind)
+        assertEquals(3, a.actions[2].targetPage)
+        assertEquals(MentorActionKind.SET_PAPER, a.actions[3].kind)
+        assertEquals("GRID", a.actions[3].paper)
+        assertTrue(a.actions[3].applyAllPages)
+        assertEquals(MentorActionKind.RENAME_NOTEBOOK, a.actions[4].kind)
+        assertEquals("Интегралы", a.actions[4].text)
+        assertEquals(MentorActionKind.SET_SUBJECT, a.actions[5].kind)
+        assertEquals("Матанализ", a.actions[5].text)
     }
 
     @Test
     fun streamingHidesPartialActionHeader() {
-        val a = ScreenAnswerParser.parse("@@ note\nОк.\n@@ write пос", CoordMode.PIXELS_XY, 1000, 1000, streaming = true)
+        val a = ScreenAnswerParser.parse("@@ note\nОк.\n@@ erase пос", CoordMode.PIXELS_XY, 1000, 1000, streaming = true)
         assertEquals(1, a.marks.size)
         assertTrue(a.actions.isEmpty())
-    }
-
-    @Test
-    fun diagramActionAndHintAreParsedCleanly() {
-        val raw = """
-            @@ diagram после 3
-            size 120 80
-            axes 10 10 110 70 -2 2 -1 4 "x" "y"
-            plot "x^2"
-            @@ hint после 3
-            Построил параболу для наглядности.
-        """.trimIndent()
-        val a = ScreenAnswerParser.parse(raw, CoordMode.PIXELS_XY, 1000, 1000)
-        assertEquals(1, a.actions.size)
-        val act = a.actions.single()
-        assertEquals(MentorActionKind.DIAGRAM, act.kind)
-        assertEquals(3, act.after)
-        assertEquals(3, act.text.lines().size)
-        assertEquals(1, a.marks.size)
-        assertEquals(MarkKind.HINT, a.marks.single().kind)
     }
 }

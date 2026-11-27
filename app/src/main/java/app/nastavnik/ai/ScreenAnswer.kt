@@ -39,10 +39,6 @@ enum class DrawingKind { ARROW, LINE, ELLIPSE, RECT, TRIANGLE, AXES }
 data class Drawing(val kind: DrawingKind, val reverseX: Boolean = false, val reverseY: Boolean = false)
 
 enum class MentorActionKind {
-    WRITE_TEXT,
-    DIAGRAM,
-    DRAW_SHAPE,
-    HIGHLIGHT,
     ERASE,
     CLEAR_PAGE,
     ADD_PAGE,
@@ -71,27 +67,6 @@ data class MentorPageAction(
     val after: Int? = null,
 ) {
     fun summaryLabel(): String = when (kind) {
-        MentorActionKind.WRITE_TEXT -> {
-            val preview = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty().take(52)
-            if (preview.isNotEmpty()) "Записать на листе: «$preview»" else "Записать текст на листе"
-        }
-        MentorActionKind.DIAGRAM -> {
-            val titleMatch = Regex("""title\s+"([^"]+)"""", RegexOption.IGNORE_CASE).find(text)
-            val preview = (titleMatch?.groupValues?.getOrNull(1)
-                ?: text.lineSequence().firstOrNull { it.isNotBlank() }?.trim())
-                .orEmpty()
-                .take(48)
-            if (preview.isNotEmpty()) "Начертить на листе: «$preview»" else "Начертить схему/график на листе"
-        }
-        MentorActionKind.DRAW_SHAPE -> when (shape) {
-            DrawingKind.AXES -> "Начертить оси координат на листе"
-            DrawingKind.ARROW -> "Нарисовать стрелку на листе"
-            DrawingKind.RECT -> "Начертить прямоугольник на листе"
-            DrawingKind.TRIANGLE -> "Начертить треугольник на листе"
-            DrawingKind.ELLIPSE -> "Обвести область овалом на листе"
-            else -> "Провести линию на листе"
-        }
-        MentorActionKind.HIGHLIGHT -> "Выделить маркером строку на листе"
         MentorActionKind.ERASE -> "Стереть фрагмент на странице"
         MentorActionKind.CLEAR_PAGE -> "Очистить текущую страницу"
         MentorActionKind.ADD_PAGE -> "Добавить новую страницу" + (paper?.let { " (${paperLabel(it)})" } ?: "")
@@ -164,10 +139,6 @@ object ScreenAnswerParser {
 
     private val header = Regex("""^\s*@@\s*([\p{L}_]+)(.*)$""")
     private val drawingRe = Regex("""^\s*@@\s*(arrow|line|ellipse)\s*:?\s*(.*)$""", RegexOption.IGNORE_CASE)
-    private val diagramActionRe = Regex("""^\s*@@\s*(?:diagram|scheme|plot|схема|чертёж|чертеж|график|рисунок)\b(.*)$""", RegexOption.IGNORE_CASE)
-    private val drawActionRe = Regex("""^\s*@@\s*(?:draw|shape|нарисуй|фигура)\s+(arrow|line|ellipse|rect|triangle|axes|стрелка|линия|овал|прямоугольник|треугольник|оси)\s*:?\s*(.*)$""", RegexOption.IGNORE_CASE)
-    private val writeActionRe = Regex("""^\s*@@\s*(?:write|запиши|напиши)\b(.*)$""", RegexOption.IGNORE_CASE)
-    private val highlightActionRe = Regex("""^\s*@@\s*(?:highlight|выдели)\b(.*)$""", RegexOption.IGNORE_CASE)
     private val eraseActionRe = Regex("""^\s*@@\s*(?:erase|сотри|удали_фрагмент)\b(.*)$""", RegexOption.IGNORE_CASE)
     private val pageAddRe = Regex("""^\s*@@\s*(?:page_add|add_page|новая_страница)\b(.*)$""", RegexOption.IGNORE_CASE)
     private val pageGotoRe = Regex("""^\s*@@\s*(?:page_goto|goto_page|страница)\b(.*)$""", RegexOption.IGNORE_CASE)
@@ -256,21 +227,8 @@ object ScreenAnswerParser {
         val detail = StringBuilder()
         var inDetail = false
         var drawing: Drawing? = null
-        var pendingBodyAction: MentorPageAction? = null
-        val actionBody = StringBuilder()
-
-        fun flushBodyAction() {
-            val act = pendingBodyAction ?: return
-            pendingBodyAction = null
-            val content = actionBody.toString().trim()
-            actionBody.setLength(0)
-            if (content.isNotEmpty()) {
-                actions += act.copy(text = content)
-            }
-        }
 
         fun flush() {
-            flushBodyAction()
             val t = body.toString().trim()
             val d = detail.toString().trim().ifEmpty { null }
             if (kind != null || t.isNotEmpty() || d != null) {
@@ -284,60 +242,6 @@ object ScreenAnswerParser {
         }
 
         for (line in text.lines()) {
-            diagramActionRe.matchEntire(line)?.let { dm ->
-                flush()
-                kind = null; box = null; lines = null; after = null; drawing = null
-                val spec = parseSpec(dm.groupValues[1])
-                pendingBodyAction = MentorPageAction(
-                    id = "act_${actions.size}",
-                    kind = MentorActionKind.DIAGRAM,
-                    box = spec?.coords?.let { toBox(it, mode, imageW, imageH) },
-                    lines = spec?.lines,
-                    after = spec?.after,
-                )
-                continue
-            }
-            writeActionRe.matchEntire(line)?.let { wm ->
-                flush()
-                kind = null; box = null; lines = null; after = null; drawing = null
-                val spec = parseSpec(wm.groupValues[1])
-                pendingBodyAction = MentorPageAction(
-                    id = "act_${actions.size}",
-                    kind = MentorActionKind.WRITE_TEXT,
-                    box = spec?.coords?.let { toBox(it, mode, imageW, imageH) },
-                    lines = spec?.lines,
-                    after = spec?.after,
-                )
-                continue
-            }
-            drawActionRe.matchEntire(line)?.let { dm ->
-                flush()
-                kind = null; box = null; lines = null; after = null; drawing = null
-                val dk = parseDrawingKind(dm.groupValues[1])
-                val spec = parseSpec(dm.groupValues[2])
-                actions += MentorPageAction(
-                    id = "act_${actions.size}",
-                    kind = MentorActionKind.DRAW_SHAPE,
-                    shape = dk,
-                    box = spec?.coords?.let { toBox(it, mode, imageW, imageH) },
-                    lines = spec?.lines,
-                    after = spec?.after,
-                )
-                continue
-            }
-            highlightActionRe.matchEntire(line)?.let { hm ->
-                flush()
-                kind = null; box = null; lines = null; after = null; drawing = null
-                val spec = parseSpec(hm.groupValues[1])
-                actions += MentorPageAction(
-                    id = "act_${actions.size}",
-                    kind = MentorActionKind.HIGHLIGHT,
-                    box = spec?.coords?.let { toBox(it, mode, imageW, imageH) },
-                    lines = spec?.lines,
-                    after = spec?.after,
-                )
-                continue
-            }
             eraseActionRe.matchEntire(line)?.let { em ->
                 flush()
                 kind = null; box = null; lines = null; after = null; drawing = null
@@ -468,10 +372,7 @@ object ScreenAnswerParser {
                 lines = spec.lines
                 after = spec.after
             } else if (detailRe.matches(line)) {
-                flushBodyAction()
                 inDetail = true
-            } else if (pendingBodyAction != null) {
-                actionBody.append(line).append('\n')
             } else {
                 (if (inDetail) detail else body).append(line).append('\n')
             }

@@ -246,14 +246,6 @@ class InkView(context: Context) : View(context) {
     }
 
     /** Добавить штрихи и текстовые заметки от имени наставника (одним шагом для Undo). */
-    fun applyMentorAdditions(addedStrokes: List<Stroke>, addedTexts: List<TextBox>, revealRect: RectF? = null) {
-        val p = page ?: return
-        if (addedStrokes.isEmpty() && addedTexts.isEmpty()) return
-        clearSelection()
-        replace(p, p.strokes + addedStrokes, p.texts + addedTexts)
-        if (revealRect != null) reveal(revealRect)
-    }
-
     /** Удалить штрихи и тексты в указанной области страницы (возвращает число удалённых элементов). */
     fun eraseInPageRect(region: RectF): Int {
         val p = page ?: return 0

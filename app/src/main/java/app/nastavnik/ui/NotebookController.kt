@@ -13,7 +13,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.nastavnik.BuildConfig
 import app.nastavnik.NastavnikApp
-import app.nastavnik.ai.DrawingKind
 import app.nastavnik.ai.Mark
 import app.nastavnik.ai.MarkKind
 import app.nastavnik.ai.MentorActionKind
@@ -23,10 +22,8 @@ import app.nastavnik.ai.Prompts
 import app.nastavnik.capture.ImageUtils
 import app.nastavnik.data.DeviceProfile
 import app.nastavnik.geom.IRect
-import app.nastavnik.ink.AndroidMathMetrics
 import app.nastavnik.ink.InkPage
 import app.nastavnik.ink.InkView
-import app.nastavnik.ink.MentorNotebookWriter
 import app.nastavnik.ink.NotebookMeta
 import app.nastavnik.ink.NotebookStore
 import app.nastavnik.ink.SavedChatCodec
@@ -226,10 +223,6 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
 
     /** Статус предложенных наставником действий на листе: "PENDING", "APPROVED", "DISMISSED". */
     val actionStates = mutableStateMapOf<Long, String>()
-
-    /** Наставник прямо сейчас сам пишет или чертит на листе (после разрешения). */
-    var mentorWriting by mutableStateOf(false)
-        private set
 
     private var closed = false
     private var lastChatId = 0L
@@ -936,25 +929,6 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         saveChatToDisk()
     }
 
-    /** Вручную перенести любую текстовую заметку/подсказку наставника прямо на лист тетради. */
-    fun writeMarkToPage(mark: Mark, geometry: ShotGeometry?) {
-        val text = listOfNotNull(mark.text.takeIf { it.isNotBlank() }, mark.detail?.takeIf { it.isNotBlank() })
-            .joinToString("\n")
-        if (text.isBlank()) return
-        val action = MentorPageAction(
-            id = "mark_${System.currentTimeMillis()}",
-            kind = MentorActionKind.WRITE_TEXT,
-            text = text,
-            box = mark.box,
-            lines = mark.lines,
-            after = mark.after,
-        )
-        scope.launch {
-            executeMentorAction(action, geometry)
-            showHint("Заметка добавлена на лист")
-        }
-    }
-
     private suspend fun addPageAwait(paper: Paper) {
         val m = meta ?: return
         val p = InkPage(nbs.store.newId(), paper)
@@ -984,69 +958,12 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         return null
     }
 
-    private suspend fun animateMentorPenOver(pageRect: RectF, pageHeight: Float) {
-        if (pageRect.isEmpty) return
-        mentorWriting = true
-        val viewPt = FloatArray(2)
-        val steps = 8
-        try {
-            for (step in 0..steps) {
-                val frac = step.toFloat() / steps
-                val px = pageRect.left + pageRect.width() * (0.12f + 0.72f * frac)
-                val py = pageRect.centerY()
-                if (ink.mapPagePointToView(px, py, viewPt)) {
-                    penViewX = viewPt[0]
-                    penViewY = viewPt[1]
-                    penNormX = (px / PAGE_W).coerceIn(0f, 1f)
-                    penNormY = (py / pageHeight.coerceAtLeast(1f)).coerceIn(0f, 1f)
-                }
-                delay(42L)
-            }
-        } finally {
-            mentorWriting = false
-        }
-    }
-
     private suspend fun executeMentorAction(action: MentorPageAction, geometry: ShotGeometry?) {
         val p = page ?: return
         val anchor = actionAnchorPageRect(action, geometry, p)
         when (action.kind) {
-            MentorActionKind.WRITE_TEXT -> {
-                val fontSize = if (p.paper == Paper.LINED) 26f else 24f
-                val (strokes, texts, slot) = MentorNotebookWriter.buildWriteAddition(p, action.text, anchor, penColor, fontSize, AndroidMathMetrics)
-                if (texts.isNotEmpty() || strokes.isNotEmpty()) {
-                    animateMentorPenOver(slot, p.height)
-                    ink.applyMentorAdditions(strokes, texts, slot)
-                    page?.let { detectedPageLines = extractPageLineRects(it) }
-                }
-            }
-            MentorActionKind.DIAGRAM -> {
-                val (strokes, texts, rect) = MentorNotebookWriter.buildDiagramAddition(p, action.text, anchor, penColor, AndroidMathMetrics)
-                if (strokes.isNotEmpty() || texts.isNotEmpty()) {
-                    animateMentorPenOver(rect, p.height)
-                    ink.applyMentorAdditions(strokes, texts, rect)
-                    page?.let { detectedPageLines = extractPageLineRects(it) }
-                }
-            }
-            MentorActionKind.DRAW_SHAPE -> {
-                val dk = action.shape ?: DrawingKind.LINE
-                val (strokes, rect) = MentorNotebookWriter.buildShapeAddition(p, dk, anchor, penColor, penWidth)
-                if (strokes.isNotEmpty()) {
-                    animateMentorPenOver(rect, p.height)
-                    ink.applyMentorAdditions(strokes, emptyList(), rect)
-                    page?.let { detectedPageLines = extractPageLineRects(it) }
-                }
-            }
-            MentorActionKind.HIGHLIGHT -> {
-                val (strokes, rect) = MentorNotebookWriter.buildHighlightAddition(p, anchor, markerColor)
-                if (strokes.isNotEmpty()) {
-                    animateMentorPenOver(rect, p.height)
-                    ink.applyMentorAdditions(strokes, emptyList(), rect)
-                }
-            }
             MentorActionKind.ERASE -> {
                 val region = anchor ?: return
-                animateMentorPenOver(region, p.height)
                 ink.eraseInPageRect(region)
                 page?.let { detectedPageLines = extractPageLineRects(it) }
             }

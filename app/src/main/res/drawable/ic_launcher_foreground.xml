@@ -1,64 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Иконка приложения: объёмная сфера Наставника (Sunset) с живыми капсульными глазами -->
+<!-- Иконка Material You: тональный плоский силуэт OnPrimaryContainer со сквозными глазами и искоркой -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Внешний мягкий коралловый ореол -->
-    <path android:pathData="M54,24 A30,30 0 1,0 54,84 A30,30 0 1,0 54,24 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:type="radial"
-                android:centerX="54"
-                android:centerY="54"
-                android:gradientRadius="30">
-                <item android:color="#44FF6468" android:offset="0" />
-                <item android:color="#1CFF8E5A" android:offset="0.65" />
-                <item android:color="#00FF6468" android:offset="1" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
-    <!-- Основная объёмная сфера -->
-    <path android:pathData="M54,29.5 A24.5,24.5 0 1,0 54,78.5 A24.5,24.5 0 1,0 54,29.5 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:type="radial"
-                android:centerX="50"
-                android:centerY="50"
-                android:gradientRadius="29">
-                <item android:color="#FFFF3478" android:offset="0" />
-                <item android:color="#FFFF6359" android:offset="0.48" />
-                <item android:color="#FFFFA95E" android:offset="0.82" />
-                <item android:color="#FFFFD485" android:offset="1" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
-    <!-- Верхний левый блик кромки -->
-    <path android:pathData="M54,30.5 A23.5,23.5 0 1,0 54,77.5 A23.5,23.5 0 1,0 54,30.5 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:type="linear"
-                android:startX="36"
-                android:startY="32"
-                android:endX="60"
-                android:endY="58">
-                <item android:color="#40FFF8EB" android:offset="0" />
-                <item android:color="#00FFFFFF" android:offset="1" />
-            </gradient>
-        </aapt:attr>
-    </path>
-
-    <!-- Левый глаз-капсула -->
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M47.9,48.2 C49.39,48.2 50.6,49.41 50.6,50.9 L50.6,57.1 C50.6,58.59 49.39,59.8 47.9,59.8 C46.41,59.8 45.2,58.59 45.2,57.1 L45.2,50.9 C45.2,49.41 46.41,48.2 47.9,48.2 Z" />
-
-    <!-- Правый глаз-капсула -->
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M60.1,48.2 C61.59,48.2 62.8,49.41 62.8,50.9 L62.8,57.1 C62.8,58.59 61.59,59.8 60.1,59.8 C58.61,59.8 57.4,58.59 57.4,57.1 L57.4,50.9 C57.4,49.41 58.61,48.2 60.1,48.2 Z" />
+        android:fillColor="#FF1B243B"
+        android:fillType="evenOdd"
+        android:pathData="M54,27 A27,27 0 1,0 54,81 A27,27 0 1,0 54,27 Z M47.4,47.8 C49.0,47.8 50.3,49.1 50.3,50.7 L50.3,57.3 C50.3,58.9 49.0,60.2 47.4,60.2 C45.8,60.2 44.5,58.9 44.5,57.3 L44.5,50.7 C44.5,49.1 45.8,47.8 47.4,47.8 Z M60.6,47.8 C62.2,47.8 63.5,49.1 63.5,50.7 L63.5,57.3 C63.5,58.9 62.2,60.2 60.6,60.2 C59.0,60.2 57.7,58.9 57.7,57.3 L57.7,50.7 C57.7,49.1 59.0,47.8 60.6,47.8 Z M79.5,24.7 Q79.9,29.1 84.3,29.5 Q79.9,29.9 79.5,34.3 Q79.1,29.9 74.7,29.5 Q79.1,29.1 79.5,24.7 Z" />
 </vector>
