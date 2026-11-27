@@ -178,7 +178,7 @@ class ScreenAnswerParserTest {
         val px = Prompts.mentorSystem(Strictness.HINTS, CoordMode.PIXELS_XY)
         assertTrue(px.contains("в пикселях"))
         assertTrue(px.contains("@@ error стр 4"))
-        assertFalse(px.contains("{"))
+        assertFalse(Regex("""\{(STRICTNESS|COORDS|COORDS_RULE)\}""").containsMatchIn(px))
         val g = Prompts.mentorSystem(Strictness.HINTS, CoordMode.NORM_YX)
         assertTrue(g.contains("box_2d"))
         assertEquals("Вопрос\n\n[Снимок экрана: 1383×864 пикселей]", Prompts.withShotSize("Вопрос", 1383, 864))
@@ -245,5 +245,25 @@ class ScreenAnswerParserTest {
         val a = ScreenAnswerParser.parse("@@ note\nОк.\n@@ write пос", CoordMode.PIXELS_XY, 1000, 1000, streaming = true)
         assertEquals(1, a.marks.size)
         assertTrue(a.actions.isEmpty())
+    }
+
+    @Test
+    fun diagramActionAndHintAreParsedCleanly() {
+        val raw = """
+            @@ diagram после 3
+            size 120 80
+            axes 10 10 110 70 -2 2 -1 4 "x" "y"
+            plot "x^2"
+            @@ hint после 3
+            Построил параболу для наглядности.
+        """.trimIndent()
+        val a = ScreenAnswerParser.parse(raw, CoordMode.PIXELS_XY, 1000, 1000)
+        assertEquals(1, a.actions.size)
+        val act = a.actions.single()
+        assertEquals(MentorActionKind.DIAGRAM, act.kind)
+        assertEquals(3, act.after)
+        assertEquals(3, act.text.lines().size)
+        assertEquals(1, a.marks.size)
+        assertEquals(MarkKind.HINT, a.marks.single().kind)
     }
 }

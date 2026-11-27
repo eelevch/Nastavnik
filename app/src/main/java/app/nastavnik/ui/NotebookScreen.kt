@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -63,6 +64,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -70,13 +72,19 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.requiredWidth
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.graphics.nativeCanvas
+import app.nastavnik.ink.AndroidMathMetrics
+import app.nastavnik.ink.InkPage
+import app.nastavnik.ink.MentorNotebookWriter
+import app.nastavnik.ink.Stroke
+import app.nastavnik.ink.TextBox
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.ui.unit.sp
 import app.nastavnik.ai.MentorActionKind
 import app.nastavnik.ai.MentorPageAction
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -125,6 +133,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.nastavnik.BuildConfig
 import app.nastavnik.R
 import app.nastavnik.ai.Mark
@@ -188,11 +197,12 @@ fun NotebookScreen(
 
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     val wide = screenWidthDp >= 840
-    // Окно чата больше не открывается само: с наставником можно общаться прямо с листа.
+    // Окно чата больше не открывается само: с наставником можно общаться прямо на листе.
     var panel by rememberSaveable(notebookId) { mutableStateOf(false) }
-    var quickAskOpen by remember(notebookId) { mutableStateOf(false) }
-    var dismissedReplySeq by remember(notebookId) { mutableLongStateOf(0L) }
     var quickProblem by remember { mutableStateOf<String?>(null) }
+    val settingsRepo = context.app.settings
+    val appSettings by remember { settingsRepo.flow() }.collectAsStateWithLifecycle(initialValue = settingsRepo.load())
+    val dockOn = appSettings.showAmbientMentor
 
     val speaker = context.app.speaker
     val isSpeaking by speaker.isSpeaking.collectAsState()
@@ -209,7 +219,6 @@ fun NotebookScreen(
         }
         quickProblem = null
         speechProblem = null
-        quickAskOpen = false
         ctl.ask(text, kind)
     }
 
@@ -295,7 +304,7 @@ fun NotebookScreen(
             NotebookTopBar(
                 ctl = ctl,
                 panel = panel,
-                quickAskOpen = quickAskOpen,
+                dockOn = dockOn,
                 listening = listening,
                 voiceRms = voiceRms,
                 gazeTarget = mentorGaze,
@@ -310,13 +319,7 @@ fun NotebookScreen(
                     if (isSpeaking) speaker.stop()
                     speech.toggle()
                 },
-                onToggleQuickOrPanel = {
-                    if (panel) {
-                        panel = false
-                    } else {
-                        quickAskOpen = !quickAskOpen
-                    }
-                },
+                onTogglePanel = { panel = !panel },
                 onPages = { pagesOpen = true },
                 importers = importers,
             )
@@ -360,103 +363,31 @@ fun NotebookScreen(
                     SelectionMenu(ctl)
                     EditorHint(ctl, Modifier.align(Alignment.TopCenter).padding(top = 14.dp))
 
-                    // Быстрое общение с наставником и разрешение изменений листа без открытия окна чата.
-                    if (!panel) {
-                        val dodgeTop = (ctl.writing || ctl.mentorWriting) && ctl.penNormY < 0.28f
-                        val floatAlign = if (dodgeTop) Alignment.BottomEnd else Alignment.TopEnd
-                        val busyNow = state.busy || (ctl.debugVisionAnswer?.streaming == true)
-
-                        Column(
-                            Modifier
-                                .align(floatAlign)
-                                .padding(14.dp)
-                                .widthIn(max = 360.dp)
-                                .zIndex(3f),
-                            horizontalAlignment = Alignment.End,
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            AnimatedVisibility(
-                                visible = listening && partialVoiceText.isNotBlank(),
-                                enter = fadeIn(tween(140)) + scaleIn(initialScale = 0.94f),
-                                exit = fadeOut(tween(140)),
-                            ) {
-                                Row(
-                                    Modifier
-                                        .glass(CircleShape, 6.dp, strong = true)
-                                        .border(0.8.dp, Brand.Accent.copy(alpha = 0.4f), CircleShape)
-                                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    Box(Modifier.size(7.dp).clip(CircleShape).background(Brand.Accent))
-                                    Text(
-                                        "«$partialVoiceText»",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Brand.Ink,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                            }
-
-                            AnimatedVisibility(
-                                visible = quickAskOpen,
-                                enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.94f),
-                                exit = fadeOut(tween(140)) + scaleOut(targetScale = 0.95f),
-                            ) {
-                                NotebookQuickAskCard(
-                                    busy = busyNow,
-                                    problem = quickProblem ?: speechProblem,
-                                    listening = listening,
-                                    voiceRms = voiceRms,
-                                    onOpenSettings = onSettings,
-                                    onToggleVoice = {
-                                        if (isSpeaking) speaker.stop()
-                                        speech.toggle()
-                                    },
-                                    onAsk = ::askMentor,
-                                    onOpenFullChat = {
-                                        quickAskOpen = false
-                                        panel = true
-                                    },
-                                    onClose = { quickAskOpen = false },
-                                )
-                            }
-
-                            val floatingAns = effectiveAnswer
-                            val hasPendingActions = floatingAns != null &&
-                                floatingAns.actions.isNotEmpty() &&
-                                ctl.actionStates[floatingAns.seq] == "PENDING"
-                            val showFloatingReply = !quickAskOpen && floatingAns != null && (
-                                hasPendingActions ||
-                                    (floatingAns.seq != dismissedReplySeq && (floatingAns.marks.isNotEmpty() || floatingAns.errorText != null))
-                                ) && !(ctl.writing && !hasPendingActions)
-
-                            AnimatedVisibility(
-                                visible = showFloatingReply,
-                                enter = fadeIn(tween(200)) + scaleIn(initialScale = 0.94f),
-                                exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.96f),
-                            ) {
-                                if (floatingAns != null) {
-                                    NotebookFloatingReplyCard(
-                                        ctl = ctl,
-                                        answer = floatingAns,
-                                        onSpeak = {
-                                            val full = floatingAns.marks.joinToString(". ") { it.text }
-                                            if (full.isNotBlank()) speaker.speak(full)
-                                        },
-                                        onOpenFullChat = {
-                                            dismissedReplySeq = floatingAns.seq
-                                            panel = true
-                                        },
-                                        onOpenSettings = onSettings,
-                                        onDismiss = {
-                                            dismissedReplySeq = floatingAns.seq
-                                        },
-                                    )
-                                }
-                            }
-                        }
+                    val busyNow = state.busy || (ctl.debugVisionAnswer?.streaming == true)
+                    if (!panel && dockOn && ctl.loaded) {
+                        MentorDock(
+                            ctl = ctl,
+                            answer = effectiveAnswer,
+                            busy = busyNow,
+                            listening = listening,
+                            voiceRms = voiceRms,
+                            partialVoiceText = partialVoiceText,
+                            problem = quickProblem ?: speechProblem,
+                            isSpeaking = isSpeaking,
+                            onToggleVoice = {
+                                if (isSpeaking) speaker.stop()
+                                speech.toggle()
+                            },
+                            onAsk = ::askMentor,
+                            onSpeak = { ans ->
+                                ans.marks.joinToString(". ") { it.text }
+                                    .takeIf { it.isNotBlank() }
+                                    ?.let(speaker::speak)
+                            },
+                            onOpenChat = { panel = true },
+                            onOpenSettings = onSettings,
+                            gazeTarget = mentorGaze,
+                        )
                     }
                     // Лист увеличен — маленькая плашка с масштабом; нажатие возвращает по ширине.
                     androidx.compose.animation.AnimatedVisibility(
@@ -673,14 +604,14 @@ private fun PanelSplitter(
 private fun NotebookTopBar(
     ctl: NotebookController,
     panel: Boolean,
-    quickAskOpen: Boolean,
+    dockOn: Boolean,
     listening: Boolean,
     voiceRms: Float,
     gazeTarget: Offset?,
     onBack: () -> Unit,
     onOpenNotebook: (Long) -> Unit,
     onToggleVoice: () -> Unit,
-    onToggleQuickOrPanel: () -> Unit,
+    onTogglePanel: () -> Unit,
     onPages: () -> Unit,
     importers: Importers,
 ) {
@@ -857,35 +788,44 @@ private fun NotebookTopBar(
             }
             val mentorState by ctl.mentor.state.collectAsState()
             val effectiveBusy = mentorState.busy || (ctl.debugVisionAnswer?.streaming == true)
-            val mentorAction = if (panel) "Скрыть наставника" else "Быстрый вопрос наставнику"
-            Box(
-                Modifier
-                    .size(34.dp)
-                    .then(
-                        if (listening) Modifier.clip(CircleShape).background(Brand.Accent)
-                        else Modifier.glass(CircleShape, 4.dp, strong = true)
+            val chatDesc = if (panel) "Скрыть чат" else "Открыть чат"
+            if (dockOn) {
+                BarButton(
+                    icon = R.drawable.ic_panel,
+                    description = chatDesc,
+                    active = panel,
+                    onClick = onTogglePanel,
+                )
+            } else {
+                Box(
+                    Modifier
+                        .size(34.dp)
+                        .then(
+                            if (listening) Modifier.clip(CircleShape).background(Brand.Accent)
+                            else Modifier.glass(CircleShape, 4.dp, strong = true)
+                        )
+                        .clickable(onClick = onToggleVoice)
+                        .semantics { contentDescription = if (listening) "Остановить голос" else "Спросить голосом" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val micScale = if (listening) 1f + voiceRms * 0.22f else 1f
+                    Icon(
+                        painterResource(R.drawable.ic_mic),
+                        contentDescription = null,
+                        tint = if (listening) Brand.OnAccent else Brand.Ink,
+                        modifier = Modifier.size(17.dp).graphicsLayer { scaleX = micScale; scaleY = micScale },
                     )
-                    .clickable(onClick = onToggleVoice)
-                    .semantics { contentDescription = if (listening) "Остановить голос" else "Спросить голосом" },
-                contentAlignment = Alignment.Center,
-            ) {
-                val micScale = if (listening) 1f + voiceRms * 0.22f else 1f
-                Icon(
-                    painterResource(R.drawable.ic_mic),
-                    contentDescription = null,
-                    tint = if (listening) Brand.OnAccent else Brand.Ink,
-                    modifier = Modifier.size(17.dp).graphicsLayer { scaleX = micScale; scaleY = micScale },
+                }
+                MascotBarButton(
+                    writing = ctl.writing || ctl.mentorWriting,
+                    thinking = effectiveBusy,
+                    autoCheckProgress = ctl.autoCheckProgress,
+                    gazeTarget = gazeTarget,
+                    description = chatDesc,
+                    active = panel,
+                    onClick = onTogglePanel,
                 )
             }
-            MascotBarButton(
-                writing = ctl.writing || ctl.mentorWriting,
-                thinking = effectiveBusy,
-                autoCheckProgress = ctl.autoCheckProgress,
-                gazeTarget = gazeTarget,
-                description = mentorAction,
-                active = panel || quickAskOpen,
-                onClick = onToggleQuickOrPanel,
-            )
         }
     }
     if (deletePageConfirm) {
@@ -1107,195 +1047,17 @@ private fun Divider() {
 // ---------------- наставник ----------------
 
 /** Быстрые вопросы наставнику: значок, название и что он сделает. */
-private class Ask(val action: QuickAction, val icon: Int, val title: String, val hint: String)
+internal class Ask(val action: QuickAction, val icon: Int, val title: String, val hint: String)
 
-private val ASKS = listOf(
+internal val ASKS = listOf(
     Ask(QuickAction.NEXT_STEP, R.drawable.ic_bulb, "Подсказка", "подскажет шаг"),
     Ask(QuickAction.WRITE_ON_PAGE, R.drawable.ic_pen, "На лист", "запишет на странице"),
+    Ask(QuickAction.DRAW_ON_PAGE, R.drawable.ic_shapes, "Начертить", "график или схему"),
     Ask(QuickAction.FIND_ERROR, R.drawable.ic_search, "Где ошибка?", "проверит записи"),
     Ask(QuickAction.CHECK_ANSWER, R.drawable.ic_check, "Проверить ответ", "верно ли всё"),
     Ask(QuickAction.THEORY, R.drawable.ic_book, "Теория", "формулы и правила"),
     Ask(QuickAction.SHOW_STEP, R.drawable.ic_chevron, "Показать шаг", "ход решения"),
 )
-
-/**
- * Компактная плавающая панель быстрого общения без открытия окна чата:
- * позволяет спросить текстом, голосом или попросить наставника написать прямо на листе.
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun NotebookQuickAskCard(
-    busy: Boolean,
-    problem: String?,
-    listening: Boolean,
-    voiceRms: Float,
-    onOpenSettings: () -> Unit,
-    onToggleVoice: () -> Unit,
-    onAsk: (String, AskKind) -> Unit,
-    onOpenFullChat: () -> Unit,
-    onClose: () -> Unit,
-) {
-    var question by remember { mutableStateOf("") }
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .glass(RoundedCornerShape(24.dp), 12.dp, strong = true)
-            .border(0.8.dp, Brand.Line, RoundedCornerShape(24.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            MascotIcon(sizeDp = 24.dp)
-            Text("Наставник", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-            Text(
-                "Чат →",
-                style = MaterialTheme.typography.labelMedium,
-                color = Brand.InkSoft,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .clickable(onClick = onOpenFullChat)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            )
-            Box(
-                Modifier
-                    .size(26.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onClose),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(painterResource(R.drawable.ic_close), contentDescription = "Закрыть", tint = Brand.InkSoft, modifier = Modifier.size(16.dp))
-            }
-        }
-        problem?.let { p ->
-            StatusLine(p, Tone.ERROR)
-            if (p.contains("настройки")) LinkText("Открыть настройки", onClick = onOpenSettings)
-        }
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            VoiceWaveButton(listening = listening, voiceRms = voiceRms, onClick = onToggleVoice)
-            CompactInputField(
-                value = question,
-                onValueChange = { question = it },
-                onSend = {
-                    if (question.isNotBlank()) {
-                        onAsk(question.trim(), AskKind.USER)
-                        question = ""
-                    }
-                },
-                enabled = !busy,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            ASKS.forEach { a ->
-                QuickChip(
-                    title = a.title,
-                    icon = a.icon,
-                    highlight = false,
-                    enabled = !busy,
-                    onClick = { onAsk(a.action.prompt, AskKind.QUICK) },
-                )
-            }
-        }
-    }
-}
-
-/**
- * Компактный плавающий ответ и запрос разрешения на изменение конспекта,
- * пока основное окно чата закрыто.
- */
-@Composable
-private fun NotebookFloatingReplyCard(
-    ctl: NotebookController,
-    answer: AnswerUi,
-    onSpeak: () -> Unit,
-    onOpenFullChat: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val actionState = ctl.actionStates[answer.seq]
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .glass(RoundedCornerShape(24.dp), 12.dp, strong = true)
-            .border(0.8.dp, Brand.Line, RoundedCornerShape(24.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            MascotIcon(thinking = answer.streaming, sizeDp = 22.dp)
-            Text(
-                when {
-                    answer.actions.isNotEmpty() && actionState == "PENDING" -> "Запрос изменения"
-                    answer.streaming -> answer.status ?: "Думаю…"
-                    else -> "Наставник"
-                },
-                style = MaterialTheme.typography.labelLarge,
-                color = Brand.InkSoft,
-                modifier = Modifier.weight(1f),
-            )
-            if (!answer.streaming && answer.marks.isNotEmpty()) {
-                Box(
-                    Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .clickable(onClick = onSpeak),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(painterResource(R.drawable.ic_volume), contentDescription = "Озвучить", tint = Brand.InkSoft, modifier = Modifier.size(16.dp))
-                }
-            }
-            Text(
-                "Чат",
-                style = MaterialTheme.typography.labelMedium,
-                color = Brand.InkSoft,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .clickable(onClick = onOpenFullChat)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            )
-            Box(
-                Modifier
-                    .size(26.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onDismiss),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(painterResource(R.drawable.ic_close), contentDescription = "Скрыть", tint = Brand.InkSoft, modifier = Modifier.size(16.dp))
-            }
-        }
-        answer.errorText?.let { err ->
-            StatusLine(err, Tone.ERROR)
-            if (answer.error?.needsSettings == true) LinkText("Настройки", onClick = onOpenSettings)
-        }
-        answer.marks.take(2).forEachIndexed { idx, m ->
-            CalmNoteCard(
-                number = idx + 1,
-                m = m,
-                topic = ctl.meta?.title.orEmpty(),
-                streaming = answer.streaming,
-                isLatest = idx == 0,
-                onLocate = { ctl.focusMark(idx + 1) },
-                onWriteToPage = { ctl.writeMarkToPage(m, answer.geometry) },
-                onNotHere = { ctl.onMarkNotHere(idx + 1) },
-            )
-        }
-        if (answer.actions.isNotEmpty()) {
-            PermissionCard(
-                actions = answer.actions,
-                state = actionState ?: "PENDING",
-                onApprove = { ctl.approveActions(answer) },
-                onDismiss = { ctl.dismissActions(answer) },
-            )
-        }
-    }
-}
 
 /**
  * Панель наставника в виде спокойного, чистого чата.
@@ -1606,17 +1368,19 @@ private fun MentorPanel(
                     items(ctl.chatMessages.size, key = { idx -> ctl.chatMessages[idx].id }) { idx ->
                         val msg = ctl.chatMessages[idx]
                         val isLatest = idx >= ctl.chatMessages.lastIndex - 1
-                        if (msg.isUser) {
-                            UserChatBubble(msg)
-                        } else {
-                            AssistantChatBubble(
-                                ctl = ctl,
-                                msg = msg,
-                                isLatestTurn = isLatest,
-                                onSettings = onSettings,
-                                onCleanReady = onCleanReady,
-                                onRetry = { ask(msg.answer?.question.orEmpty(), msg.kind) },
-                            )
+                        Box(Modifier.fillMaxWidth().animateItem()) {
+                            if (msg.isUser) {
+                                UserChatBubble(msg)
+                            } else {
+                                AssistantChatBubble(
+                                    ctl = ctl,
+                                    msg = msg,
+                                    isLatestTurn = isLatest,
+                                    onSettings = onSettings,
+                                    onCleanReady = onCleanReady,
+                                    onRetry = { ask(msg.answer?.question.orEmpty(), msg.kind) },
+                                )
+                            }
                         }
                     }
                 }
@@ -1705,6 +1469,7 @@ private fun UserChatBubble(msg: NotebookController.MentorChatMessage) {
         val label = when (msg.text) {
             QuickAction.NEXT_STEP.prompt -> "Подсказка"
             QuickAction.WRITE_ON_PAGE.prompt -> "Записать на лист"
+            QuickAction.DRAW_ON_PAGE.prompt -> "Начертить"
             QuickAction.FIND_ERROR.prompt -> "Где ошибка?"
             QuickAction.CHECK_ANSWER.prompt -> "Проверить"
             QuickAction.THEORY.prompt -> "Теория"
@@ -1715,6 +1480,7 @@ private fun UserChatBubble(msg: NotebookController.MentorChatMessage) {
         val icon = when (msg.text) {
             QuickAction.NEXT_STEP.prompt -> R.drawable.ic_bulb
             QuickAction.WRITE_ON_PAGE.prompt -> R.drawable.ic_pen
+            QuickAction.DRAW_ON_PAGE.prompt -> R.drawable.ic_shapes
             QuickAction.FIND_ERROR.prompt -> R.drawable.ic_search
             QuickAction.CHECK_ANSWER.prompt -> R.drawable.ic_check
             QuickAction.THEORY.prompt -> R.drawable.ic_book
@@ -1722,21 +1488,28 @@ private fun UserChatBubble(msg: NotebookController.MentorChatMessage) {
             QuickAction.SIMILAR.prompt -> R.drawable.ic_refresh
             else -> null
         }
-        Row(
-            Modifier
-                .clip(RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp))
-                .background(Brand.Ink.copy(alpha = if (Brand.dark) 0.14f else 0.06f))
-                .padding(horizontal = 13.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        Box(
+            Modifier.fillMaxWidth(0.86f),
+            contentAlignment = Alignment.CenterEnd,
         ) {
-            if (icon != null) {
-                Icon(painterResource(icon), contentDescription = null, tint = Brand.InkSoft, modifier = Modifier.size(14.dp))
+            Row(
+                Modifier
+                    .wrapContentWidth()
+                    .clip(RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp))
+                    .background(Brand.Ink.copy(alpha = if (Brand.dark) 0.14f else 0.06f))
+                    .padding(horizontal = 13.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                if (icon != null) {
+                    Icon(painterResource(icon), contentDescription = null, tint = Brand.InkSoft, modifier = Modifier.size(14.dp))
+                }
+                Text(
+                    label,
+                    style = MaterialTheme.typography.bodyMedium.copy(color = Brand.Ink, fontWeight = FontWeight.Medium),
+                    modifier = Modifier.weight(1f, fill = false),
+                )
             }
-            Text(
-                label,
-                style = MaterialTheme.typography.bodyMedium.copy(color = Brand.Ink, fontWeight = FontWeight.Medium),
-            )
         }
     }
 }
@@ -1869,6 +1642,15 @@ private fun QuickAskChips(
         }
         item {
             QuickChip(
+                title = "Начертить",
+                icon = R.drawable.ic_shapes,
+                highlight = false,
+                enabled = enabled,
+                onClick = { onAsk(QuickAction.DRAW_ON_PAGE.prompt, AskKind.QUICK) },
+            )
+        }
+        item {
+            QuickChip(
                 title = "Где ошибка?",
                 icon = R.drawable.ic_search,
                 highlight = false,
@@ -1916,7 +1698,7 @@ private fun QuickAskChips(
 }
 
 @Composable
-private fun QuickChip(
+internal fun QuickChip(
     title: String,
     icon: Int,
     highlight: Boolean,
@@ -1957,7 +1739,7 @@ private fun QuickChip(
  * анимирует пульсирующий ореол и динамические звуковые волны в зависимости от громкости речи.
  */
 @Composable
-private fun VoiceWaveButton(
+internal fun VoiceWaveButton(
     listening: Boolean,
     voiceRms: Float,
     onClick: () -> Unit,
@@ -2051,7 +1833,7 @@ private fun VoiceWaveButton(
  * Инлайн-поле ввода, при наборе текста справа появляется кнопка отправки.
  */
 @Composable
-private fun CompactInputField(
+internal fun CompactInputField(
     value: String,
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
@@ -2215,7 +1997,13 @@ private fun ThinkingRow(seq: Long, status: String?, lineCount: Int = 0) {
     ) {
         MascotIcon(thinking = true, sizeDp = 30.dp)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(stageTitle, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+            Text(
+                stageTitle,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             if (lineCount > 0) {
                 Text(
                     "Найдено строк: $lineCount",
@@ -2297,6 +2085,8 @@ private fun CalmNoteCard(
                 NoteColors.title(m.kind) + if (m.box != null) " · №$number" else "",
                 style = MaterialTheme.typography.labelMedium,
                 color = Brand.InkSoft,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
             if (m.box != null) {
@@ -2337,16 +2127,18 @@ private fun CalmNoteCard(
         RichText(m.text, sizePx = 15, streaming = streaming)
         if (m.detail != null && expanded) RichText(m.detail, sizePx = 15, streaming = streaming)
         if (actionsExpanded) {
-            Row(
+            FlowRow(
                 Modifier.fillMaxWidth().padding(top = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 if (m.detail != null) {
                     Text(
                         if (expanded) "Свернуть ↑" else "Подробнее",
                         style = MaterialTheme.typography.labelSmall,
                         color = Brand.InkSoft,
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier.clickable { expanded = !expanded }.padding(vertical = 2.dp),
                     )
                 }
@@ -2356,15 +2148,18 @@ private fun CalmNoteCard(
                         style = MaterialTheme.typography.labelSmall,
                         color = Brand.Ink,
                         fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier.clickable(onClick = onWriteToPage).padding(vertical = 2.dp),
                     )
                 }
-                Spacer(Modifier.weight(1f))
                 if (m.box != null && onNotHere != null) {
                     Text(
                         if (notHereReported) "✓ промах" else "Не здесь",
                         style = MaterialTheme.typography.labelSmall,
                         color = Brand.InkSoft,
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier.clickable(enabled = !notHereReported) {
                             notHereReported = true
                             onNotHere()
@@ -2372,12 +2167,14 @@ private fun CalmNoteCard(
                     )
                 }
                 when {
-                    carding -> Text("…", style = MaterialTheme.typography.labelSmall, color = Brand.InkSoft)
-                    carded != null -> Text(carded!!, style = MaterialTheme.typography.labelSmall, color = Brand.InkSoft)
+                    carding -> Text("…", style = MaterialTheme.typography.labelSmall, color = Brand.InkSoft, maxLines = 1, softWrap = false)
+                    carded != null -> Text(carded!!, style = MaterialTheme.typography.labelSmall, color = Brand.InkSoft, maxLines = 1, softWrap = false)
                     else -> Text(
                         "В карточки +",
                         style = MaterialTheme.typography.labelSmall,
                         color = Brand.InkSoft,
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier.clickable {
                             carding = true
                             scope.launch {
@@ -2398,7 +2195,7 @@ private fun CalmNoteCard(
 
 /** Запрос явного разрешения перед записью или изменением страниц со стороны наставника. */
 @Composable
-private fun PermissionCard(
+internal fun PermissionCard(
     actions: List<MentorPageAction>,
     state: String,
     onApprove: () -> Unit,
@@ -2436,6 +2233,9 @@ private fun PermissionCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = Brand.InkSoft,
             )
+            if (act.kind == MentorActionKind.WRITE_TEXT || act.kind == MentorActionKind.DIAGRAM) {
+                MentorActionPreview(act)
+            }
         }
         if (state == "PENDING") {
             Row(
@@ -2445,6 +2245,74 @@ private fun PermissionCard(
                 InkButton("Разрешить", modifier = Modifier.weight(1f), onClick = onApprove)
                 SoftButton("Отклонить", onClick = onDismiss)
             }
+        }
+    }
+}
+
+private data class PreviewBuilt(
+    val strokes: List<Stroke>,
+    val texts: List<TextBox>,
+    val left: Float,
+    val top: Float,
+    val width: Float,
+    val height: Float,
+)
+
+@Composable
+private fun MentorActionPreview(action: MentorPageAction) {
+    val preview = remember(action.id, action.text) {
+        val blank = InkPage(0L, Paper.BLANK)
+        val ink = android.graphics.Color.rgb(24, 24, 28)
+        val (strokes, texts) = when (action.kind) {
+            MentorActionKind.WRITE_TEXT -> {
+                val (s, t, _) = MentorNotebookWriter.buildWriteAddition(blank, action.text, null, ink, 22f, AndroidMathMetrics)
+                s to t
+            }
+            MentorActionKind.DIAGRAM -> {
+                val (s, t, _) = MentorNotebookWriter.buildDiagramAddition(blank, action.text, null, ink, AndroidMathMetrics)
+                s to t
+            }
+            else -> emptyList<Stroke>() to emptyList<TextBox>()
+        }
+        var minL = Float.MAX_VALUE
+        var minT = Float.MAX_VALUE
+        var maxR = -Float.MAX_VALUE
+        var maxB = -Float.MAX_VALUE
+        for (s in strokes) {
+            val b = s.bounds()
+            minL = minOf(minL, b[0]); minT = minOf(minT, b[1]); maxR = maxOf(maxR, b[2]); maxB = maxOf(maxB, b[3])
+        }
+        for (t in texts) {
+            val b = t.bounds()
+            minL = minOf(minL, b[0]); minT = minOf(minT, b[1]); maxR = maxOf(maxR, b[2]); maxB = maxOf(maxB, b[3])
+        }
+        if (minL >= maxR || minT >= maxB) null
+        else PreviewBuilt(strokes, texts, minL, minT, (maxR - minL).coerceAtLeast(30f), (maxB - minT).coerceAtLeast(24f))
+    } ?: return
+
+    val drawer = remember { PageDrawer().apply { dark = false } }
+    val aspect = (preview.width / preview.height).coerceIn(1.1f, 4.2f)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp, max = 150.dp)
+            .aspectRatio(aspect, matchHeightConstraintsFirst = false)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(PageDrawer.PAPER))
+            .border(0.6.dp, Brand.Line, RoundedCornerShape(12.dp))
+            .padding(8.dp),
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val scale = minOf(size.width / preview.width, size.height / preview.height).coerceAtLeast(0.05f)
+            val dx = (size.width - preview.width * scale) * 0.5f - preview.left * scale
+            val dy = (size.height - preview.height * scale) * 0.5f - preview.top * scale
+            val nc = drawContext.canvas.nativeCanvas
+            nc.save()
+            nc.translate(dx, dy)
+            nc.scale(scale, scale)
+            for (s in preview.strokes) drawer.drawStroke(nc, s)
+            for (t in preview.texts) drawer.drawText(nc, t)
+            nc.restore()
         }
     }
 }

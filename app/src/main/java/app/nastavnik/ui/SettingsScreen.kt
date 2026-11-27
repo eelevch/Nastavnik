@@ -307,8 +307,8 @@ private fun MentorSettingsPage(tablet: Boolean, s: AppSettings, repo: SettingsRe
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 FieldLabel(
-                    "Шар наставника на главных экранах",
-                    "Быстрый вопрос текстом или голосом в углу без открытия отдельного окна.",
+                    "Наставник на листе",
+                    "Живой помощник в углу страницы: вопрос, голос, ответы и разрешения без открытия чата.",
                 )
             }
             AppSwitch(s.showAmbientMentor) { repo.setShowAmbientMentor(it) }

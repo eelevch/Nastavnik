@@ -82,7 +82,7 @@ data class AppSettings(
     val mentorVisionStyle: String = MentorVisionStyle.AURORA_SCAN.id,
     /** Спрашивать разрешение перед тем, как наставник меняет лист или страницы. */
     val mentorRequirePermission: Boolean = true,
-    /** Показывать быстрый шар наставника на главных экранах. */
+    /** Показывать живого наставника-компаньона прямо на листе тетради. */
     val showAmbientMentor: Boolean = true,
 )
 

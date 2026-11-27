@@ -192,11 +192,6 @@ fun PhoneShell(
                 modifier = Modifier.fillMaxSize(),
             )
         }
-
-        GlobalMentorOverlay(
-            bottomInset = bottomInset,
-            onOpenSettings = { go(MainActivity.SCREEN_SETTINGS) },
-        )
     }
 }
 

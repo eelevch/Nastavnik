@@ -9,13 +9,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.AnnotatedString.Builder
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.sp
 
@@ -30,6 +34,9 @@ fun RichText(
     sizePx: Int = 17,
     center: Boolean = false,
     streaming: Boolean = false,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
+    onTextLayout: (TextLayoutResult) -> Unit = {},
 ) {
     val dark = Brand.dark
     val defaultColor = if (dark) ComposeColor(0xFFEDECF1) else ComposeColor(0xFF16161A)
@@ -54,10 +61,17 @@ fun RichText(
         modifier = modifier.fillMaxWidth(),
         style = MaterialTheme.typography.bodyMedium.copy(
             fontSize = baseSp.sp,
-            lineHeight = (sizePx * 1.38f).sp,
+            platformStyle = PlatformTextStyle(includeFontPadding = true),
+            lineHeightStyle = LineHeightStyle(
+                alignment = LineHeightStyle.Alignment.Center,
+                trim = LineHeightStyle.Trim.None,
+            ),
         ),
         color = defaultColor,
         textAlign = if (center) TextAlign.Center else TextAlign.Start,
+        maxLines = maxLines,
+        overflow = overflow,
+        onTextLayout = onTextLayout,
     )
 }
 

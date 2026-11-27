@@ -193,11 +193,6 @@ fun TabletShell(
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
-
-        GlobalMentorOverlay(
-            bottomInset = bottomInset,
-            onOpenSettings = { go(MainActivity.SCREEN_SETTINGS) },
-        )
     }
 }
 

@@ -23,6 +23,7 @@ import app.nastavnik.ai.Prompts
 import app.nastavnik.capture.ImageUtils
 import app.nastavnik.data.DeviceProfile
 import app.nastavnik.geom.IRect
+import app.nastavnik.ink.AndroidMathMetrics
 import app.nastavnik.ink.InkPage
 import app.nastavnik.ink.InkView
 import app.nastavnik.ink.MentorNotebookWriter
@@ -1011,10 +1012,19 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         val anchor = actionAnchorPageRect(action, geometry, p)
         when (action.kind) {
             MentorActionKind.WRITE_TEXT -> {
-                val (strokes, texts, slot) = MentorNotebookWriter.buildWriteAddition(p, action.text, anchor, penColor)
+                val fontSize = if (p.paper == Paper.LINED) 26f else 24f
+                val (strokes, texts, slot) = MentorNotebookWriter.buildWriteAddition(p, action.text, anchor, penColor, fontSize, AndroidMathMetrics)
                 if (texts.isNotEmpty() || strokes.isNotEmpty()) {
                     animateMentorPenOver(slot, p.height)
                     ink.applyMentorAdditions(strokes, texts, slot)
+                    page?.let { detectedPageLines = extractPageLineRects(it) }
+                }
+            }
+            MentorActionKind.DIAGRAM -> {
+                val (strokes, texts, rect) = MentorNotebookWriter.buildDiagramAddition(p, action.text, anchor, penColor, AndroidMathMetrics)
+                if (strokes.isNotEmpty() || texts.isNotEmpty()) {
+                    animateMentorPenOver(rect, p.height)
+                    ink.applyMentorAdditions(strokes, texts, rect)
                     page?.let { detectedPageLines = extractPageLineRects(it) }
                 }
             }

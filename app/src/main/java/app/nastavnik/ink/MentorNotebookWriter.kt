@@ -178,42 +178,97 @@ object MentorNotebookWriter {
         anchor: SlotBox?,
         inkColor: Int,
         fontSize: Float = 22f,
+        metrics: MathMetrics = EstimateMetrics,
     ): Triple<List<Stroke>, List<TextBox>, SlotBox> {
-        val formatted = cleanMathForSheet(text)
-        if (formatted.isBlank()) return Triple(emptyList(), emptyList(), SlotBox(0f, 0f, 0f, 0f))
-        val estLines = formatted.split('\n').sumOf { line ->
-            ceil(line.length / 36.0).toInt().coerceAtLeast(1)
-        }.coerceAtLeast(1)
-        val slot = computeWriteSlotBox(page, anchor, estLines, fontSize)
-        val textX = slot.left + 14f
-        val textW = (slot.width - 18f).coerceAtLeast(160f)
-        val box = TextBox(textX, slot.top, textW, formatted, fontSize, inkColor)
+        val trimmed = text.trim()
+        if (trimmed.isBlank()) return Triple(emptyList(), emptyList(), SlotBox(0f, 0f, 0f, 0f))
+        val stepY = if (page.paper == Paper.LINED) PageDrawer.LINE_STEP else PageDrawer.CELL
+        val slotLeft = ((anchor?.left ?: 84f).coerceIn(64f, PAGE_W * 0.42f))
+        val slotWidth = (PAGE_W - slotLeft - 72f).coerceIn(320f, PAGE_W - 140f)
+        val layout = MathTypesetter.layoutRichLines(
+            text = trimmed,
+            maxWidth = (slotWidth - 18f).coerceAtLeast(160f),
+            size = fontSize,
+            color = inkColor,
+            metrics = metrics,
+            lineStep = stepY,
+        )
+        if (layout.texts.isEmpty() && layout.strokes.isEmpty()) {
+            return Triple(emptyList(), emptyList(), SlotBox(0f, 0f, 0f, 0f))
+        }
+        val estLines = ceil(layout.descent / (fontSize * TextBox.LINE_K)).toInt().coerceAtLeast(1)
+        val rawSlot = computeWriteSlotBox(page, anchor, estLines, fontSize)
+        val needBottom = (rawSlot.top + layout.descent + 8f).coerceAtMost(page.height - 24f)
+        val slot = rawSlot.copy(bottom = max(rawSlot.bottom, needBottom))
 
+        val placed = layout.place(slot.left + 14f, slot.top)
         val barX = (slot.left - 2f).coerceAtLeast(24f)
         val y0 = slot.top + 4f
-        val y1 = min(slot.bottom - 8f, slot.top + estLines * fontSize * TextBox.LINE_K)
+        val y1 = max(y0 + 18f, min(slot.bottom - 8f, slot.top + layout.descent))
         val marginBar = Stroke(
-            Tool.PEN,
+            Tool.SHAPE,
             inkColor,
-            2.6f,
-            floatArrayOf(
-                barX, y0, 0.55f,
-                barX + 0.8f, (y0 + y1) * 0.5f, 0.65f,
-                barX, max(y0 + 18f, y1), 0.5f,
-            ),
+            2.4f,
+            Shapes.densify(floatArrayOf(barX, y0, barX, y1), 0.5f),
         )
-        return Triple(listOf(marginBar), listOf(box), slot)
+        return Triple(listOf(marginBar) + placed.strokes, placed.texts, slot)
     }
 
-    /** Создаёт отформатированный [TextBox] и лёгкую штрих-скобку слева в цвете ручки. */
+    /** Создаёт 2D-раскладку текста/формул и ровную штрих-скобку слева в цвете ручки. */
     fun buildWriteAddition(
         page: InkPage,
         text: String,
         anchorPageRect: RectF?,
         inkColor: Int,
         fontSize: Float = 22f,
+        metrics: MathMetrics = EstimateMetrics,
     ): Triple<List<Stroke>, List<TextBox>, RectF> {
-        val (strokes, texts, slot) = buildWriteAdditionBoxes(page, text, anchorPageRect?.toSlotBox(), inkColor, fontSize)
+        val (strokes, texts, slot) = buildWriteAdditionBoxes(page, text, anchorPageRect?.toSlotBox(), inkColor, fontSize, metrics)
+        return Triple(strokes, texts, slot.toRectF())
+    }
+
+    internal fun buildDiagramAdditionBox(
+        page: InkPage,
+        src: String,
+        anchor: SlotBox?,
+        inkColor: Int,
+        metrics: MathMetrics = EstimateMetrics,
+    ): Triple<List<Stroke>, List<TextBox>, SlotBox> {
+        val trimmed = src.trim()
+        if (trimmed.isBlank()) return Triple(emptyList(), emptyList(), SlotBox(0f, 0f, 0f, 0f))
+        val (locW, locH, title) = MentorDiagram.inspectHeader(trimmed)
+        val targetW = min(PAGE_W * 0.78f, 640f)
+        val aspect = (locH / locW.coerceAtLeast(1f)).coerceIn(0.35f, 1.3f)
+        val extraH = if (!title.isNullOrBlank()) 40f else 0f
+        val targetH = (targetW * aspect + extraH).coerceIn(180f, 620f)
+        val stepY = if (page.paper == Paper.LINED) PageDrawer.LINE_STEP else PageDrawer.CELL
+        val estLines = ceil(targetH / (22f * TextBox.LINE_K)).toInt().coerceAtLeast(5)
+        val baseSlot = computeWriteSlotBox(page, anchor, estLines, 22f)
+        val left = if (anchor != null) {
+            ceilToGrid(anchor.left.coerceIn(64f, PAGE_W - targetW - 48f), PageDrawer.CELL)
+        } else {
+            ceilToGrid(((PAGE_W - targetW) * 0.5f), PageDrawer.CELL)
+        }
+        val top = ceilToGrid(baseSlot.top, stepY)
+        val slot = SlotBox(
+            left = left,
+            top = top,
+            right = (left + targetW).coerceAtMost(PAGE_W - 40f),
+            bottom = (top + targetH).coerceAtMost(page.height - 24f),
+        )
+        val (strokes, texts) = MentorDiagram.build(trimmed, slot, inkColor, metrics)
+        return Triple(strokes, texts, slot)
+    }
+
+    /** Строит чертёж, схему или график по DSL [MentorDiagram] в свободной зоне листа. */
+    fun buildDiagramAddition(
+        page: InkPage,
+        src: String,
+        anchorPageRect: RectF?,
+        inkColor: Int,
+        metrics: MathMetrics = EstimateMetrics,
+    ): Triple<List<Stroke>, List<TextBox>, RectF> {
+        val (strokes, texts, slot) = buildDiagramAdditionBox(page, src, anchorPageRect?.toSlotBox(), inkColor, metrics)
         return Triple(strokes, texts, slot.toRectF())
     }
 
@@ -224,14 +279,12 @@ object MentorNotebookWriter {
         inkColor: Int,
         strokeWidth: Float = 3.2f,
     ): Pair<List<Stroke>, SlotBox> {
-        val rect = if (anchor != null && anchor.width > 36f && anchor.height > 28f) {
-            anchor
+        val stepY = if (page.paper == Paper.LINED) PageDrawer.LINE_STEP else PageDrawer.CELL
+        val rect = if (anchor != null && (kind == DrawingKind.ELLIPSE || kind == DrawingKind.RECT)) {
+            findContentUnionBox(page, anchor, pad = 10f, hitMargin = 12f)
+                ?: standardShapeBox(page, kind, anchor, stepY)
         } else {
-            val slot = computeWriteSlotBox(page, null, 6, 26f)
-            val cx = PAGE_W * 0.5f
-            val w = 320f
-            val h = 210f
-            SlotBox(cx - w * 0.5f, slot.top, cx + w * 0.5f, (slot.top + h).coerceAtMost(page.height - 40f))
+            standardShapeBox(page, kind, anchor, stepY)
         }
         val shapeKind = when (kind) {
             DrawingKind.LINE -> ShapeKind.LINE
@@ -245,6 +298,49 @@ object MentorNotebookWriter {
         val y0 = if (kind == DrawingKind.AXES) rect.bottom - rect.height * 0.2f else rect.top
         val strokes = Shapes.build(shapeKind, x0, y0, rect.right, rect.bottom, strokeWidth, inkColor)
         return strokes to rect
+    }
+
+    private fun standardShapeBox(page: InkPage, kind: DrawingKind, anchor: SlotBox?, stepY: Float): SlotBox {
+        val (w, h) = when (kind) {
+            DrawingKind.LINE, DrawingKind.ARROW -> 280f to 0f
+            DrawingKind.RECT -> 320f to 200f
+            DrawingKind.ELLIPSE -> 300f to 180f
+            DrawingKind.TRIANGLE -> 300f to 260f
+            DrawingKind.AXES -> 360f to 260f
+        }
+        val slot = computeWriteSlotBox(page, anchor, lineCountEstimate = max(2, ceil(h / 30f).toInt()), fontSize = 24f)
+        val left = ceilToGrid((PAGE_W - w) * 0.5f, PageDrawer.CELL)
+        val top = ceilToGrid(slot.top, PageDrawer.CELL.coerceAtLeast(stepY.coerceAtMost(PageDrawer.CELL)))
+        val maxTop = (page.height - h - 40f).coerceAtLeast(60f)
+        val finalTop = ceilToGrid(min(top, maxTop), PageDrawer.CELL)
+        return SlotBox(left, finalTop, left + w, finalTop + h)
+    }
+
+    private fun findContentUnionBox(page: InkPage, anchor: SlotBox, pad: Float, hitMargin: Float): SlotBox? {
+        val hit = SlotBox(anchor.left - hitMargin, anchor.top - hitMargin, anchor.right + hitMargin, anchor.bottom + hitMargin)
+        var minL = Float.MAX_VALUE
+        var minT = Float.MAX_VALUE
+        var maxR = -Float.MAX_VALUE
+        var maxB = -Float.MAX_VALUE
+        var found = false
+        fun includeIfHits(b: FloatArray) {
+            if (b[2] >= hit.left && b[0] <= hit.right && b[3] >= hit.top && b[1] <= hit.bottom) {
+                minL = min(minL, b[0])
+                minT = min(minT, b[1])
+                maxR = max(maxR, b[2])
+                maxB = max(maxB, b[3])
+                found = true
+            }
+        }
+        for (s in page.strokes) includeIfHits(s.bounds())
+        for (t in page.texts) includeIfHits(t.bounds())
+        if (!found) return null
+        return SlotBox(
+            left = (minL - pad).coerceAtLeast(16f),
+            top = (minT - pad).coerceAtLeast(16f),
+            right = (maxR + pad).coerceAtMost(PAGE_W - 16f),
+            bottom = (maxB + pad).coerceAtMost(page.height - 16f),
+        )
     }
 
     /** Строит ровную геометрическую фигуру ([DrawingKind]) от имени наставника в свободной зоне листа. */
