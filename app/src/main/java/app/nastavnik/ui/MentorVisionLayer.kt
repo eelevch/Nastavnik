@@ -98,7 +98,7 @@ fun MentorVisionLayer(
     val isAnalyzingPhase = streaming && !isReadingPhase
 
     val writeMix by animateFloatAsState(
-        targetValue = if (ctl.writing) 1f else 0f,
+        targetValue = if (ctl.writing || ctl.mentorWriting) 1f else 0f,
         animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f),
         label = "writeMix",
     )
@@ -134,7 +134,7 @@ fun MentorVisionLayer(
         label = "penY",
     )
 
-    val anyActive = ctl.writing || isCountingDown || streaming || isOkFlashing ||
+    val anyActive = ctl.writing || ctl.mentorWriting || isCountingDown || streaming || isOkFlashing ||
         writeMix > 0.01f || countdownMix > 0.01f || scanMix > 0.01f || analyzeMix > 0.01f || okMix > 0.01f
 
     var timeSec by remember { mutableFloatStateOf(0f) }
@@ -165,7 +165,7 @@ fun MentorVisionLayer(
 
     // Пространственная цель взгляда сферы внутри плашки статуса.
     val pillGaze: Offset? = when {
-        ctl.writing -> Offset(
+        ctl.writing || ctl.mentorWriting -> Offset(
             x = -0.85f + (ctl.penNormX - 0.5f) * 0.4f,
             y = ((ctl.penNormY - 0.35f) * 1.1f).coerceIn(-0.85f, 0.85f),
         )
@@ -423,9 +423,10 @@ fun MentorVisionLayer(
         }
 
         // Неблокирующая капсула-телеметрия в углу листа (уходит вниз, если перо в верхней четверти).
-        val hudVisible = ctl.writing || isCountingDown || streaming || isOkFlashing
-        val hudAtBottom = ctl.writing && ctl.penNormY < 0.24f
+        val hudVisible = ctl.writing || ctl.mentorWriting || isCountingDown || streaming || isOkFlashing
+        val hudAtBottom = (ctl.writing || ctl.mentorWriting) && ctl.penNormY < 0.24f
         val statusText = when {
+            ctl.mentorWriting -> "Пишу на листе…"
             isOkFlashing -> "Проверил шаг · всё верно"
             streaming && marks.isNotEmpty() -> "Отмечаю на листе · ${marks.size}"
             isReadingPhase -> if (lineCount > 0) "Читаю лист · строк: $lineCount" else "Читаю лист…"

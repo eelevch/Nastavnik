@@ -18,18 +18,22 @@ class NotebookStoreTest {
 
         val second = InkPage(store.newId(2_000), Paper.LINED)
         val m2 = store.addPage(m, second, afterIndex = 0, now = 2_000)
+        assertEquals(second.id, m2.lastEditedPageId)
         val third = InkPage(store.newId(3_000), Paper.DOTS)
         val m3 = store.addPage(m2, third, afterIndex = 0, now = 3_000) // между первой и второй
+        assertEquals(third.id, m3.lastEditedPageId)
 
         val reloaded = store.meta(m.id)!!
         assertEquals(listOf(first.id, third.id, second.id), reloaded.pages)
+        assertEquals(third.id, reloaded.lastEditedPageId)
         val pages = store.loadPages(reloaded)
         assertEquals(1, pages[0].strokes.size)
         assertEquals(Paper.DOTS, pages[1].paper)
 
-        // Последнюю страницу удалить нельзя, остальные — можно.
+        // Последнюю страницу удалить нельзя, остальные — можно; при удалении активной lastEditedPageId обновляется.
         val m4 = store.removePage(m3, third.id, now = 4_000)
         assertEquals(listOf(first.id, second.id), m4.pages)
+        assertEquals(second.id, m4.lastEditedPageId)
 
         val other = store.createWith("Фото", listOf(InkPage(store.newId(), Paper.BLANK, "bg.jpg", 800f)), now = 5_000)
         assertEquals(listOf(other.id, m.id), store.list().map { it.id }) // свежие сверху
@@ -90,23 +94,35 @@ class NotebookStoreTest {
                             text = "Используй правило дифференцирования произведения",
                         )
                     ),
+                    actions = listOf(
+                        app.nastavnik.ai.MentorPageAction(
+                            id = "act_0",
+                            kind = app.nastavnik.ai.MentorActionKind.WRITE_TEXT,
+                            text = "(uv)' = u'v + uv'",
+                            after = 2,
+                        )
+                    ),
                     done = true,
                 ),
                 timestamp = 1005L,
             ),
         )
 
-        val encoded = SavedChatCodec.encode(messages)
+        val encoded = SavedChatCodec.encode(messages, mapOf(101L to "APPROVED"))
         store.saveChat(m.id, encoded)
 
         val loadedRaw = store.loadChat(m.id)!!
-        val decoded = SavedChatCodec.decode(loadedRaw)
+        val (decoded, decodedStates) = SavedChatCodec.decodeWithStates(loadedRaw)
         assertEquals(2, decoded.size)
         assertEquals("Как найти производную?", decoded[0].text)
         assertTrue(decoded[0].isUser)
         assertFalse(decoded[1].isUser)
         assertEquals(1, decoded[1].answer!!.marks.size)
         assertEquals("Используй правило дифференцирования произведения", decoded[1].answer!!.marks[0].text)
+        assertEquals(1, decoded[1].answer!!.actions.size)
+        assertEquals(app.nastavnik.ai.MentorActionKind.WRITE_TEXT, decoded[1].answer!!.actions[0].kind)
+        assertEquals("(uv)' = u'v + uv'", decoded[1].answer!!.actions[0].text)
+        assertEquals("APPROVED", decodedStates[101L])
         assertTrue(decoded[1].answer!!.done)
 
         store.deleteChat(m.id)

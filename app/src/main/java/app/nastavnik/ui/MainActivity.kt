@@ -167,10 +167,11 @@ class MainActivity : ComponentActivity() {
                 }
                 // Экраны сменяются мягко: для тетради — чистый GPU fade без масштабирования AndroidView,
                 // для остальных — мягкое «сквозное проявление» без рывков.
+                val navTarget = screen to (if (screen == SCREEN_NOTEBOOK || screen == SCREEN_VIEWER) notebookId else 0L)
                 AnimatedContent(
-                    targetState = screen,
+                    targetState = navTarget,
                     transitionSpec = {
-                        if (targetState == SCREEN_NOTEBOOK || initialState == SCREEN_NOTEBOOK) {
+                        if (targetState.first == SCREEN_NOTEBOOK || initialState.first == SCREEN_NOTEBOOK) {
                             fadeIn(tween(190, easing = Motion.Decelerate))
                                 .togetherWith(fadeOut(tween(130, easing = Motion.Accelerate)))
                         } else {
@@ -179,19 +180,20 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     label = "screen",
-                ) { target ->
+                ) { (target, targetNotebookId) ->
                     when (target) {
                         SCREEN_NOTEBOOKS -> NotebooksScreen(resumeTick, onBack = home, onOpen = openNotebook, readOnly = !tablet)
-                        SCREEN_VIEWER -> NotebookViewer(notebookId, onBack = { go(SCREEN_NOTEBOOKS) })
+                        SCREEN_VIEWER -> NotebookViewer(targetNotebookId, onBack = { go(SCREEN_NOTEBOOKS) })
                         SCREEN_SCHEDULE -> ScheduleScreen(onBack = home)
                         SCREEN_GRADES -> GradesScreen(onBack = home, onSettings = { go(SCREEN_SETTINGS) }, onLks = { go(SCREEN_LKS) })
                         SCREEN_LKS -> LksScreen(onBack = { go(SCREEN_GRADES) }, onDone = { go(SCREEN_GRADES) })
-                        SCREEN_NOTEBOOK -> if (notebookId != 0L) {
+                        SCREEN_NOTEBOOK -> if (targetNotebookId != 0L) {
                             NotebookScreen(
-                                notebookId,
+                                targetNotebookId,
                                 onBack = { go(SCREEN_NOTEBOOKS) },
                                 onCleanReady = { go(SCREEN_CLEAN) },
                                 onSettings = { go(SCREEN_SETTINGS) },
+                                onOpenNotebook = openNotebook,
                                 debugDemoTick = debugVisionDemoTick,
                             )
                         } else {

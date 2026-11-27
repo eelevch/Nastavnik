@@ -8,10 +8,16 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.nastavnik.BuildConfig
 import app.nastavnik.NastavnikApp
+import app.nastavnik.ai.DrawingKind
+import app.nastavnik.ai.Mark
+import app.nastavnik.ai.MarkKind
+import app.nastavnik.ai.MentorActionKind
+import app.nastavnik.ai.MentorPageAction
 import app.nastavnik.ai.NBox
 import app.nastavnik.ai.Prompts
 import app.nastavnik.capture.ImageUtils
@@ -19,14 +25,13 @@ import app.nastavnik.data.DeviceProfile
 import app.nastavnik.geom.IRect
 import app.nastavnik.ink.InkPage
 import app.nastavnik.ink.InkView
+import app.nastavnik.ink.MentorNotebookWriter
 import app.nastavnik.ink.NotebookMeta
 import app.nastavnik.ink.NotebookStore
 import app.nastavnik.ink.SavedChatCodec
 import app.nastavnik.ink.PageRenderer
 import android.graphics.Bitmap
 import app.nastavnik.ink.PAGE_W
-import app.nastavnik.ai.Mark
-import app.nastavnik.ai.MarkKind
 import app.nastavnik.ink.PageMark
 import app.nastavnik.ink.Paper
 import app.nastavnik.ink.Tool
@@ -218,8 +223,26 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
     /** История сообщений чата наставника в рамках текущей сессии тетради. */
     val chatMessages = mutableStateListOf<MentorChatMessage>()
 
+    /** Статус предложенных наставником действий на листе: "PENDING", "APPROVED", "DISMISSED". */
+    val actionStates = mutableStateMapOf<Long, String>()
+
+    /** Наставник прямо сейчас сам пишет или чертит на листе (после разрешения). */
+    var mentorWriting by mutableStateOf(false)
+        private set
+
+    private var closed = false
+    private var lastChatId = 0L
+
+    @Synchronized
+    private fun nextChatId(): Long {
+        val next = maxOf(System.currentTimeMillis() * 10L, lastChatId + 1L)
+        lastChatId = next
+        return next
+    }
+
     fun clearChat() {
         chatMessages.clear()
+        actionStates.clear()
         mentor.newTask()
         ink.marks = emptyList()
         rejectedMarks.clear()
@@ -231,11 +254,12 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
 
     fun saveChatToDisk() {
         val msgs = chatMessages.toList()
+        val states = actionStates.toMap()
         app.appScope.launch(Dispatchers.IO) {
             if (msgs.isEmpty()) {
                 nbs.store.deleteChat(notebookId)
             } else {
-                val jsonStr = SavedChatCodec.encode(msgs)
+                val jsonStr = SavedChatCodec.encode(msgs, states)
                 nbs.store.saveChat(notebookId, jsonStr)
             }
         }
@@ -246,14 +270,21 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
             mentor.state.collect { ui ->
                 val ans = ui.answer ?: return@collect
                 if (ans.kind == AskKind.WATCH) return@collect
-                val idx = chatMessages.indexOfLast { !it.isUser && it.answer?.question == ans.question }
+                val idx = chatMessages.indexOfLast { !it.isUser && it.answer?.question == ans.question && (it.answer.seq == ans.seq || it.answer.streaming) }
                 if (idx >= 0) {
                     chatMessages[idx] = chatMessages[idx].copy(answer = ans)
-                } else if (ans.marks.isNotEmpty() || ans.errorText != null) {
-                    chatMessages.add(MentorChatMessage(id = ans.seq, isUser = false, text = "", kind = ans.kind, answer = ans))
+                } else if (ans.marks.isNotEmpty() || ans.actions.isNotEmpty() || ans.errorText != null) {
+                    chatMessages.add(MentorChatMessage(id = nextChatId(), isUser = false, text = "", kind = ans.kind, answer = ans))
                 }
                 refreshMarks(ans)
                 if (!ans.streaming) {
+                    if (ans.actions.isNotEmpty() && actionStates[ans.seq] == null) {
+                        if (!app.settings.mentorRequirePermission()) {
+                            approveActions(ans)
+                        } else {
+                            actionStates[ans.seq] = "PENDING"
+                        }
+                    }
                     saveChatToDisk()
                 }
             }
@@ -278,16 +309,27 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         rejectedMarks.clear()
         val savedRaw = withContext(Dispatchers.IO) { nbs.store.loadChat(notebookId) }
         chatMessages.clear()
+        actionStates.clear()
         if (!savedRaw.isNullOrBlank()) {
-            val restored = SavedChatCodec.decode(savedRaw)
-            chatMessages.addAll(restored)
-            val lastBot = restored.lastOrNull { !it.isUser && it.answer != null }
+            val (restored, restoredStates) = SavedChatCodec.decodeWithStates(savedRaw)
+            val seenIds = HashSet<Long>(restored.size)
+            for (msg in restored) {
+                val uid = if (seenIds.add(msg.id)) msg.id else nextChatId()
+                lastChatId = maxOf(lastChatId, uid)
+                chatMessages.add(if (uid == msg.id) msg else msg.copy(id = uid))
+            }
+            actionStates.putAll(restoredStates)
+            val lastBot = chatMessages.lastOrNull { !it.isUser && it.answer != null }
             lastBot?.answer?.let { ans -> refreshMarks(ans) }
         } else if (convId > 0) {
             var lastQuestion = ""
-            app.db.messages().forConversation(mentor.state.value.conversationId).forEach { message ->
+            val dbMsgs = withContext(Dispatchers.IO) {
+                app.db.messages().forConversation(mentor.state.value.conversationId)
+            }
+            dbMsgs.forEach { message ->
                 val user = message.role == "user"
                 if (user) lastQuestion = message.text
+                lastChatId = maxOf(lastChatId, message.id)
                 chatMessages.add(
                     MentorChatMessage(
                         id = message.id,
@@ -307,8 +349,10 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         }
         mentor.extraSystem = PracticePrompts.variantForMentor(m.tasks)
         applyTool()
-        // Открыли ради конкретной страницы (задача ДЗ) — сразу на ней.
-        val start = NotebookStart.take(notebookId)?.let { id -> ps.indexOfFirst { it.id == id } }?.takeIf { it >= 0 } ?: 0
+        // Открываем целевую страницу ДЗ, иначе — последнюю страницу, на которой вносились изменения.
+        val start = NotebookStart.take(notebookId)?.let { id -> ps.indexOfFirst { it.id == id } }?.takeIf { it >= 0 }
+            ?: m.lastEditedPageId.takeIf { it != 0L }?.let { id -> ps.indexOfFirst { it.id == id } }?.takeIf { it >= 0 }
+            ?: 0
         showPage(start)
         loaded = true
         if (BuildConfig.DEBUG) {
@@ -538,8 +582,8 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         val question = customQuestion ?: "На первом изображении — выделенный лассо фрагмент, на остальных — страницы всего конспекта. Объясни выделенный фрагмент относительно всего конспекта: как он связан с общим решением, всё ли верно и что делать дальше?"
         autoJob?.cancel()
         val now = System.currentTimeMillis()
-        val userMsgId = now * 10L
-        val botMsgId = userMsgId + 1L
+        val userMsgId = nextChatId()
+        val botMsgId = nextChatId()
         chatMessages.add(MentorChatMessage(id = userMsgId, isUser = true, text = customQuestion ?: "Объясни выделенное в контексте конспекта", kind = AskKind.USER, timestamp = now))
         chatMessages.add(
             MentorChatMessage(
@@ -785,7 +829,7 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         val p = page ?: return
         withContext(NonCancellable + Dispatchers.IO) {
             nbs.store.savePage(m.id, p)
-            val nm = m.copy(updatedAt = System.currentTimeMillis())
+            val nm = m.copy(updatedAt = System.currentTimeMillis(), lastEditedPageId = p.id)
             nbs.store.saveMeta(nm)
             meta = nm
         }
@@ -793,6 +837,8 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
 
     /** Уходим из тетради: сохранить страницу и обновить превью. Если конспект пустой — удаляем его. */
     fun close() {
+        if (closed) return
+        closed = true
         autoJob?.cancel()
         autoCheckProgress = 0f
         examJob?.cancel()
@@ -804,6 +850,7 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         cachedMainShot = null
         contextCache.clear()
         cleanPageCache.clear()
+        if (!loaded) return
         val m = meta ?: return
         // Пользовательское требование: если в тетради ничего не было сделано — удаляем её, не захламляя список
         val isEmpty = pages.all { it.strokes.isEmpty() && it.texts.isEmpty() && it.background == null }
@@ -849,8 +896,8 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         page?.let { detectedPageLines = extractPageLineRects(it) }
         if (kind != AskKind.WATCH) {
             val now = System.currentTimeMillis()
-            val userMsgId = now * 10L
-            val botMsgId = userMsgId + 1L
+            val userMsgId = nextChatId()
+            val botMsgId = nextChatId()
             chatMessages.add(MentorChatMessage(id = userMsgId, isUser = true, text = question, kind = kind, timestamp = now))
             chatMessages.add(
                 MentorChatMessage(
@@ -866,6 +913,158 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         }
         val pages = this.pages.size
         mentor.ask(question, kind) { shot(pages) }
+    }
+
+    // ---------------- действия наставника на листе (строго с разрешения) ----------------
+
+    fun approveActions(answer: AnswerUi) {
+        if (answer.actions.isEmpty()) return
+        actionStates[answer.seq] = "APPROVED"
+        saveChatToDisk()
+        scope.launch {
+            for (action in answer.actions) {
+                executeMentorAction(action, answer.geometry)
+            }
+            showHint("Готово: наставник обновил конспект (можно отменить)")
+        }
+    }
+
+    fun dismissActions(answer: AnswerUi) {
+        if (answer.actions.isEmpty()) return
+        actionStates[answer.seq] = "DISMISSED"
+        saveChatToDisk()
+    }
+
+    /** Вручную перенести любую текстовую заметку/подсказку наставника прямо на лист тетради. */
+    fun writeMarkToPage(mark: Mark, geometry: ShotGeometry?) {
+        val text = listOfNotNull(mark.text.takeIf { it.isNotBlank() }, mark.detail?.takeIf { it.isNotBlank() })
+            .joinToString("\n")
+        if (text.isBlank()) return
+        val action = MentorPageAction(
+            id = "mark_${System.currentTimeMillis()}",
+            kind = MentorActionKind.WRITE_TEXT,
+            text = text,
+            box = mark.box,
+            lines = mark.lines,
+            after = mark.after,
+        )
+        scope.launch {
+            executeMentorAction(action, geometry)
+            showHint("Заметка добавлена на лист")
+        }
+    }
+
+    private suspend fun addPageAwait(paper: Paper) {
+        val m = meta ?: return
+        val p = InkPage(nbs.store.newId(), paper)
+        val nm = withContext(Dispatchers.IO) { nbs.store.addPage(m, p, index) }
+        meta = nm
+        val nextIdx = index + 1
+        pages = pages.toMutableList().apply { add(nextIdx.coerceIn(0, pages.size), p) }
+        val bg = nbs.background(notebookId, p)
+        index = nextIdx.coerceIn(0, pages.lastIndex)
+        ink.setPage(p, bg, undos.getOrPut(p.id) { UndoStack() }, 1)
+        detectedPageLines = extractPageLineRects(p)
+    }
+
+    private fun actionAnchorPageRect(action: MentorPageAction, geometry: ShotGeometry?, p: InkPage): RectF? {
+        val g = geometry
+        if (g != null && action.box != null) {
+            val s = g.toScreen(action.box)
+            return RectF(s.left * answerScale, s.top * answerScale, s.right * answerScale, s.bottom * answerScale)
+        }
+        val lines = detectedPageLines.ifEmpty { extractPageLineRects(p) }
+        action.lines?.firstOrNull()?.let { num ->
+            return lines.getOrNull(num - 1)
+        }
+        action.after?.let { num ->
+            return lines.getOrNull(num - 1)
+        }
+        return null
+    }
+
+    private suspend fun animateMentorPenOver(pageRect: RectF, pageHeight: Float) {
+        if (pageRect.isEmpty) return
+        mentorWriting = true
+        val viewPt = FloatArray(2)
+        val steps = 8
+        try {
+            for (step in 0..steps) {
+                val frac = step.toFloat() / steps
+                val px = pageRect.left + pageRect.width() * (0.12f + 0.72f * frac)
+                val py = pageRect.centerY()
+                if (ink.mapPagePointToView(px, py, viewPt)) {
+                    penViewX = viewPt[0]
+                    penViewY = viewPt[1]
+                    penNormX = (px / PAGE_W).coerceIn(0f, 1f)
+                    penNormY = (py / pageHeight.coerceAtLeast(1f)).coerceIn(0f, 1f)
+                }
+                delay(42L)
+            }
+        } finally {
+            mentorWriting = false
+        }
+    }
+
+    private suspend fun executeMentorAction(action: MentorPageAction, geometry: ShotGeometry?) {
+        val p = page ?: return
+        val anchor = actionAnchorPageRect(action, geometry, p)
+        when (action.kind) {
+            MentorActionKind.WRITE_TEXT -> {
+                val (strokes, texts, slot) = MentorNotebookWriter.buildWriteAddition(p, action.text, anchor, penColor)
+                if (texts.isNotEmpty() || strokes.isNotEmpty()) {
+                    animateMentorPenOver(slot, p.height)
+                    ink.applyMentorAdditions(strokes, texts, slot)
+                    page?.let { detectedPageLines = extractPageLineRects(it) }
+                }
+            }
+            MentorActionKind.DRAW_SHAPE -> {
+                val dk = action.shape ?: DrawingKind.LINE
+                val (strokes, rect) = MentorNotebookWriter.buildShapeAddition(p, dk, anchor, penColor, penWidth)
+                if (strokes.isNotEmpty()) {
+                    animateMentorPenOver(rect, p.height)
+                    ink.applyMentorAdditions(strokes, emptyList(), rect)
+                    page?.let { detectedPageLines = extractPageLineRects(it) }
+                }
+            }
+            MentorActionKind.HIGHLIGHT -> {
+                val (strokes, rect) = MentorNotebookWriter.buildHighlightAddition(p, anchor, markerColor)
+                if (strokes.isNotEmpty()) {
+                    animateMentorPenOver(rect, p.height)
+                    ink.applyMentorAdditions(strokes, emptyList(), rect)
+                }
+            }
+            MentorActionKind.ERASE -> {
+                val region = anchor ?: return
+                animateMentorPenOver(region, p.height)
+                ink.eraseInPageRect(region)
+                page?.let { detectedPageLines = extractPageLineRects(it) }
+            }
+            MentorActionKind.CLEAR_PAGE -> ink.clearPage()
+            MentorActionKind.ADD_PAGE -> {
+                val paper = action.paper?.let { runCatching { Paper.valueOf(it) }.getOrNull() } ?: (p.paper)
+                addPageAwait(paper)
+            }
+            MentorActionKind.GOTO_PAGE -> {
+                val targetIdx = ((action.targetPage ?: 1) - 1).coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+                showPage(targetIdx)
+                delay(180L)
+            }
+            MentorActionKind.DUPLICATE_PAGE -> {
+                duplicatePage()
+                delay(180L)
+            }
+            MentorActionKind.DELETE_PAGE -> {
+                deletePage()
+                delay(180L)
+            }
+            MentorActionKind.SET_PAPER -> {
+                val paper = action.paper?.let { runCatching { Paper.valueOf(it) }.getOrNull() } ?: return
+                if (action.applyAllPages) setPaperAll(paper) else setPaper(paper)
+            }
+            MentorActionKind.RENAME_NOTEBOOK -> if (action.text.isNotBlank()) rename(action.text)
+            MentorActionKind.SET_SUBJECT -> if (action.text.isNotBlank()) setSubject(action.text)
+        }
     }
 
     // ---------------- контрольная ----------------

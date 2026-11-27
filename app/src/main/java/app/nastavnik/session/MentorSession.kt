@@ -12,6 +12,7 @@ import app.nastavnik.ai.DrawingKind
 import app.nastavnik.ai.ImagePart
 import app.nastavnik.ai.Mark
 import app.nastavnik.ai.MarkKind
+import app.nastavnik.ai.MentorPageAction
 import app.nastavnik.ai.NBox
 import app.nastavnik.ai.Prompts
 import app.nastavnik.ai.Role
@@ -114,6 +115,32 @@ data class ShotGeometry(
         )
     }
 
+    /** Привязывает место действия наставника ([MentorPageAction]) к точным координатам чернил. */
+    fun placeAction(a: MentorPageAction): MentorPageAction {
+        if (a.lines == null && a.after == null && a.box == null) return a
+        val map = lines ?: LineMap(emptyList(), imageW, imageH)
+        val px = a.box?.let {
+            IRect(
+                (it.left * sentW).toInt() - gutter, (it.top * imageH).toInt(),
+                (it.right * sentW).toInt() - gutter, (it.bottom * imageH).toInt(),
+            )
+        }
+        val ref = PlaceRef(a.lines, a.after, px)
+        val hintLike = a.kind == app.nastavnik.ai.MentorActionKind.WRITE_TEXT ||
+            a.kind == app.nastavnik.ai.MentorActionKind.DRAW_SHAPE
+        val v = map.resolveVerified(ref, hintLike = hintLike)
+        val r = v.rect ?: return a
+        val w = imageW.toFloat().coerceAtLeast(1f)
+        val h = imageH.toFloat().coerceAtLeast(1f)
+        val box = NBox(
+            (r.left / w).coerceIn(0f, 1f),
+            (r.top / h).coerceIn(0f, 1f),
+            (r.right / w).coerceIn(0f, 1f),
+            (r.bottom / h).coerceIn(0f, 1f),
+        )
+        return a.copy(box = box.takeIf { it.width > 0f && it.height > 0f })
+    }
+
     fun toScreen(b: NBox): IRect = IRect(
         screen.left + (b.left * screen.width).toInt(),
         screen.top + (b.top * screen.height).toInt(),
@@ -163,6 +190,7 @@ data class AnswerUi(
     val error: AiException? = null,
     val geometry: ShotGeometry? = null,
     val thumb: Thumb? = null,
+    val actions: List<MentorPageAction> = emptyList(),
 )
 
 data class MentorUi(
@@ -295,11 +323,22 @@ class MentorSession(
         val raw = StringBuilder()
         var lastEmit = 0L
         fun parse(streaming: Boolean): ScreenAnswer =
-            ScreenAnswerParser.parse(raw.toString(), mode, g.sentW, g.imageH, streaming).let { a -> a.copy(marks = a.marks.map(g::place)) }
+            ScreenAnswerParser.parse(raw.toString(), mode, g.sentW, g.imageH, streaming).let { a ->
+                a.copy(
+                    marks = a.marks.map(g::place),
+                    actions = a.actions.map(g::placeAction),
+                )
+            }
         fun emit(status: String? = null) {
             if (silent) return
             val a = parse(true)
-            updateOwn(base.seq) { it.copy(marks = a.marks, status = status ?: if (a.marks.isEmpty()) "Думаю…" else null) }
+            updateOwn(base.seq) {
+                it.copy(
+                    marks = a.marks,
+                    actions = a.actions,
+                    status = status ?: if (a.marks.isEmpty() && a.actions.isEmpty()) "Думаю…" else null,
+                )
+            }
         }
         try {
             val request = ChatRequest(
@@ -351,9 +390,13 @@ class MentorSession(
                 Log.d("MentorTiming", "complete_ms=$totalMs")
             }
             var final = parse(false)
-            if (final.marks.isEmpty() && !final.allGood) throw AiErrors.badResponse("пустой ответ")
+            if (final.marks.isEmpty() && final.actions.isEmpty() && !final.allGood) throw AiErrors.badResponse("пустой ответ")
             // На вопрос студента модель ответила одним «всё верно» — показываем это заметкой, а не пустотой.
-            if (!silent && final.marks.isEmpty()) final = final.copy(marks = listOf(Mark(MarkKind.OK, null, "Ошибок не вижу — всё сходится.")))
+            if (!silent && final.marks.isEmpty() && final.actions.isEmpty()) {
+                final = final.copy(marks = listOf(Mark(MarkKind.OK, null, "Ошибок не вижу — всё сходится.")))
+            } else if (!silent && final.marks.isEmpty() && final.actions.isNotEmpty()) {
+                final = final.copy(marks = listOf(Mark(MarkKind.NOTE, null, "Подготовил изменения для конспекта — подтверди выполнение.")))
+            }
             if (stop == "max_tokens" && final.marks.isNotEmpty()) {
                 val last = final.marks.last()
                 final = final.copy(marks = final.marks.dropLast(1) + last.copy(text = last.text + "\n\n_(ответ обрезан)_"))
@@ -412,7 +455,16 @@ class MentorSession(
                 }
             }
             _state.update {
-                it.copy(answer = base.copy(marks = final.marks, streaming = false, status = null, done = final.done, allGood = final.allGood))
+                it.copy(
+                    answer = base.copy(
+                        marks = final.marks,
+                        actions = final.actions,
+                        streaming = false,
+                        status = null,
+                        done = final.done,
+                        allGood = final.allGood,
+                    ),
+                )
             }
             // Читать подсказки вслух, если студент так попросил в настройках (короткие части по порядку).
             if (app.settings.speakHints() && final.marks.isNotEmpty()) {

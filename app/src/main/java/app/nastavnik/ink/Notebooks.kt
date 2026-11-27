@@ -89,11 +89,17 @@ class Notebooks(private val context: Context) {
         }
     }
 
-    /** Превью первой страницы для списка тетрадей. */
+    /** Превью первой страницы для списка тетрадей (пишется атомарно через .tmp). */
     suspend fun saveThumb(meta: NotebookMeta, first: InkPage) {
         val bmp = render(meta.id, first, 260_000)
         withContext(Dispatchers.IO) {
-            runCatching { FileOutputStream(store.thumb(meta.id)).use { bmp.compress(Bitmap.CompressFormat.JPEG, 82, it) } }
+            runCatching {
+                val target = store.thumb(meta.id)
+                target.parentFile?.mkdirs()
+                val tmp = File(target.parentFile, "${target.name}.tmp")
+                FileOutputStream(tmp).use { bmp.compress(Bitmap.CompressFormat.JPEG, 82, it) }
+                tmp.renameTo(target)
+            }
         }
         bmp.recycle()
     }

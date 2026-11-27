@@ -197,4 +197,53 @@ class ScreenAnswerParserTest {
         assertEquals(CoordMode.NORM_XY, AiProvider.ANTHROPIC_COMPAT.coordMode("gpt-5-codex"))
         assertEquals(CoordMode.PIXELS_XY, AiProvider.ANTHROPIC_COMPAT.coordMode("claude-sonnet-4-5"))
     }
+
+    @Test
+    fun pageActionsAreParsedCleanly() {
+        val raw = """
+            @@ note
+            Запишу шаг на лист.
+            @@ write после 2
+            \frac{1}{2}x^2 + C
+            @@ draw axes 100 200 500 600
+            @@ highlight стр 2
+            @@ erase стр 1
+            @@ page_add lined
+            @@ page_goto 3
+            @@ page_paper grid all
+            @@ notebook_rename Интегралы
+            @@ notebook_subject Матанализ
+        """.trimIndent()
+        val a = ScreenAnswerParser.parse(raw, CoordMode.PIXELS_XY, 1000, 1000)
+        assertEquals(1, a.marks.size)
+        assertEquals(9, a.actions.size)
+        assertEquals(MentorActionKind.WRITE_TEXT, a.actions[0].kind)
+        assertEquals("\\frac{1}{2}x^2 + C", a.actions[0].text)
+        assertEquals(2, a.actions[0].after)
+        assertEquals(MentorActionKind.DRAW_SHAPE, a.actions[1].kind)
+        assertEquals(DrawingKind.AXES, a.actions[1].shape)
+        assertNotNull(a.actions[1].box)
+        assertEquals(MentorActionKind.HIGHLIGHT, a.actions[2].kind)
+        assertEquals(2..2, a.actions[2].lines)
+        assertEquals(MentorActionKind.ERASE, a.actions[3].kind)
+        assertEquals(1..1, a.actions[3].lines)
+        assertEquals(MentorActionKind.ADD_PAGE, a.actions[4].kind)
+        assertEquals("LINED", a.actions[4].paper)
+        assertEquals(MentorActionKind.GOTO_PAGE, a.actions[5].kind)
+        assertEquals(3, a.actions[5].targetPage)
+        assertEquals(MentorActionKind.SET_PAPER, a.actions[6].kind)
+        assertEquals("GRID", a.actions[6].paper)
+        assertTrue(a.actions[6].applyAllPages)
+        assertEquals(MentorActionKind.RENAME_NOTEBOOK, a.actions[7].kind)
+        assertEquals("Интегралы", a.actions[7].text)
+        assertEquals(MentorActionKind.SET_SUBJECT, a.actions[8].kind)
+        assertEquals("Матанализ", a.actions[8].text)
+    }
+
+    @Test
+    fun streamingHidesPartialActionHeader() {
+        val a = ScreenAnswerParser.parse("@@ note\nОк.\n@@ write пос", CoordMode.PIXELS_XY, 1000, 1000, streaming = true)
+        assertEquals(1, a.marks.size)
+        assertTrue(a.actions.isEmpty())
+    }
 }

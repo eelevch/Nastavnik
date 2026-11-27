@@ -19,6 +19,8 @@ data class NotebookMeta(
     val tasks: List<app.nastavnik.study.PracticeTask> = emptyList(),
     /** Предмет тетради для группировки в каталоге (например «Математический анализ», «Физика»). */
     val subject: String = "",
+    /** Последняя страница, на которой были изменения или переключение. */
+    val lastEditedPageId: Long = 0,
 )
 
 /**
@@ -57,7 +59,7 @@ class NotebookStore(private val root: File) {
     /** Новая тетрадь с одной чистой страницей. */
     fun create(title: String, paper: Paper, subject: String = "", now: Long = System.currentTimeMillis()): Pair<NotebookMeta, InkPage> {
         val page = InkPage(newId(now), paper)
-        val m = NotebookMeta(newId(now), title, now, now, listOf(page.id), paper.name, subject = subject)
+        val m = NotebookMeta(newId(now), title, now, now, listOf(page.id), paper.name, subject = subject, lastEditedPageId = page.id)
         saveMeta(m)
         savePage(m.id, page)
         return m to page
@@ -65,7 +67,7 @@ class NotebookStore(private val root: File) {
 
     /** Новая тетрадь из готовых страниц (фото, PDF). */
     fun createWith(title: String, pages: List<InkPage>, subject: String = "", now: Long = System.currentTimeMillis()): NotebookMeta {
-        val m = NotebookMeta(newId(now), title, now, now, pages.map { it.id }, Paper.BLANK.name, subject = subject)
+        val m = NotebookMeta(newId(now), title, now, now, pages.map { it.id }, Paper.BLANK.name, subject = subject, lastEditedPageId = pages.firstOrNull()?.id ?: 0L)
         saveMeta(m)
         pages.forEach { savePage(m.id, it) }
         return m
@@ -86,14 +88,16 @@ class NotebookStore(private val root: File) {
     fun addPage(m: NotebookMeta, page: InkPage, afterIndex: Int = m.pages.lastIndex, now: Long = System.currentTimeMillis()): NotebookMeta {
         savePage(m.id, page)
         val pages = m.pages.toMutableList().apply { add((afterIndex + 1).coerceIn(0, size), page.id) }
-        return m.copy(pages = pages, updatedAt = now).also(::saveMeta)
+        return m.copy(pages = pages, updatedAt = now, lastEditedPageId = page.id).also(::saveMeta)
     }
 
     fun removePage(m: NotebookMeta, pageId: Long, now: Long = System.currentTimeMillis()): NotebookMeta {
         if (m.pages.size <= 1) return m
         File(dir(m.id), pageFile(pageId)).delete()
         dir(m.id).listFiles { f -> f.name.startsWith("bg_$pageId") }?.forEach { it.delete() }
-        return m.copy(pages = m.pages - pageId, updatedAt = now).also(::saveMeta)
+        val left = m.pages - pageId
+        val nextLast = if (m.lastEditedPageId == pageId) left.lastOrNull() ?: 0L else m.lastEditedPageId
+        return m.copy(pages = left, updatedAt = now, lastEditedPageId = nextLast).also(::saveMeta)
     }
 
     fun rename(m: NotebookMeta, title: String): NotebookMeta = m.copy(title = title.trim().ifEmpty { m.title }).also(::saveMeta)

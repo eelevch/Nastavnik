@@ -80,6 +80,10 @@ data class AppSettings(
     val mascotColor: String = MascotColor.SUNSET.id,
     /** Стиль визуализации чтения, анализа и слежения за письмом на странице. */
     val mentorVisionStyle: String = MentorVisionStyle.AURORA_SCAN.id,
+    /** Спрашивать разрешение перед тем, как наставник меняет лист или страницы. */
+    val mentorRequirePermission: Boolean = true,
+    /** Показывать быстрый шар наставника на главных экранах. */
+    val showAmbientMentor: Boolean = true,
 )
 
 /**
@@ -140,6 +144,8 @@ class SettingsRepo(private val context: Context) {
         sideCapsuleShowLabels = sideCapsuleShowLabels(),
         mascotColor = mascotColor(),
         mentorVisionStyle = mentorVisionStyle(),
+        mentorRequirePermission = mentorRequirePermission(),
+        showAmbientMentor = showAmbientMentor(),
     )
 
     /**
@@ -202,6 +208,12 @@ class SettingsRepo(private val context: Context) {
 
     fun mentorVisionStyle(): String = MentorVisionStyle.fromId(prefs.getString(K_VISION_STYLE, MentorVisionStyle.AURORA_SCAN.id)).id
     fun setMentorVisionStyle(style: MentorVisionStyle) = prefs.edit { putString(K_VISION_STYLE, style.id) }
+
+    fun mentorRequirePermission(): Boolean = prefs.getBoolean(K_MENTOR_PERMISSION, true)
+    fun setMentorRequirePermission(on: Boolean) = prefs.edit { putBoolean(K_MENTOR_PERMISSION, on) }
+
+    fun showAmbientMentor(): Boolean = prefs.getBoolean(K_AMBIENT_MENTOR, true)
+    fun setShowAmbientMentor(on: Boolean) = prefs.edit { putBoolean(K_AMBIENT_MENTOR, on) }
 
     /** Поток настроек: выдаёт текущее значение и каждое изменение. */
     fun flow(): Flow<AppSettings> = callbackFlow {
@@ -597,5 +609,7 @@ class SettingsRepo(private val context: Context) {
         private const val K_SIDE_CAPSULE_LABELS = "side_capsule_show_labels"
         private const val K_MASCOT_COLOR = "mascot_color"
         private const val K_VISION_STYLE = "mentor_vision_style"
+        private const val K_MENTOR_PERMISSION = "mentor_require_permission"
+        private const val K_AMBIENT_MENTOR = "show_ambient_mentor"
     }
 }

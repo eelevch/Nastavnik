@@ -34,9 +34,76 @@ data class NBox(val left: Float, val top: Float, val right: Float, val bottom: F
     val height: Float get() = bottom - top
 }
 
-enum class DrawingKind { ARROW, LINE, ELLIPSE }
+enum class DrawingKind { ARROW, LINE, ELLIPSE, RECT, TRIANGLE, AXES }
 
 data class Drawing(val kind: DrawingKind, val reverseX: Boolean = false, val reverseY: Boolean = false)
+
+enum class MentorActionKind {
+    WRITE_TEXT,
+    DRAW_SHAPE,
+    HIGHLIGHT,
+    ERASE,
+    CLEAR_PAGE,
+    ADD_PAGE,
+    GOTO_PAGE,
+    DUPLICATE_PAGE,
+    DELETE_PAGE,
+    SET_PAPER,
+    RENAME_NOTEBOOK,
+    SET_SUBJECT,
+}
+
+/**
+ * Предлагаемое наставником изменение конспекта или тетради.
+ * Выполняется только после явного подтверждения студента (или сразу, если отключено в настройках).
+ */
+data class MentorPageAction(
+    val id: String,
+    val kind: MentorActionKind,
+    val text: String = "",
+    val shape: DrawingKind? = null,
+    val paper: String? = null,
+    val targetPage: Int? = null,
+    val applyAllPages: Boolean = false,
+    val box: NBox? = null,
+    val lines: IntRange? = null,
+    val after: Int? = null,
+) {
+    fun summaryLabel(): String = when (kind) {
+        MentorActionKind.WRITE_TEXT -> {
+            val preview = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty().take(52)
+            if (preview.isNotEmpty()) "Записать на листе: «$preview»" else "Записать текст на листе"
+        }
+        MentorActionKind.DRAW_SHAPE -> when (shape) {
+            DrawingKind.AXES -> "Начертить оси координат на листе"
+            DrawingKind.ARROW -> "Нарисовать стрелку на листе"
+            DrawingKind.RECT -> "Начертить прямоугольник на листе"
+            DrawingKind.TRIANGLE -> "Начертить треугольник на листе"
+            DrawingKind.ELLIPSE -> "Обвести область овалом на листе"
+            else -> "Провести линию на листе"
+        }
+        MentorActionKind.HIGHLIGHT -> "Выделить маркером строку на листе"
+        MentorActionKind.ERASE -> "Стереть фрагмент на странице"
+        MentorActionKind.CLEAR_PAGE -> "Очистить текущую страницу"
+        MentorActionKind.ADD_PAGE -> "Добавить новую страницу" + (paper?.let { " (${paperLabel(it)})" } ?: "")
+        MentorActionKind.GOTO_PAGE -> "Перейти на страницу ${targetPage ?: 1}"
+        MentorActionKind.DUPLICATE_PAGE -> "Дублировать текущую страницу"
+        MentorActionKind.DELETE_PAGE -> "Удалить текущую страницу"
+        MentorActionKind.SET_PAPER -> "Сменить бумагу на ${paperLabel(paper)}" + (if (applyAllPages) " во всей тетради" else "")
+        MentorActionKind.RENAME_NOTEBOOK -> "Переименовать тетрадь в «$text»"
+        MentorActionKind.SET_SUBJECT -> "Задать предмет «$text»"
+    }
+
+    companion object {
+        private fun paperLabel(paper: String?): String = when (paper?.uppercase()) {
+            "GRID" -> "клетку"
+            "LINED" -> "линейку"
+            "DOTS" -> "точки"
+            "BLANK" -> "чистый лист"
+            else -> "выбранную"
+        }
+    }
+}
 
 /**
  * Заметка наставника. Место задаётся номером строки ([lines]), «под строкой» ([after]) и/или рамкой [box]
@@ -66,6 +133,8 @@ data class ScreenAnswer(
     val allGood: Boolean,
     /** `@@ тема …` — короткое название задачи для истории. */
     val topic: String? = null,
+    /** Предложенные изменения конспекта/тетради (ждут разрешения студента). */
+    val actions: List<MentorPageAction> = emptyList(),
 )
 
 /**
@@ -77,13 +146,28 @@ data class ScreenAnswer(
  * Что получится, если приравнять производную к нулю?
  * @@ error стр 4 : 410 520 980 590
  * ```
- * Понимает и голые координаты (`@@ error 410 520 980 590`). Работает на недописанном (потоковом) тексте.
+ * А также команды действий с тетрадью (`@@ write`, `@@ draw`, `@@ highlight`, `@@ erase`,
+ * `@@ page_add`, `@@ page_goto`, `@@ page_paper`, `@@ notebook_rename`, `@@ notebook_subject` и т.д.).
+ * Работает на недописанном (потоковом) тексте.
  */
 object ScreenAnswerParser {
     const val ALL_GOOD_MARKER = "[[ВЕРНО]]"
 
     private val header = Regex("""^\s*@@\s*([\p{L}_]+)(.*)$""")
     private val drawingRe = Regex("""^\s*@@\s*(arrow|line|ellipse)\s*:?\s*(.*)$""", RegexOption.IGNORE_CASE)
+    private val drawActionRe = Regex("""^\s*@@\s*(?:draw|shape|нарисуй|фигура)\s+(arrow|line|ellipse|rect|triangle|axes|стрелка|линия|овал|прямоугольник|треугольник|оси)\s*:?\s*(.*)$""", RegexOption.IGNORE_CASE)
+    private val writeActionRe = Regex("""^\s*@@\s*(?:write|запиши|напиши)\b(.*)$""", RegexOption.IGNORE_CASE)
+    private val highlightActionRe = Regex("""^\s*@@\s*(?:highlight|выдели)\b(.*)$""", RegexOption.IGNORE_CASE)
+    private val eraseActionRe = Regex("""^\s*@@\s*(?:erase|сотри|удали_фрагмент)\b(.*)$""", RegexOption.IGNORE_CASE)
+    private val pageAddRe = Regex("""^\s*@@\s*(?:page_add|add_page|новая_страница)\b(.*)$""", RegexOption.IGNORE_CASE)
+    private val pageGotoRe = Regex("""^\s*@@\s*(?:page_goto|goto_page|страница)\b(.*)$""", RegexOption.IGNORE_CASE)
+    private val pageDupRe = Regex("""^\s*@@\s*(?:page_duplicate|duplicate_page)\b.*$""", RegexOption.IGNORE_CASE)
+    private val pageDelRe = Regex("""^\s*@@\s*(?:page_delete|delete_page)\b.*$""", RegexOption.IGNORE_CASE)
+    private val pageClearRe = Regex("""^\s*@@\s*(?:page_clear|clear_page|очистить_страницу)\b.*$""", RegexOption.IGNORE_CASE)
+    private val pagePaperRe = Regex("""^\s*@@\s*(?:page_paper|paper|бумага)\b(.*)$""", RegexOption.IGNORE_CASE)
+    private val nbRenameRe = Regex("""^\s*@@\s*(?:notebook_rename|rename_notebook|название_тетради)\s*[:\-—]?\s*(.*)$""", RegexOption.IGNORE_CASE)
+    private val nbSubjectRe = Regex("""^\s*@@\s*(?:notebook_subject|subject_notebook|предмет_тетради)\s*[:\-—]?\s*(.*)$""", RegexOption.IGNORE_CASE)
+
     private val afterRe = Regex("""(?:после|под|after|below)\s*(?:стр\p{L}*\.?|line)?\s*(\d+)""", RegexOption.IGNORE_CASE)
     private val linesRe = Regex("""(?:стр\p{L}*\.?|lines?|L)\s*(\d+)(?:\s*[-–—]\s*(\d+))?""", RegexOption.IGNORE_CASE)
     private val rangeAtStart = Regex("""^[\s:\-]*(\d+)\s*[-–—]\s*(\d+)(?![\d.,])""")
@@ -123,6 +207,26 @@ object ScreenAnswerParser {
         return Spec(lines, after, coords)
     }
 
+    private fun parseDrawingKind(word: String): DrawingKind = when (word.lowercase()) {
+        "arrow", "стрелка" -> DrawingKind.ARROW
+        "ellipse", "овал" -> DrawingKind.ELLIPSE
+        "rect", "прямоугольник" -> DrawingKind.RECT
+        "triangle", "треугольник" -> DrawingKind.TRIANGLE
+        "axes", "оси" -> DrawingKind.AXES
+        else -> DrawingKind.LINE
+    }
+
+    private fun parsePaperToken(raw: String): String? {
+        val low = raw.lowercase()
+        return when {
+            "grid" in low || "клетк" in low -> "GRID"
+            "lined" in low || "линей" in low -> "LINED"
+            "dots" in low || "точк" in low || "точеч" in low -> "DOTS"
+            "blank" in low || "чист" in low || "бел" in low -> "BLANK"
+            else -> null
+        }
+    }
+
     fun parse(raw: String, mode: CoordMode, imageW: Int, imageH: Int, streaming: Boolean = false): ScreenAnswer {
         val done = DoneMarker.process(raw, streaming)
         val allGood = allGoodRegex.containsMatchIn(done.text)
@@ -131,6 +235,7 @@ object ScreenAnswerParser {
         if (streaming && !raw.endsWith("\n")) text = hidePartialHeader(text)
 
         val marks = mutableListOf<Mark>()
+        val actions = mutableListOf<MentorPageAction>()
         var kind: MarkKind? = null
         var box: NBox? = null
         var lines: IntRange? = null
@@ -141,7 +246,21 @@ object ScreenAnswerParser {
         val detail = StringBuilder()
         var inDetail = false
         var drawing: Drawing? = null
+        var pendingWriteAction: MentorPageAction? = null
+        val writeBody = StringBuilder()
+
+        fun flushWriteAction() {
+            val act = pendingWriteAction ?: return
+            pendingWriteAction = null
+            val content = writeBody.toString().trim()
+            writeBody.setLength(0)
+            if (content.isNotEmpty()) {
+                actions += act.copy(text = content)
+            }
+        }
+
         fun flush() {
+            flushWriteAction()
             val t = body.toString().trim()
             val d = detail.toString().trim().ifEmpty { null }
             if (kind != null || t.isNotEmpty() || d != null) {
@@ -153,7 +272,146 @@ object ScreenAnswerParser {
             detail.setLength(0)
             inDetail = false
         }
+
         for (line in text.lines()) {
+            writeActionRe.matchEntire(line)?.let { wm ->
+                flush()
+                kind = null; box = null; lines = null; after = null; drawing = null
+                val spec = parseSpec(wm.groupValues[1])
+                pendingWriteAction = MentorPageAction(
+                    id = "act_${actions.size}",
+                    kind = MentorActionKind.WRITE_TEXT,
+                    box = spec?.coords?.let { toBox(it, mode, imageW, imageH) },
+                    lines = spec?.lines,
+                    after = spec?.after,
+                )
+                continue
+            }
+            drawActionRe.matchEntire(line)?.let { dm ->
+                flush()
+                kind = null; box = null; lines = null; after = null; drawing = null
+                val dk = parseDrawingKind(dm.groupValues[1])
+                val spec = parseSpec(dm.groupValues[2])
+                actions += MentorPageAction(
+                    id = "act_${actions.size}",
+                    kind = MentorActionKind.DRAW_SHAPE,
+                    shape = dk,
+                    box = spec?.coords?.let { toBox(it, mode, imageW, imageH) },
+                    lines = spec?.lines,
+                    after = spec?.after,
+                )
+                continue
+            }
+            highlightActionRe.matchEntire(line)?.let { hm ->
+                flush()
+                kind = null; box = null; lines = null; after = null; drawing = null
+                val spec = parseSpec(hm.groupValues[1])
+                actions += MentorPageAction(
+                    id = "act_${actions.size}",
+                    kind = MentorActionKind.HIGHLIGHT,
+                    box = spec?.coords?.let { toBox(it, mode, imageW, imageH) },
+                    lines = spec?.lines,
+                    after = spec?.after,
+                )
+                continue
+            }
+            eraseActionRe.matchEntire(line)?.let { em ->
+                flush()
+                kind = null; box = null; lines = null; after = null; drawing = null
+                val spec = parseSpec(em.groupValues[1])
+                actions += MentorPageAction(
+                    id = "act_${actions.size}",
+                    kind = MentorActionKind.ERASE,
+                    box = spec?.coords?.let { toBox(it, mode, imageW, imageH) },
+                    lines = spec?.lines,
+                    after = spec?.after,
+                )
+                continue
+            }
+            pageAddRe.matchEntire(line)?.let { pm ->
+                flush()
+                kind = null; box = null; lines = null; after = null; drawing = null
+                actions += MentorPageAction(
+                    id = "act_${actions.size}",
+                    kind = MentorActionKind.ADD_PAGE,
+                    paper = parsePaperToken(pm.groupValues[1]),
+                )
+                continue
+            }
+            pageGotoRe.matchEntire(line)?.let { gm ->
+                flush()
+                kind = null; box = null; lines = null; after = null; drawing = null
+                val n = numberRe.find(gm.groupValues[1])?.value?.toFloatOrNull()?.toInt()?.coerceAtLeast(1)
+                if (n != null) {
+                    actions += MentorPageAction(
+                        id = "act_${actions.size}",
+                        kind = MentorActionKind.GOTO_PAGE,
+                        targetPage = n,
+                    )
+                }
+                continue
+            }
+            if (pageDupRe.matches(line)) {
+                flush()
+                kind = null; box = null; lines = null; after = null; drawing = null
+                actions += MentorPageAction(id = "act_${actions.size}", kind = MentorActionKind.DUPLICATE_PAGE)
+                continue
+            }
+            if (pageDelRe.matches(line)) {
+                flush()
+                kind = null; box = null; lines = null; after = null; drawing = null
+                actions += MentorPageAction(id = "act_${actions.size}", kind = MentorActionKind.DELETE_PAGE)
+                continue
+            }
+            if (pageClearRe.matches(line)) {
+                flush()
+                kind = null; box = null; lines = null; after = null; drawing = null
+                actions += MentorPageAction(id = "act_${actions.size}", kind = MentorActionKind.CLEAR_PAGE)
+                continue
+            }
+            pagePaperRe.matchEntire(line)?.let { ppm ->
+                flush()
+                kind = null; box = null; lines = null; after = null; drawing = null
+                val arg = ppm.groupValues[1]
+                val paper = parsePaperToken(arg)
+                if (paper != null) {
+                    val all = "all" in arg.lowercase() || "вс" in arg.lowercase()
+                    actions += MentorPageAction(
+                        id = "act_${actions.size}",
+                        kind = MentorActionKind.SET_PAPER,
+                        paper = paper,
+                        applyAllPages = all,
+                    )
+                }
+                continue
+            }
+            nbRenameRe.matchEntire(line)?.let { nm ->
+                flush()
+                kind = null; box = null; lines = null; after = null; drawing = null
+                val newTitle = nm.groupValues[1].trim().trim('«', '»', '"').take(80)
+                if (newTitle.isNotEmpty()) {
+                    actions += MentorPageAction(
+                        id = "act_${actions.size}",
+                        kind = MentorActionKind.RENAME_NOTEBOOK,
+                        text = newTitle,
+                    )
+                }
+                continue
+            }
+            nbSubjectRe.matchEntire(line)?.let { sm ->
+                flush()
+                kind = null; box = null; lines = null; after = null; drawing = null
+                val newSubj = sm.groupValues[1].trim().trim('«', '»', '"').take(60)
+                if (newSubj.isNotEmpty()) {
+                    actions += MentorPageAction(
+                        id = "act_${actions.size}",
+                        kind = MentorActionKind.SET_SUBJECT,
+                        text = newSubj,
+                    )
+                }
+                continue
+            }
+
             val drawingHeader = drawingRe.matchEntire(line)
             if (drawingHeader != null) {
                 val values = numberRe.findAll(drawingHeader.groupValues[2]).mapNotNull { it.value.toFloatOrNull() }.toList()
@@ -187,7 +445,10 @@ object ScreenAnswerParser {
                 lines = spec.lines
                 after = spec.after
             } else if (detailRe.matches(line)) {
+                flushWriteAction()
                 inDetail = true
+            } else if (pendingWriteAction != null) {
+                writeBody.append(line).append('\n')
             } else {
                 (if (inDetail) detail else body).append(line).append('\n')
             }
@@ -195,15 +456,18 @@ object ScreenAnswerParser {
         flush()
         // Пустые заметки, кроме последней недописанной, не нужны.
         val cleaned = marks.filterIndexed { i, mk -> mk.text.isNotEmpty() || (streaming && i == marks.lastIndex) }
-        return ScreenAnswer(cleaned, done.done, allGood && cleaned.none { it.kind == MarkKind.ERROR }, topic)
+        return ScreenAnswer(cleaned, done.done, allGood && cleaned.none { it.kind == MarkKind.ERROR }, topic, actions)
     }
 
     /** Текст для истории и для следующих запросов: без координат, с подписями, короткая и полная части. */
-    fun toPlain(answer: ScreenAnswer): String =
-        answer.marks.joinToString("\n\n") { m ->
+    fun toPlain(answer: ScreenAnswer): String {
+        val marksText = answer.marks.joinToString("\n\n") { m ->
             val text = if (m.detail != null) "${m.text}\n\n${m.detail}" else m.text
             if (m.kind == MarkKind.NOTE) text else "**${m.kind.label}.** $text"
         }
+        if (marksText.isNotEmpty() || answer.actions.isEmpty()) return marksText
+        return answer.actions.joinToString("\n") { "• ${it.summaryLabel()}" }
+    }
 
     /** Первое предложение (или первая строка) — короткая подсказка, если модель её не выделила. */
     internal fun firstSentence(text: String): String {

@@ -245,6 +245,37 @@ class InkView(context: Context) : View(context) {
         replace(p, p.strokes.toList(), texts)
     }
 
+    /** Добавить штрихи и текстовые заметки от имени наставника (одним шагом для Undo). */
+    fun applyMentorAdditions(addedStrokes: List<Stroke>, addedTexts: List<TextBox>, revealRect: RectF? = null) {
+        val p = page ?: return
+        if (addedStrokes.isEmpty() && addedTexts.isEmpty()) return
+        clearSelection()
+        replace(p, p.strokes + addedStrokes, p.texts + addedTexts)
+        if (revealRect != null) reveal(revealRect)
+    }
+
+    /** Удалить штрихи и тексты в указанной области страницы (возвращает число удалённых элементов). */
+    fun eraseInPageRect(region: RectF): Int {
+        val p = page ?: return 0
+        val hit = RectF(region).apply { inset(-4f, -4f) }
+        val goneStrokes = p.strokes.filter { s ->
+            val b = s.bounds()
+            RectF.intersects(hit, RectF(b[0], b[1], b[2], b[3]))
+        }
+        val goneTexts = p.texts.filter { t ->
+            val b = t.bounds()
+            RectF.intersects(hit, RectF(b[0], b[1], b[2], b[3]))
+        }
+        val total = goneStrokes.size + goneTexts.size
+        if (total == 0) return 0
+        clearSelection()
+        if (goneStrokes.isNotEmpty()) fadeOut(goneStrokes)
+        val goneS = goneStrokes.toSet()
+        val goneT = goneTexts.toSet()
+        replace(p, p.strokes.filter { it !in goneS }, p.texts.filter { it !in goneT })
+        return total
+    }
+
     private fun textAt(x: Float, y: Float): TextBox? = page?.texts?.lastOrNull { t ->
         x >= t.x - 8 && x <= t.x + t.width && y >= t.y - 8 && y <= t.y + drawer.textHeight(t) + 8
     }
@@ -864,76 +895,82 @@ class InkView(context: Context) : View(context) {
 
         val workBmp = spareBmp
         spareBmp = null
+        if (renderExecutor.isShutdown) renderExecutor = newRenderExecutor()
         renderInFlight = true
         renderPending = false
         inFlightStrokes.clear()
 
-        renderExecutor.execute {
-            if (detached) {
-                if (workBmp != null && !workBmp.isRecycled) workBmp.recycle()
-                return@execute
-            }
-            val resultBmp = renderPageIntoBitmap(
-                targetBmp = workBmp,
-                targetDrawer = bgDrawer,
-                paper = paperSnap,
-                pageHeight = heightSnap,
-                strokes = strokesSnap,
-                texts = textsSnap,
-                exclude = excludeSnap,
-                bg = bgSnap,
-                rect = targetRect,
-                bw = bw,
-                bh = bh,
-            )
-            post {
-                renderInFlight = false
-                if (detached || page !== p || resultBmp == null) {
-                    if (resultBmp != null && resultBmp !== frontBmp && !resultBmp.isRecycled) resultBmp.recycle()
-                    return@post
+        try {
+            renderExecutor.execute {
+                if (detached) {
+                    if (workBmp != null && !workBmp.isRecycled) workBmp.recycle()
+                    return@execute
                 }
-                if (gen != renderGen.get()) {
-                    if (resultBmp !== frontBmp) {
-                        if (spareBmp != null && spareBmp !== resultBmp && !spareBmp!!.isRecycled) spareBmp!!.recycle()
-                        spareBmp = resultBmp
+                val resultBmp = renderPageIntoBitmap(
+                    targetBmp = workBmp,
+                    targetDrawer = bgDrawer,
+                    paper = paperSnap,
+                    pageHeight = heightSnap,
+                    strokes = strokesSnap,
+                    texts = textsSnap,
+                    exclude = excludeSnap,
+                    bg = bgSnap,
+                    rect = targetRect,
+                    bw = bw,
+                    bh = bh,
+                )
+                post {
+                    renderInFlight = false
+                    if (detached || page !== p || resultBmp == null) {
+                        if (resultBmp != null && resultBmp !== frontBmp && !resultBmp.isRecycled) resultBmp.recycle()
+                        return@post
                     }
-                    scheduleAsyncRender(p)
-                    return@post
-                }
-                val oldFront = frontBmp
-                frontBmp = resultBmp
-                frontCanvas = Canvas(resultBmp)
-                frontRect.set(targetRect)
-                frontW = bw
-                frontH = bh
-                frontSrc.set(0, 0, bw, bh)
-                frontScale = targetScale
-                frontPage = p
-                frontValid = true
-                if (oldFront != null && oldFront !== resultBmp) {
-                    if (spareBmp != null && spareBmp !== oldFront && !spareBmp!!.isRecycled) spareBmp!!.recycle()
-                    spareBmp = oldFront
-                }
-                if (inFlightStrokes.isNotEmpty()) {
-                    val fc = frontCanvas
-                    if (fc != null) {
-                        fc.save()
-                        fc.clipRect(0, 0, frontW, frontH)
-                        val sx = frontW / frontRect.width().coerceAtLeast(1f)
-                        val sy = frontH / frontRect.height().coerceAtLeast(1f)
-                        fc.scale(sx, sy)
-                        fc.translate(-frontRect.left, -frontRect.top)
-                        for (s in inFlightStrokes) drawer.drawStroke(fc, s)
-                        fc.restore()
+                    if (gen != renderGen.get()) {
+                        if (resultBmp !== frontBmp) {
+                            if (spareBmp != null && spareBmp !== resultBmp && !spareBmp!!.isRecycled) spareBmp!!.recycle()
+                            spareBmp = resultBmp
+                        }
+                        scheduleAsyncRender(p)
+                        return@post
                     }
-                    inFlightStrokes.clear()
-                }
-                invalidate()
-                if (renderPending) {
-                    renderPending = false
-                    scheduleAsyncRender(p)
+                    val oldFront = frontBmp
+                    frontBmp = resultBmp
+                    frontCanvas = Canvas(resultBmp)
+                    frontRect.set(targetRect)
+                    frontW = bw
+                    frontH = bh
+                    frontSrc.set(0, 0, bw, bh)
+                    frontScale = targetScale
+                    frontPage = p
+                    frontValid = true
+                    if (oldFront != null && oldFront !== resultBmp) {
+                        if (spareBmp != null && spareBmp !== oldFront && !spareBmp!!.isRecycled) spareBmp!!.recycle()
+                        spareBmp = oldFront
+                    }
+                    if (inFlightStrokes.isNotEmpty()) {
+                        val fc = frontCanvas
+                        if (fc != null) {
+                            fc.save()
+                            fc.clipRect(0, 0, frontW, frontH)
+                            val sx = frontW / frontRect.width().coerceAtLeast(1f)
+                            val sy = frontH / frontRect.height().coerceAtLeast(1f)
+                            fc.scale(sx, sy)
+                            fc.translate(-frontRect.left, -frontRect.top)
+                            for (s in inFlightStrokes) drawer.drawStroke(fc, s)
+                            fc.restore()
+                        }
+                        inFlightStrokes.clear()
+                    }
+                    invalidate()
+                    if (renderPending) {
+                        renderPending = false
+                        scheduleAsyncRender(p)
+                    }
                 }
             }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            renderInFlight = false
+            if (workBmp != null && !workBmp.isRecycled) workBmp.recycle()
         }
     }
 
