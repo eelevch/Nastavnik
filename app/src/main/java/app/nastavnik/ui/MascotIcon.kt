@@ -54,6 +54,7 @@ fun MascotIcon(
     voiceLevel: Float = 0f,
     sizeDp: Dp = 26.dp,
     colorOverride: MascotColor? = null,
+    gazeTarget: Offset? = null,
     modifier: Modifier = Modifier,
 ) {
     val activePreset = colorOverride ?: Brand.mascotColor
@@ -101,6 +102,21 @@ fun MascotIcon(
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 600f),
         label = "smoothVoice",
     )
+    val hasGazeMix by animateFloatAsState(
+        targetValue = if (gazeTarget != null) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.82f, stiffness = 360f),
+        label = "hasGazeMix",
+    )
+    val gazeX by animateFloatAsState(
+        targetValue = (gazeTarget?.x ?: 0f).coerceIn(-1f, 1f),
+        animationSpec = spring(dampingRatio = 0.80f, stiffness = 360f),
+        label = "gazeX",
+    )
+    val gazeY by animateFloatAsState(
+        targetValue = (gazeTarget?.y ?: 0f).coerceIn(-1f, 1f),
+        animationSpec = spring(dampingRatio = 0.80f, stiffness = 360f),
+        label = "gazeY",
+    )
 
     val sphereClip = remember { Path() }
 
@@ -124,9 +140,13 @@ fun MascotIcon(
         val thinkLookY = sin(headRad * 2f) * r * 0.045f - r * 0.02f
 
         val idleWeight = (1f - thinkingMix) * (1f - writingMix) * (1f - maxOf(speakingMix, listeningMix) * 0.75f)
-        val lookX = saccadeX * idleWeight + thinkLookX * thinkingMix * (1f - writingMix * 0.5f)
-        val lookY = saccadeY * idleWeight + thinkLookY * thinkingMix * (1f - writingMix * 0.5f)
-        val normLookX = (lookX / (r * 0.14f)).coerceIn(-1f, 1f)
+        val autonomousX = saccadeX * idleWeight + thinkLookX * thinkingMix * (1f - writingMix * 0.5f)
+        val autonomousY = saccadeY * idleWeight + thinkLookY * thinkingMix * (1f - writingMix * 0.5f)
+        val spatialX = gazeX * r * 0.20f
+        val spatialY = gazeY * r * 0.14f
+        val lookX = autonomousX * (1f - hasGazeMix) + spatialX * hasGazeMix
+        val lookY = autonomousY * (1f - hasGazeMix) + spatialY * hasGazeMix
+        val normLookX = (lookX / (r * 0.18f)).coerceIn(-1f, 1f)
 
         val voicePresence = maxOf(speakingMix, listeningMix)
         val activeAura = maxOf(thinkingMix, speakingMix, listeningMix, writingMix * 0.65f)
@@ -307,9 +327,13 @@ fun MascotIcon(
                 val baseEyeH = eyeH *
                     (blinkOpen * (1f - speakingMix) + speakPulse * speakingMix) *
                     listenWiden *
-                    thinkFocus
+                    thinkFocus *
+                    (1f - 0.14f * writingMix * hasGazeMix)
 
-                val capsuleAlpha = (1f - writingMix * 1.18f).coerceIn(0f, 1f)
+                // Если передана пространственная цель взгляда (перо или читаемая строка на листе),
+                // сфера продолжает следить открытыми глазами вместо дуг ^ ^.
+                val effectiveWritingArcs = (writingMix * (1f - hasGazeMix)).coerceIn(0f, 1f)
+                val capsuleAlpha = (1f - effectiveWritingArcs * 1.18f).coerceIn(0f, 1f)
                 if (capsuleAlpha > 0.01f) {
                     val eyeShadowOffset = (r * 0.03f).coerceAtLeast(0.6f)
                     for (sign in listOf(-1f, 1f)) {
@@ -337,20 +361,20 @@ fun MascotIcon(
                     }
                 }
 
-                // Радостные белые дуги `^ ^` при письме.
-                if (writingMix > 0.01f) {
+                // Радостные белые дуги `^ ^` при письме (когда нет пространственного трекинга пера).
+                if (effectiveWritingArcs > 0.01f) {
                     val stroke = Stroke(width = (r * 0.145f).coerceAtLeast(1.4f), cap = StrokeCap.Round)
-                    val arcScale = 0.74f + 0.26f * writingMix
+                    val arcScale = 0.74f + 0.26f * effectiveWritingArcs
                     for (sign in listOf(-1f, 1f)) {
                         val ex = cx + sign * eyeOffX
                         val arcW = eyeW * 1.24f * arcScale
                         val arcH = eyeH * 0.76f * arcScale
                         drawArc(
-                            color = Color.White.copy(alpha = writingMix),
+                            color = Color.White.copy(alpha = effectiveWritingArcs),
                             startAngle = 195f,
                             sweepAngle = 150f,
                             useCenter = false,
-                            topLeft = Offset(ex - arcW * 0.5f, eyeY - eyeH * 0.26f + (1f - writingMix) * r * 0.07f),
+                            topLeft = Offset(ex - arcW * 0.5f, eyeY - eyeH * 0.26f + (1f - effectiveWritingArcs) * r * 0.07f),
                             size = Size(arcW, arcH),
                             style = stroke,
                         )
@@ -422,6 +446,7 @@ fun MascotBadge(
     thinking: Boolean = false,
     size: Dp = 32.dp,
     colorOverride: MascotColor? = null,
+    gazeTarget: Offset? = null,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -433,6 +458,7 @@ fun MascotBadge(
             thinking = thinking,
             sizeDp = (size.value * 0.94f).dp,
             colorOverride = colorOverride,
+            gazeTarget = gazeTarget,
         )
     }
 }

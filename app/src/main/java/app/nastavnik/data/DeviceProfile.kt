@@ -41,6 +41,16 @@ object DeviceProfile {
         return context.resources.configuration.smallestScreenWidthDp >= 600
     }
 
+    /**
+     * Запуск внутри Android-эмулятора (защита от проблем с RGB_565/gfxstream на хосте).
+     */
+    fun isEmulator(): Boolean {
+        val hw = android.os.Build.HARDWARE.lowercase()
+        val fp = android.os.Build.FINGERPRINT.lowercase()
+        val prod = android.os.Build.PRODUCT.lowercase()
+        return "ranchu" in hw || "goldfish" in hw || fp.startsWith("generic") || "sdk_gphone" in prod || "emulator" in prod
+    }
+
     data class Resolution(
         val width: Int,
         val height: Int,

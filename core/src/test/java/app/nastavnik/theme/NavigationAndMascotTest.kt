@@ -72,4 +72,20 @@ class NavigationAndMascotTest {
         assertEquals(0xFF000000.toInt(), themeStops.rimArgb and 0xFF000000.toInt())
         assertEquals(0xFF000000.toInt(), themeStops.sparkArgb and 0xFF000000.toInt())
     }
+
+    @Test
+    fun `mentor vision styles parse safely and have unique titles`() {
+        assertEquals(MentorVisionStyle.AURORA_SCAN, MentorVisionStyle.fromId(null))
+        assertEquals(MentorVisionStyle.AURORA_SCAN, MentorVisionStyle.fromId(""))
+        assertEquals(MentorVisionStyle.AURORA_SCAN, MentorVisionStyle.fromId("invalid"))
+
+        assertEquals(4, MentorVisionStyle.entries.size)
+        assertEquals(4, MentorVisionStyle.entries.map { it.id }.toSet().size)
+        assertEquals(4, MentorVisionStyle.entries.map { it.title }.toSet().size)
+
+        MentorVisionStyle.entries.forEach { style ->
+            assertEquals(style, MentorVisionStyle.fromId(style.id))
+            assertEquals(style, MentorVisionStyle.fromId(style.id.lowercase()))
+        }
+    }
 }

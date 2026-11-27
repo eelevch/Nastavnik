@@ -17,6 +17,7 @@ import android.view.ViewConfiguration
 import android.view.animation.LinearInterpolator
 import app.nastavnik.data.DeviceProfile
 import app.nastavnik.theme.MascotColor
+import app.nastavnik.theme.MentorVisionStyle
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -108,6 +109,24 @@ class BubbleView(context: Context, private val listener: Listener) : View(contex
             field = value
             invalidate()
         }
+
+    /** Прогресс ожидания тихой проверки после прекращения письма (0..1). */
+    var watchProgress: Float = 0f
+        set(value) {
+            val clamped = value.coerceIn(0f, 1f)
+            if (abs(field - clamped) < 0.01f) return
+            field = clamped
+            invalidate()
+        }
+
+    var visionStyle: MentorVisionStyle = MentorVisionStyle.AURORA_SCAN
+
+    private val watchArcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2.6f * density
+        strokeCap = Paint.Cap.ROUND
+        color = 0xFF4ADE80.toInt()
+    }
 
     private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF4ADE80.toInt() }
     private val dotBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
@@ -240,7 +259,7 @@ class BubbleView(context: Context, private val listener: Listener) : View(contex
         canvas.drawCircle(cx, cy, r, spherePaint)
         canvas.drawCircle(cx, cy, r - rimPaint.strokeWidth * 0.5f, rimPaint)
 
-        // 3. Индикатор вспышки или орбитального размышления.
+        // 3. Индикатор вспышки, ожидания автопроверки или орбитального размышления.
         if (System.currentTimeMillis() < flashUntil) {
             canvas.drawCircle(cx, cy, r - flashRing.strokeWidth / 2f, flashRing)
         } else if (busy) {
@@ -248,6 +267,10 @@ class BubbleView(context: Context, private val listener: Listener) : View(contex
             arcRect.set(cx - ar, cy - ar, cx + ar, cy + ar)
             val spin = (t * 235f) % 360f
             canvas.drawArc(arcRect, spin - 90f, 78f, false, thinkArcPaint)
+        } else if (watchProgress > 0.02f && visionStyle != MentorVisionStyle.OFF) {
+            val ar = r - watchArcPaint.strokeWidth / 2f
+            arcRect.set(cx - ar, cy - ar, cx + ar, cy + ar)
+            canvas.drawArc(arcRect, -90f, watchProgress * 360f, false, watchArcPaint)
         }
 
         // 4. Белые вертикальные капсулы глаз с морганием и 3D-перспективой.

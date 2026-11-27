@@ -96,6 +96,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.text.font.FontWeight
+import app.nastavnik.theme.MentorVisionStyle
+import kotlin.math.sin
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -116,6 +118,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import app.nastavnik.BuildConfig
 import app.nastavnik.R
 import app.nastavnik.ai.Mark
 import app.nastavnik.ai.QuickAction
@@ -141,15 +144,27 @@ import kotlinx.coroutines.withContext
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Unit, onSettings: () -> Unit) {
+fun NotebookScreen(
+    notebookId: Long,
+    onBack: () -> Unit,
+    onCleanReady: () -> Unit,
+    onSettings: () -> Unit,
+    debugDemoTick: Int = 0,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val ctl = remember(notebookId) { NotebookController(context.app, notebookId, scope) }
     var tips by remember { mutableStateOf(false) }
-    LaunchedEffect(notebookId) {
-        ctl.load()
-        // Первый раз — коротко, как устроен лист.
-        if (!context.app.settings.editorTipsShown()) tips = true
+    LaunchedEffect(notebookId, debugDemoTick) {
+        if (!ctl.loaded) {
+            ctl.load()
+            // Первый раз — коротко, как устроен лист.
+            if (!context.app.settings.editorTipsShown()) tips = true
+        } else if (BuildConfig.DEBUG) {
+            NotebookVisionDemoStart.take(notebookId)?.let { mode ->
+                ctl.applyDebugVisionDemoWhenReady(mode)
+            }
+        }
     }
     DisposableEffect(ctl) { onDispose { ctl.close() } }
     val close = {
@@ -159,14 +174,19 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
     BackHandler(onBack = close)
 
     val state by ctl.mentor.state.collectAsState()
+    val effectiveAnswer = state.answer ?: ctl.debugVisionAnswer
+    val effectiveSilentOkAt = if (ctl.debugSilentOkAt > 0L) ctl.debugSilentOkAt else state.silentOkAt
     LaunchedEffect(state.answer, ctl.index) { ctl.refreshMarks(state.answer) }
 
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     val wide = screenWidthDp >= 840
     var panel by rememberSaveable { mutableStateOf(wide) }
+    LaunchedEffect(ctl.debugForcePanel) {
+        ctl.debugForcePanel?.let { panel = it }
+    }
     var panelWidthDp by rememberSaveable { mutableFloatStateOf(390f) }
     val minPanelWidthDp = 340f
-    val maxPanelWidthDp = (screenWidthDp - 380f).coerceAtLeast(minPanelWidthDp).coerceAtMost(screenWidthDp * 0.7f)
+    val maxPanelWidthDp = (screenWidthDp - 380f).coerceAtMost(screenWidthDp * 0.7f).coerceAtLeast(minPanelWidthDp)
     val effectivePanelWidth = panelWidthDp.coerceIn(minPanelWidthDp, maxPanelWidthDp)
     var pagesOpen by rememberSaveable { mutableStateOf(false) }
     val importers = rememberImporters(onImages = { ctl.addImages(it) }, onPdf = { ctl.addPdf(it) })
@@ -181,6 +201,21 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
     if (pagesOpen) PagesOverview(ctl, onAdd = { ctl.addPage(ctl.page?.paper ?: Paper.GRID) }) { pagesOpen = false }
     TextDialog(ctl)
 
+    val mentorGaze: Offset? = when {
+        ctl.writing -> Offset(
+            x = (-0.90f + (ctl.penNormX - 0.5f) * 0.35f).coerceIn(-1f, -0.2f),
+            y = ((ctl.penNormY - 0.35f) * 1.15f).coerceIn(-0.85f, 0.85f),
+        )
+        effectiveAnswer?.streaming == true && ctl.detectedPageLines.isNotEmpty() -> {
+            val l = ctl.detectedPageLines[(ctl.debugVisionFocusIdx ?: 0).coerceIn(0, ctl.detectedPageLines.lastIndex)]
+            Offset(
+                x = -0.82f,
+                y = (((l.centerY() / 1414f) - 0.35f) * 1.15f).coerceIn(-0.85f, 0.85f),
+            )
+        }
+        else -> null
+    }
+
     Box(
         Modifier
             .fillMaxSize()
@@ -188,7 +223,15 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
             .systemBarsPadding(),
     ) {
         Column(Modifier.fillMaxSize()) {
-            NotebookTopBar(ctl, panel, onBack = close, onTogglePanel = { panel = !panel }, onPages = { pagesOpen = true }, importers = importers)
+            NotebookTopBar(
+                ctl = ctl,
+                panel = panel,
+                gazeTarget = mentorGaze,
+                onBack = close,
+                onTogglePanel = { panel = !panel },
+                onPages = { pagesOpen = true },
+                importers = importers,
+            )
             val panelSlideState = animateFloatAsState(
                 targetValue = if (panel && wide) 1f else 0f,
                 animationSpec = spring(dampingRatio = 0.92f, stiffness = 380f),
@@ -214,6 +257,13 @@ fun NotebookScreen(notebookId: Long, onBack: () -> Unit, onCleanReady: () -> Uni
                             ctl.attachContext(ctx)
                             ctl.ink
                         },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    MentorVisionLayer(
+                        ctl = ctl,
+                        mentorAnswer = effectiveAnswer,
+                        silentOkAt = effectiveSilentOkAt,
+                        style = Brand.visionStyle,
                         modifier = Modifier.fillMaxSize(),
                     )
                     SelectionMenu(ctl)
@@ -415,6 +465,7 @@ private fun PanelSplitter(
 private fun NotebookTopBar(
     ctl: NotebookController,
     panel: Boolean,
+    gazeTarget: Offset?,
     onBack: () -> Unit,
     onTogglePanel: () -> Unit,
     onPages: () -> Unit,
@@ -545,10 +596,13 @@ private fun NotebookTopBar(
                 }
             }
             val mentorState by ctl.mentor.state.collectAsState()
+            val effectiveBusy = mentorState.busy || (ctl.debugVisionAnswer?.streaming == true)
             val mentorAction = if (panel) "Скрыть наставника" else "Показать наставника"
             MascotBarButton(
                 writing = ctl.writing,
-                thinking = mentorState.busy,
+                thinking = effectiveBusy,
+                autoCheckProgress = ctl.autoCheckProgress,
+                gazeTarget = gazeTarget,
                 description = mentorAction,
                 active = panel,
                 onClick = onTogglePanel,
@@ -635,15 +689,18 @@ private fun MenuItem(text: String, icon: Int, onClick: () -> Unit) {
     )
 }
 
-/** Круглая стеклянная кнопка вызова наставника с живым маскотом (машет при письме, думает и пишет при ответе). */
+/** Круглая стеклянная кнопка вызова наставника с живым маскотом (следит за пером, показывает отсчёт и размышление). */
 @Composable
 private fun MascotBarButton(
     writing: Boolean,
     thinking: Boolean,
+    autoCheckProgress: Float = 0f,
+    gazeTarget: Offset? = null,
     description: String,
     active: Boolean = false,
     onClick: () -> Unit,
 ) {
+    val stops = Brand.mascotColor.resolveStops(Brand.Accent.toArgb())
     Box(
         Modifier
             .size(34.dp)
@@ -655,7 +712,21 @@ private fun MascotBarButton(
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
-        MascotIcon(writing = writing, thinking = thinking, sizeDp = 24.dp)
+        if (autoCheckProgress > 0.02f && !thinking && !writing) {
+            androidx.compose.foundation.Canvas(Modifier.fillMaxSize().padding(1.5.dp)) {
+                drawArc(
+                    color = Color(stops.midArgb),
+                    startAngle = -90f,
+                    sweepAngle = autoCheckProgress * 360f,
+                    useCenter = false,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = 2.dp.toPx(),
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                    ),
+                )
+            }
+        }
+        MascotIcon(writing = writing, thinking = thinking, sizeDp = 24.dp, gazeTarget = gazeTarget)
     }
 }
 
@@ -797,9 +868,10 @@ private fun MentorPanel(
     var voiceOnly by rememberSaveable { mutableStateOf(false) }
 
     val mentorState by ctl.mentor.state.collectAsState()
-    val busy = mentorState.busy
+    val effectiveAnswer = mentorState.answer ?: ctl.debugVisionAnswer
+    val busy = mentorState.busy || (ctl.debugVisionAnswer?.streaming == true)
     var lastSpokenSeq by remember { mutableStateOf(0L) }
-    val latestAnswer = ctl.chatMessages.lastOrNull { !it.isUser }?.answer
+    val latestAnswer = ctl.chatMessages.lastOrNull { !it.isUser }?.answer ?: effectiveAnswer
     LaunchedEffect(voiceOnly, latestAnswer?.seq, latestAnswer?.streaming) {
         if (voiceOnly && latestAnswer != null && !latestAnswer.streaming && latestAnswer.seq != lastSpokenSeq && latestAnswer.marks.isNotEmpty()) {
             lastSpokenSeq = latestAnswer.seq
@@ -1009,6 +1081,10 @@ private fun MentorPanel(
                             listening = listening,
                             voiceLevel = voiceRms,
                             sizeDp = 148.dp,
+                            gazeTarget = when {
+                                ctl.writing -> Offset(-0.75f, ((ctl.penNormY - 0.35f) * 1.1f).coerceIn(-0.85f, 0.85f))
+                                else -> null
+                            },
                         )
                     }
 
@@ -1267,7 +1343,7 @@ private fun AssistantChatBubble(
     ) {
         when {
             answer == null -> {
-                ThinkingRow(msg.id, "Думаю…")
+                ThinkingRow(msg.id, "Думаю…", ctl.detectedPageLines.size)
             }
             answer.errorText != null -> {
                 StatusLine(answer.errorText, Tone.ERROR)
@@ -1279,7 +1355,7 @@ private fun AssistantChatBubble(
             }
             else -> {
                 if (answer.streaming && answer.marks.isEmpty()) {
-                    ThinkingRow(answer.seq, answer.status ?: "Думаю…")
+                    ThinkingRow(answer.seq, answer.status ?: "Думаю…", ctl.detectedPageLines.size)
                 }
                 answer.marks.forEachIndexed { i, m ->
                     NoteCard(
@@ -1292,7 +1368,7 @@ private fun AssistantChatBubble(
                     )
                 }
                 if (answer.streaming && answer.marks.isNotEmpty()) {
-                    ThinkingRow(answer.seq, "Дописываю…")
+                    ThinkingRow(answer.seq, "Дописываю…", ctl.detectedPageLines.size)
                 }
                 if (answer.done && !answer.streaming) {
                     Row(
@@ -1677,9 +1753,9 @@ private fun AskTile(a: Ask, enabled: Boolean, modifier: Modifier, onClick: () ->
     }
 }
 
-/** Наставник думает: три «дышащие» точки и секунды — видно, что работа идёт. */
+/** Наставник читает/анализирует страницу: живая сфера, этап работы, распознанные строки и нейроволна. */
 @Composable
-private fun ThinkingRow(seq: Long, status: String?) {
+private fun ThinkingRow(seq: Long, status: String?, lineCount: Int = 0) {
     val start = remember(seq) { System.currentTimeMillis() }
     val seconds by produceState(0, seq) {
         while (true) {
@@ -1687,33 +1763,53 @@ private fun ThinkingRow(seq: Long, status: String?) {
             delay(250)
         }
     }
+    val stops = Brand.mascotColor.resolveStops(Brand.Accent.toArgb())
+    val accent = Color(stops.midArgb)
     val pulse = rememberInfiniteTransition(label = "thinking")
+    val stageTitle = when {
+        status?.contains("Смотрю") == true -> "Читаю рукопись на странице…"
+        status?.contains("Дописываю") == true -> "Отмечаю подсказки на листе…"
+        else -> "Разбираю шаги и формулы…"
+    }
     Row(
         Modifier
             .fillMaxWidth()
             .glass(RoundedCornerShape(20.dp), 4.dp, strong = true)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-            repeat(3) { i ->
-                val a by pulse.animateFloat(
-                    initialValue = 0.25f,
-                    targetValue = 1f,
-                    animationSpec = infiniteRepeatable(tween(520, delayMillis = i * 160, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-                    label = "dot$i",
-                )
-                Box(
-                    Modifier
-                        .size(8.dp)
-                        .graphicsLayer { alpha = a; scaleX = 0.7f + 0.3f * a; scaleY = 0.7f + 0.3f * a }
-                        .clip(CircleShape)
-                        .background(Brand.Ink),
+        MascotIcon(thinking = true, sizeDp = 30.dp)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(stageTitle, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+            if (lineCount > 0) {
+                Text(
+                    "Найдено строк: $lineCount",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Brand.InkSoft,
                 )
             }
         }
-        Text(status ?: "Думаю…", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            repeat(4) { i ->
+                val a by pulse.animateFloat(
+                    initialValue = 0.35f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(tween(460, delayMillis = i * 110, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                    label = "wave$i",
+                )
+                Box(
+                    Modifier
+                        .width(3.dp)
+                        .height((6f + 12f * a).dp)
+                        .clip(CircleShape)
+                        .background(accent.copy(alpha = 0.55f + 0.45f * a)),
+                )
+            }
+        }
         if (seconds > 0) Text("$seconds с", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

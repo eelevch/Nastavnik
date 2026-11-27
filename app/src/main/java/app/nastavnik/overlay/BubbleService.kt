@@ -57,6 +57,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import app.nastavnik.study.TrainResult
 import app.nastavnik.theme.MascotColor
+import app.nastavnik.theme.MentorVisionStyle
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -83,6 +84,7 @@ class BubbleService : LifecycleService(), BubbleView.Listener, SpeechInput.Callb
     private lateinit var bar: BubbleBar
     private lateinit var askBar: AskBar
     private lateinit var overlay: AnswerOverlay
+    private lateinit var visionScan: VisionScanOverlay
     private lateinit var capturer: ScreenCapturer
     private lateinit var mentor: MentorSession
     private lateinit var clean: CleanSession
@@ -179,6 +181,7 @@ class BubbleService : LifecycleService(), BubbleView.Listener, SpeechInput.Callb
         contextPageMenu = ContextPageMenu(this, wm)
         askBar = AskBar(this, wm, this)
         overlay = AnswerOverlay(this, wm, this).apply { bubbleRect = { this@BubbleService.bubbleRect() } }
+        visionScan = VisionScanOverlay(this, wm)
         mentor = MentorSession(napp, lifecycleScope)
         clean = napp.clean
         speech = SpeechInput(this, this)
@@ -218,6 +221,8 @@ class BubbleService : LifecycleService(), BubbleView.Listener, SpeechInput.Callb
                 bubble.watching = s.watchPauseSec > 0
                 bubble.mascotColor = MascotColor.fromId(s.mascotColor)
                 bubble.themeAccentArgb = if (s.accent != 0) s.accent else 0xFF2563EB.toInt()
+                bubble.visionStyle = MentorVisionStyle.fromId(s.mentorVisionStyle)
+                if (s.watchPauseSec <= 0) bubble.watchProgress = 0f
                 if (old == null || old.bubbleSizeDp != s.bubbleSizeDp || old.bubbleAlpha != s.bubbleAlpha || old.bubbleSide != s.bubbleSide) {
                     applyBubbleLook(s)
                 }
@@ -275,6 +280,7 @@ class BubbleService : LifecycleService(), BubbleView.Listener, SpeechInput.Callb
             bar.dismiss()
             askBar.dismiss()
             overlay.clear()
+            visionScan.dismiss()
             removeBubble()
             nudgeView?.let { runCatching { wm.removeView(it) } }
             nudgeView = null
@@ -582,6 +588,18 @@ class BubbleService : LifecycleService(), BubbleView.Listener, SpeechInput.Callb
         val a = s.answer
         overlay.render(a)
         refreshBubbleBusy()
+        if (a != null && a.streaming && a.marks.isEmpty() && a.geometry != null && a.kind != AskKind.WATCH) {
+            val st = settings
+            visionScan.show(
+                geometry = a.geometry,
+                mascotColor = MascotColor.fromId(st?.mascotColor),
+                themeAccent = st?.accent?.takeIf { it != 0 } ?: 0xFF2563EB.toInt(),
+                style = MentorVisionStyle.fromId(st?.mentorVisionStyle),
+            )
+            bubble.watchProgress = 0f
+        } else {
+            visionScan.dismiss()
+        }
         // Опорный кадр для слежения за прокруткой — тот, по которому отвечал наставник.
         // Кадр появляется не в первом состоянии ответа («Смотрю на экран…»), а после снимка.
         if (a == null || a.seq != trackSeq || (trackRef == null && a.thumb != null)) {
@@ -786,6 +804,7 @@ class BubbleService : LifecycleService(), BubbleView.Listener, SpeechInput.Callb
     private fun setOverlaysHidden(hidden: Boolean) {
         menu.dismiss()
         overlay.setCaptureHidden(hidden)
+        visionScan.setCaptureHidden(hidden)
         bar.setCaptureHidden(hidden)
         askBar.setCaptureHidden(hidden)
         if (bubbleAdded) {
@@ -1191,11 +1210,17 @@ class BubbleService : LifecycleService(), BubbleView.Listener, SpeechInput.Callb
         val answer = mentor.state.value.answer
         // Ответ на вопрос студента не перебиваем тихой проверкой.
         val userAnswerShown = answer != null && answer.kind != AskKind.WATCH && overlay.isShowing
+        bubble.watchProgress = if (dirty && !mentor.isBusy && !userAnswerShown) {
+            ((now - lastChangeAt).toFloat() / pauseMs.coerceAtLeast(1L)).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
         if (dirty && now - lastChangeAt >= pauseMs && now - lastWatchAt >= MIN_WATCH_GAP_MS &&
             !mentor.isBusy && !userAnswerShown && clean.state.value is CleanState.Idle &&
             napp.settings.notReadyReason() == null
         ) {
             dirty = false
+            bubble.watchProgress = 0f
             lastWatchAt = now
             mentor.ask(Prompts.WATCH_PROMPT, AskKind.WATCH) { takeShot(contextPages = Int.MAX_VALUE) }
         }

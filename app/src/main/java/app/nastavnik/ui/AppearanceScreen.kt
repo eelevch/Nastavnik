@@ -59,8 +59,12 @@ import app.nastavnik.app
 import app.nastavnik.data.AppSettings
 import app.nastavnik.data.SettingsRepo
 import app.nastavnik.theme.MascotColor
+import app.nastavnik.theme.MentorVisionStyle
 import app.nastavnik.theme.TabBarPosition
 import kotlinx.coroutines.launch
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.sin
 
 /** Вход в «Оформление» из настроек: мини-палитра текущей темы и стрелка. */
@@ -93,7 +97,7 @@ fun AppearanceEntry(onOpen: () -> Unit) {
  * Всё применяется сразу и плавно; лист тетради всегда белый.
  */
 @Composable
-fun AppearanceScreen(onBack: () -> Unit) {
+fun AppearanceScreen(onBack: () -> Unit, initialMascotDemoMode: String? = null) {
     val repo = LocalContext.current.app.settings
     val s by remember { repo.flow() }.collectAsStateWithLifecycle(initialValue = repo.load())
     fun refresh() {}
@@ -120,6 +124,7 @@ fun AppearanceScreen(onBack: () -> Unit) {
             s = s,
             repo = repo,
             onChanged = { refresh() },
+            initialDemoModeName = initialMascotDemoMode,
         )
 
         SectionCard("Режим") {
@@ -439,42 +444,69 @@ private fun AccentDot(c: Color, selected: Boolean, onClick: () -> Unit) {
 
 private enum class MascotDemoMode(val label: String) {
     IDLE("Живой"),
+    TRACKING("Следит за пером"),
+    READING("Читает лист"),
     THINKING("Думает"),
     WRITING("Пишет"),
     LISTENING("Слушает"),
     SPEAKING("Говорит"),
 }
 
-/** Интерактивная витрина живой сферы наставника и выбор её цвета. */
+/** Интерактивная витрина живой сферы наставника, её цвета и стиля зрения на странице. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MascotStyleCard(
     s: AppSettings,
     repo: SettingsRepo,
     onChanged: () -> Unit = {},
+    initialDemoModeName: String? = null,
 ) {
     val current = MascotColor.fromId(s.mascotColor)
-    var demoMode by remember { mutableStateOf(MascotDemoMode.IDLE) }
-    var wavePhase by remember { mutableFloatStateOf(0f) }
-    val needVoiceWave = demoMode == MascotDemoMode.LISTENING || demoMode == MascotDemoMode.SPEAKING
-    LaunchedEffect(needVoiceWave) {
-        if (!needVoiceWave) {
-            wavePhase = 0f
+    val currentVision = MentorVisionStyle.fromId(s.mentorVisionStyle)
+    var demoMode by remember(initialDemoModeName) {
+        val initial = MascotDemoMode.entries.firstOrNull { it.name.equals(initialDemoModeName, ignoreCase = true) }
+            ?: MascotDemoMode.IDLE
+        mutableStateOf(initial)
+    }
+    var stageTimeSec by remember { mutableFloatStateOf(0f) }
+    val needClock = demoMode == MascotDemoMode.LISTENING ||
+        demoMode == MascotDemoMode.SPEAKING ||
+        demoMode == MascotDemoMode.TRACKING ||
+        demoMode == MascotDemoMode.READING
+    LaunchedEffect(needClock) {
+        if (!needClock) {
+            stageTimeSec = 0f
         } else {
             val start = withFrameNanos { it }
             while (true) {
-                withFrameNanos { now -> wavePhase = (now - start) / 1_000_000_000f }
+                withFrameNanos { now -> stageTimeSec = (now - start) / 1_000_000_000f }
             }
         }
     }
-    val simulatedVoice = if (needVoiceWave) {
-        (0.45f + 0.42f * sin(wavePhase * 6.5f) * 0.5f + 0.25f * sin(wavePhase * 15f)).coerceIn(0.1f, 1f)
+    val simulatedVoice = if (demoMode == MascotDemoMode.LISTENING || demoMode == MascotDemoMode.SPEAKING) {
+        (0.45f + 0.42f * sin(stageTimeSec * 6.5f) * 0.5f + 0.25f * sin(stageTimeSec * 15f)).coerceIn(0.1f, 1f)
     } else {
         0f
     }
 
+    val isSpatialDemo = demoMode == MascotDemoMode.TRACKING || demoMode == MascotDemoMode.READING
+    val demoTrackRow = ((stageTimeSec / 1.4f) % 1f)
+    val demoGazeTarget: Offset? = when (demoMode) {
+        MascotDemoMode.TRACKING -> Offset(
+            x = (0.72f + 0.22f * sin(stageTimeSec * 3.8f)).coerceIn(0.3f, 0.98f),
+            y = ((demoTrackRow - 0.5f) * 1.4f).coerceIn(-0.85f, 0.85f),
+        )
+        MascotDemoMode.READING -> Offset(
+            x = 0.84f,
+            y = (((((stageTimeSec / 0.85f).toInt()) % 3) - 1) * 0.48f),
+        )
+        else -> null
+    }
+
     val stops = current.resolveStops(Brand.Accent.toArgb())
     val stageGlow = Color(stops.haloArgb)
+    val midColor = Color(stops.midArgb)
+    val sparkColor = Color(stops.sparkArgb)
 
     SectionCard("Облик наставника") {
         // Контрастная тёмная сцена с живым свечением сферы и переключателем состояний.
@@ -487,7 +519,7 @@ fun MascotStyleCard(
                 .padding(horizontal = 16.dp, vertical = 18.dp),
         ) {
             Canvas(Modifier.matchParentSize()) {
-                val c = Offset(size.width * 0.5f, size.height * 0.38f)
+                val c = Offset(size.width * (if (isSpatialDemo) 0.28f else 0.5f), size.height * 0.38f)
                 val rad = size.maxDimension * 0.62f
                 drawCircle(
                     brush = Brush.radialGradient(
@@ -506,15 +538,114 @@ fun MascotStyleCard(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                MascotIcon(
-                    writing = demoMode == MascotDemoMode.WRITING,
-                    thinking = demoMode == MascotDemoMode.THINKING,
-                    speaking = demoMode == MascotDemoMode.SPEAKING,
-                    listening = demoMode == MascotDemoMode.LISTENING,
-                    voiceLevel = simulatedVoice,
-                    sizeDp = 92.dp,
-                    colorOverride = current,
-                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    MascotIcon(
+                        writing = demoMode == MascotDemoMode.WRITING || demoMode == MascotDemoMode.TRACKING,
+                        thinking = demoMode == MascotDemoMode.THINKING || demoMode == MascotDemoMode.READING,
+                        speaking = demoMode == MascotDemoMode.SPEAKING,
+                        listening = demoMode == MascotDemoMode.LISTENING,
+                        voiceLevel = simulatedVoice,
+                        sizeDp = if (isSpatialDemo) 82.dp else 92.dp,
+                        colorOverride = current,
+                        gazeTarget = demoGazeTarget,
+                    )
+                    if (isSpatialDemo) {
+                        // Мини-лист тетради для наглядного предпросмотра слежения за пером и чтения.
+                        Canvas(
+                            Modifier
+                                .width(134.dp)
+                                .height(112.dp)
+                                .clip(RoundedCornerShape(14.dp)),
+                        ) {
+                            drawRoundRect(Color.White, cornerRadius = CornerRadius(14.dp.toPx(), 14.dp.toPx()))
+                            val cell = 14.dp.toPx()
+                            var gx = cell
+                            while (gx < size.width) {
+                                drawLine(Color(0xFFE6ECF5), Offset(gx, 0f), Offset(gx, size.height), 0.8f)
+                                gx += cell
+                            }
+                            var gy = cell
+                            while (gy < size.height) {
+                                drawLine(Color(0xFFE6ECF5), Offset(0f, gy), Offset(size.width, gy), 0.8f)
+                                gy += cell
+                            }
+                            val rows = listOf(0.26f, 0.50f, 0.74f)
+                            rows.forEachIndexed { idx, yf ->
+                                val y = size.height * yf
+                                val endX = if (demoMode == MascotDemoMode.TRACKING && idx == 2) {
+                                    size.width * (0.25f + 0.52f * ((sin(stageTimeSec * 3.8f) + 1f) * 0.5f))
+                                } else {
+                                    size.width * (0.76f - idx * 0.08f)
+                                }
+                                drawLine(
+                                    color = Color(0xFF1F4FD1),
+                                    start = Offset(14.dp.toPx(), y),
+                                    end = Offset(endX, y),
+                                    strokeWidth = 2.4.dp.toPx(),
+                                    cap = StrokeCap.Round,
+                                )
+                            }
+
+                            if (demoMode == MascotDemoMode.TRACKING) {
+                                val penY = size.height * (0.24f + 0.52f * demoTrackRow)
+                                val penX = size.width * (0.25f + 0.52f * ((sin(stageTimeSec * 3.8f) + 1f) * 0.5f))
+                                val barH = 34.dp.toPx()
+                                drawRoundRect(
+                                    brush = Brush.verticalGradient(
+                                        0f to Color.Transparent,
+                                        0.5f to sparkColor,
+                                        1f to Color.Transparent,
+                                        startY = penY - barH * 0.5f,
+                                        endY = penY + barH * 0.5f,
+                                    ),
+                                    topLeft = Offset(size.width - 5.dp.toPx(), penY - barH * 0.5f),
+                                    size = Size(3.dp.toPx(), barH),
+                                    cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()),
+                                )
+                                drawCircle(midColor.copy(alpha = 0.25f), 8.dp.toPx(), Offset(penX, penY))
+                                drawCircle(midColor, 3.dp.toPx(), Offset(penX, penY))
+                            } else {
+                                val sweep = (1f - cos(((stageTimeSec / 1.25f) % 1f) * PI.toFloat())) * 0.5f
+                                val scanY = size.height * (0.08f + 0.84f * sweep)
+                                if (currentVision != MentorVisionStyle.OFF) {
+                                    if (currentVision == MentorVisionStyle.AURORA_SCAN) {
+                                        val bh = 32.dp.toPx()
+                                        drawRect(
+                                            brush = Brush.verticalGradient(
+                                                0f to Color.Transparent,
+                                                1f to sparkColor.copy(alpha = 0.36f),
+                                                startY = scanY - bh,
+                                                endY = scanY,
+                                            ),
+                                            topLeft = Offset(0f, scanY - bh),
+                                            size = Size(size.width, bh),
+                                        )
+                                        drawLine(midColor, Offset(4.dp.toPx(), scanY), Offset(size.width - 4.dp.toPx(), scanY), 2.dp.toPx())
+                                    }
+                                    if (currentVision != MentorVisionStyle.SUBTLE) {
+                                        val activeIdx = ((stageTimeSec / 0.85f).toInt()) % rows.size
+                                        rows.forEachIndexed { idx, yf ->
+                                            val ry = size.height * yf
+                                            val dist = (1f - abs(ry - scanY) / (size.height * 0.32f)).coerceIn(0.25f, 1f)
+                                            val focus = idx == activeIdx
+                                            drawRoundRect(
+                                                color = midColor.copy(alpha = if (focus) 0.22f else 0.10f * dist),
+                                                topLeft = Offset(10.dp.toPx(), ry - 7.dp.toPx()),
+                                                size = Size(size.width - 20.dp.toPx(), 14.dp.toPx()),
+                                                cornerRadius = CornerRadius(6.dp.toPx(), 6.dp.toPx()),
+                                                style = Stroke(width = (if (focus) 1.6.dp else 1.dp).toPx()),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -531,7 +662,7 @@ fun MascotStyleCard(
                                     shape = CircleShape,
                                 )
                                 .clickable { demoMode = mode }
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                                .padding(horizontal = 11.dp, vertical = 6.dp),
                         ) {
                             Text(
                                 mode.label,
@@ -568,6 +699,18 @@ fun MascotStyleCard(
                     },
                 )
             }
+        }
+
+        FieldLabel(
+            "Зрение наставника на странице",
+            currentVision.subtitle,
+        )
+        Segmented(
+            MentorVisionStyle.entries.map { it to it.title },
+            currentVision,
+        ) {
+            repo.setMentorVisionStyle(it)
+            onChanged()
         }
     }
 }

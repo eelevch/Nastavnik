@@ -4,11 +4,13 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.net.Uri
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import app.nastavnik.BuildConfig
 import app.nastavnik.NastavnikApp
 import app.nastavnik.ai.NBox
 import app.nastavnik.ai.Prompts
@@ -63,6 +65,19 @@ object NotebookStart {
 
     fun take(notebookId: Long): Long? =
         target?.takeIf { it.first == notebookId && System.currentTimeMillis() - it.third < 15_000L }?.second
+}
+
+object NotebookVisionDemoStart {
+    @Volatile private var pending: Triple<Long, String, Long>? = null
+
+    fun put(notebookId: Long, mode: String) {
+        pending = Triple(notebookId, mode, System.currentTimeMillis())
+    }
+
+    fun take(notebookId: Long): String? =
+        pending?.takeIf { it.first == notebookId && System.currentTimeMillis() - it.third < 20_000L }
+            ?.also { pending = null }
+            ?.second
 }
 
 class NotebookController(val app: NastavnikApp, val notebookId: Long, private val scope: CoroutineScope) : InkView.Listener {
@@ -296,6 +311,11 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         val start = NotebookStart.take(notebookId)?.let { id -> ps.indexOfFirst { it.id == id } }?.takeIf { it >= 0 } ?: 0
         showPage(start)
         loaded = true
+        if (BuildConfig.DEBUG) {
+            NotebookVisionDemoStart.take(notebookId)?.let { mode ->
+                scope.launch { applyDebugVisionDemoWhenReady(mode) }
+            }
+        }
     }
 
     fun showPage(i: Int) {
@@ -309,6 +329,7 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
             val bg = nbs.background(notebookId, p)
             if (pages.getOrNull(index)?.id == p.id) {
                 ink.setPage(p, bg, stack, direction)
+                detectedPageLines = extractPageLineRects(p)
                 refreshMarks()
             }
         }
@@ -583,7 +604,10 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
     fun toggleAutoCheck() {
         autoCheck = !autoCheck
         app.settings.setNotebookAutoCheck(autoCheck)
-        if (!autoCheck) autoJob?.cancel()
+        if (!autoCheck) {
+            autoJob?.cancel()
+            autoCheckProgress = 0f
+        }
     }
 
     private fun applyTool() {
@@ -618,13 +642,119 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
         this.canRedo = canRedo
     }
 
-    /** Пишут прямо сейчас — палитра становится прозрачнее, чтобы не отвлекать. */
+    /** Пишут прямо сейчас — палитра становится прозрачнее, а зрение наставника следит за пером. */
     var writing by mutableStateOf(false)
+        private set
+    var penViewX by mutableFloatStateOf(0f)
+        private set
+    var penViewY by mutableFloatStateOf(0f)
+        private set
+    var penNormX by mutableFloatStateOf(0.5f)
+        private set
+    var penNormY by mutableFloatStateOf(0.35f)
+        private set
+    var autoCheckProgress by mutableFloatStateOf(0f)
+        private set
+    var detectedPageLines by mutableStateOf<List<RectF>>(emptyList())
+        private set
+    var debugVisionAnswer by mutableStateOf<AnswerUi?>(null)
+        private set
+    var debugSilentOkAt by mutableLongStateOf(0L)
+        private set
+    var debugVisionFocusIdx by mutableStateOf<Int?>(null)
+        private set
+    var debugForcePanel by mutableStateOf<Boolean?>(null)
         private set
     private var writingJob: Job? = null
 
+    suspend fun applyDebugVisionDemoWhenReady(mode: String) {
+        if (!BuildConfig.DEBUG) return
+        for (i in 0 until 80) {
+            if (ink.width > 0 && ink.height > 0 && ink.page != null) break
+            delay(50L)
+        }
+        delay(120L)
+        applyDebugVisionDemo(mode)
+    }
+
+    fun applyDebugVisionDemo(mode: String) {
+        if (!BuildConfig.DEBUG) return
+        val p = page ?: return
+        detectedPageLines = extractPageLineRects(p)
+        writingJob?.cancel()
+        autoJob?.cancel()
+        writing = false
+        autoCheckProgress = 0f
+        debugVisionAnswer = null
+        debugSilentOkAt = 0L
+        debugVisionFocusIdx = null
+
+        val lines = detectedPageLines
+        val targetLine = lines.getOrNull(2) ?: lines.lastOrNull()
+        val viewPt = FloatArray(2)
+        if (targetLine != null && ink.mapPagePointToView(targetLine.right - 20f, targetLine.centerY(), viewPt)) {
+            penViewX = viewPt[0]
+            penViewY = viewPt[1]
+            penNormX = ((targetLine.right - 20f) / PAGE_W).coerceIn(0f, 1f)
+            penNormY = (targetLine.centerY() / p.height.coerceAtLeast(1f)).coerceIn(0f, 1f)
+        }
+
+        when (mode.lowercase()) {
+            "writing" -> {
+                debugForcePanel = false
+                writing = true
+            }
+            "autocheck" -> {
+                debugForcePanel = false
+                autoCheck = true
+                autoCheckProgress = 0.62f
+            }
+            "reading" -> {
+                debugForcePanel = false
+                debugVisionAnswer = AnswerUi(
+                    seq = 9001L,
+                    kind = AskKind.QUICK,
+                    question = "Проверь ход решения",
+                    streaming = true,
+                    status = "Смотрю на экран…",
+                )
+            }
+            "analyzing", "line_focus" -> {
+                val showPanel = mode.lowercase() == "analyzing"
+                debugForcePanel = showPanel
+                debugVisionFocusIdx = 1.coerceAtMost((lines.size - 1).coerceAtLeast(0))
+                val ans = AnswerUi(
+                    seq = 9002L,
+                    kind = AskKind.QUICK,
+                    question = "Проверь решение предела",
+                    streaming = true,
+                    status = "Думаю…",
+                )
+                debugVisionAnswer = ans
+                if (showPanel) {
+                    chatMessages.clear()
+                    chatMessages.add(MentorChatMessage(id = 9001L, isUser = true, text = "Проверь решение предела"))
+                    chatMessages.add(MentorChatMessage(id = 9002L, isUser = false, text = "", answer = ans))
+                }
+            }
+        }
+    }
+
     override fun onWritingStarted() {
         autoJob?.cancel()
+        autoCheckProgress = 0f
+        refreshWritingDecay()
+    }
+
+    override fun onPenMotion(viewX: Float, viewY: Float, pageNormX: Float, pageNormY: Float) {
+        penViewX = viewX
+        penViewY = viewY
+        penNormX = pageNormX
+        penNormY = pageNormY
+        refreshWritingDecay()
+    }
+
+    private fun refreshWritingDecay() {
         writing = true
         writingJob?.cancel()
         writingJob = scope.launch {
@@ -634,6 +764,7 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
     }
 
     override fun onPageEdited() {
+        page?.let { detectedPageLines = extractPageLineRects(it) }
         saveJob?.cancel()
         saveJob = scope.launch {
             delay(SAVE_DELAY_MS)
@@ -663,6 +794,7 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
     /** Уходим из тетради: сохранить страницу и обновить превью. Если конспект пустой — удаляем его. */
     fun close() {
         autoJob?.cancel()
+        autoCheckProgress = 0f
         examJob?.cancel()
         mentor.cancel()
         mentor.dismiss()
@@ -713,6 +845,8 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
     fun ask(question: String, kind: AskKind) {
         if (app.settings.notReadyReason() != null) return
         autoJob?.cancel()
+        autoCheckProgress = 0f
+        page?.let { detectedPageLines = extractPageLineRects(it) }
         if (kind != AskKind.WATCH) {
             val now = System.currentTimeMillis()
             val userMsgId = now * 10L
@@ -763,9 +897,17 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
     /** Студент перестал писать — через паузу тихо проверяем страницу (только если включено и не идёт контрольная). */
     private fun scheduleAutoCheck() {
         autoJob?.cancel()
+        autoCheckProgress = 0f
         if (!autoCheck || examActive || app.settings.notReadyReason() != null) return
         autoJob = scope.launch {
-            delay(AUTO_PAUSE_MS)
+            val started = System.currentTimeMillis()
+            while (true) {
+                val elapsed = System.currentTimeMillis() - started
+                if (elapsed >= AUTO_PAUSE_MS) break
+                autoCheckProgress = (elapsed.toFloat() / AUTO_PAUSE_MS).coerceIn(0.02f, 1f)
+                delay(80L)
+            }
+            autoCheckProgress = 0f
             if (System.currentTimeMillis() - lastAutoAt < AUTO_GAP_MS || mentor.isBusy) return@launch
             // Ответ на вопрос студента не перебиваем.
             val a = mentor.state.value.answer
@@ -773,6 +915,40 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
             lastAutoAt = System.currentTimeMillis()
             ask(Prompts.WATCH_PROMPT, AskKind.WATCH)
         }
+    }
+
+    /** Извлекает упорядоченные строки записей/текста в координатах страницы для подсветки чтения и анализа. */
+    private fun extractPageLineRects(p: InkPage): List<RectF> {
+        val items = ArrayList<RectF>(p.strokes.size + p.texts.size)
+        for (s in p.strokes) {
+            val b = s.bounds()
+            items += RectF(b[0], b[1], b[2], b[3])
+        }
+        for (t in p.texts) {
+            val b = t.bounds()
+            items += RectF(b[0], b[1], b[2], b[3])
+        }
+        if (items.isEmpty()) return emptyList()
+        items.sortBy { it.top }
+        val lines = ArrayList<RectF>()
+        for (r in items) {
+            val prev = lines.lastOrNull()
+            if (prev != null && r.top <= prev.bottom + 14f && r.bottom >= prev.top - 14f) {
+                prev.left = minOf(prev.left, r.left)
+                prev.top = minOf(prev.top, r.top)
+                prev.right = maxOf(prev.right, r.right)
+                prev.bottom = maxOf(prev.bottom, r.bottom)
+            } else {
+                lines += RectF(r)
+            }
+        }
+        for (line in lines) {
+            line.left = (line.left - 8f).coerceIn(0f, PAGE_W)
+            line.top = (line.top - 6f).coerceIn(0f, p.height)
+            line.right = (line.right + 8f).coerceIn(line.left + 8f, PAGE_W)
+            line.bottom = (line.bottom + 6f).coerceIn(line.top + 8f, p.height)
+        }
+        return lines
     }
 
     private data class CachedContextPage(val pageId: Long, val version: Long, val jpeg: ByteArray)
@@ -829,6 +1005,11 @@ class NotebookController(val app: NastavnikApp, val notebookId: Long, private va
             answerScale = scale
             val geom = ShotGeometry(IRect(r.left, r.top, r.right, r.bottom), prepared.width, prepared.height, prepared.gutter, prepared.lines, prepared.luma)
             ShotGeometry.last = geom
+            geom.lines?.lines?.takeIf { it.isNotEmpty() }?.let { tl ->
+                detectedPageLines = tl.map { l ->
+                    RectF(l.left * scale, l.top * scale, l.right * scale, l.bottom * scale)
+                }
+            }
             cachedMainShot = CachedMainShot(p.id, p.version, prepared.jpeg, geom, scale)
             prepared.jpeg to geom
         }

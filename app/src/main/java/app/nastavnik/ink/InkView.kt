@@ -76,6 +76,9 @@ class InkView(context: Context) : View(context) {
 
         /** Перо задержали — временно включился ластик (или выключился, когда перо подняли). */
         fun onTemporaryEraser(active: Boolean) {}
+
+        /** Живое положение пера в пикселях InkView и нормализованных координатах листа (0..1). */
+        fun onPenMotion(viewX: Float, viewY: Float, pageNormX: Float, pageNormY: Float) {}
     }
 
     var listener: Listener? = null
@@ -639,6 +642,13 @@ class InkView(context: Context) : View(context) {
     private val tmpTargetRect = RectF()
     private val tmpRenderRect = RectF()
     private val isWeakDevice: Boolean by lazy { app.nastavnik.data.DeviceProfile.isWeakDevice(context) }
+    private val isEmulator: Boolean = app.nastavnik.data.DeviceProfile.isEmulator()
+
+    init {
+        if (isEmulator) {
+            setLayerType(LAYER_TYPE_SOFTWARE, null)
+        }
+    }
 
     /** Лист двигают или увеличивают. */
     private var moving = false
@@ -684,12 +694,16 @@ class InkView(context: Context) : View(context) {
             (tmpVisibleRect.bottom + padY).coerceAtMost(p.height),
         )
 
-        val maxSide = if (isWeakDevice) {
-            1920
-        } else {
-            maxOf(2880, minOf((maxOf(width, height) * 1.5f).toInt(), 3840))
+        val maxSide = when {
+            isEmulator -> 1280
+            isWeakDevice -> 1920
+            else -> maxOf(2880, minOf((maxOf(width, height) * 1.5f).toInt(), 3840))
         }
-        val maxPixels = if (isWeakDevice) 1600L * 2048L else 2880L * 3200L
+        val maxPixels = when {
+            isEmulator -> 1080L * 1440L
+            isWeakDevice -> 1600L * 2048L
+            else -> 2880L * 3200L
+        }
 
         var targetScale = scale.coerceAtLeast(fitScale() * 0.5f)
         targetScale = minOf(targetScale, maxSide / visW, maxSide / visH)
@@ -778,7 +792,7 @@ class InkView(context: Context) : View(context) {
         bw: Int,
         bh: Int,
     ): Bitmap? {
-        val cfg = if (isWeakDevice) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888
+        val cfg = if (isWeakDevice && !isEmulator) Bitmap.Config.RGB_565 else Bitmap.Config.ARGB_8888
         val bmp = if (
             targetBmp != null &&
             !targetBmp.isRecycled &&
@@ -1604,6 +1618,50 @@ class InkView(context: Context) : View(context) {
         }
     }
 
+    private var lastPenReportMs = 0L
+    private var lastPenReportX = -1f
+    private var lastPenReportY = -1f
+
+    private fun reportPenMotion(viewX: Float, viewY: Float, pageX: Float, pageY: Float, force: Boolean = false) {
+        val now = SystemClock.uptimeMillis()
+        if (!force && now - lastPenReportMs < 16L && hypot(viewX - lastPenReportX, viewY - lastPenReportY) < 4f) {
+            return
+        }
+        lastPenReportMs = now
+        lastPenReportX = viewX
+        lastPenReportY = viewY
+        val pH = (page?.height ?: A4_H).coerceAtLeast(1f)
+        val normX = (pageX / PAGE_W).coerceIn(0f, 1f)
+        val normY = (pageY / pH).coerceIn(0f, 1f)
+        listener?.onPenMotion(viewX, viewY, normX, normY)
+    }
+
+    /** Текущие границы листа в пикселях InkView (без аллокаций). */
+    fun getSheetBoundsInView(out: RectF): Boolean {
+        val p = page ?: return false
+        if (width <= 0 || height <= 0) return false
+        out.set(0f, 0f, PAGE_W, p.height)
+        pageMatrix.mapRect(out)
+        return true
+    }
+
+    /** Переводит прямоугольник из координат страницы в координаты InkView (без аллокаций). */
+    fun mapPageRectToView(pageRect: RectF, out: RectF): Boolean {
+        if (page == null || width <= 0 || height <= 0) return false
+        out.set(pageRect)
+        pageMatrix.mapRect(out)
+        return true
+    }
+
+    /** Переводит точку из координат страницы в координаты InkView. */
+    fun mapPagePointToView(pageX: Float, pageY: Float, out: FloatArray): Boolean {
+        if (page == null || width <= 0 || height <= 0 || out.size < 2) return false
+        out[0] = pageX
+        out[1] = pageY
+        pageMatrix.mapPoints(out)
+        return true
+    }
+
     private fun isPen(e: MotionEvent, i: Int): Boolean {
         val t = e.getToolType(i)
         return t == MotionEvent.TOOL_TYPE_STYLUS || t == MotionEvent.TOOL_TYPE_ERASER
@@ -1663,6 +1721,7 @@ class InkView(context: Context) : View(context) {
         when (mode) {
             Mode.DRAW -> {
                 listener?.onWritingStarted()
+                reportPenMotion(touchX, touchY, q[0], q[1], force = true)
                 snapped = null
                 morph = null
                 current = newLive().also { it.add(q[0], q[1], pressure(e, i, pen)) }
@@ -1674,6 +1733,7 @@ class InkView(context: Context) : View(context) {
             }
             Mode.ERASE -> {
                 listener?.onWritingStarted()
+                reportPenMotion(touchX, touchY, q[0], q[1], force = true)
                 beginErase()
                 page?.let { eraseAt(it, touchX, touchY) }
             }
@@ -1699,6 +1759,7 @@ class InkView(context: Context) : View(context) {
             }
             Mode.SHAPE -> {
                 listener?.onWritingStarted()
+                reportPenMotion(touchX, touchY, q[0], q[1], force = true)
                 shapePreview = emptyList()
             }
             else -> Unit
@@ -1720,6 +1781,8 @@ class InkView(context: Context) : View(context) {
                 if (snapped != null) return // фигура уже выровнена — ждём, когда поднимут перо
                 val l = current ?: return
                 addPoints(l, e, i, pen)
+                val q = toPage(x, y)
+                reportPenMotion(x, y, q[0], q[1])
                 // Сдвинул перо от места касания — это письмо, а не «подержать для ластика».
                 if (!holdCancelled && hypot(x - penDownX, y - penDownY) > HOLD_SLOP * density) {
                     holdCancelled = true
@@ -1737,6 +1800,8 @@ class InkView(context: Context) : View(context) {
             Mode.ERASE -> {
                 for (h in 0 until e.historySize) eraseAt(p, e.getHistoricalX(i, h), e.getHistoricalY(i, h))
                 eraseAt(p, x, y)
+                val q = toPage(x, y)
+                reportPenMotion(x, y, q[0], q[1])
                 touchX = x; touchY = y
                 invalidate()
             }
@@ -1764,6 +1829,7 @@ class InkView(context: Context) : View(context) {
             }
             Mode.SHAPE -> {
                 val q = toPage(x, y)
+                reportPenMotion(x, y, q[0], q[1])
                 shapePreview = Shapes.build(shapeKind, startPX, startPY, q[0], q[1], penWidth, color)
                 invalidate()
             }

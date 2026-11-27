@@ -12,6 +12,7 @@ import app.nastavnik.ai.ModelPresets
 import app.nastavnik.ai.OpenAiCompatPresets
 import app.nastavnik.ai.Strictness
 import app.nastavnik.theme.MascotColor
+import app.nastavnik.theme.MentorVisionStyle
 import app.nastavnik.theme.TabBarPosition
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -77,6 +78,8 @@ data class AppSettings(
     val sideCapsuleShowLabels: Boolean = true,
     /** Цвет сферы маскота-наставника. */
     val mascotColor: String = MascotColor.SUNSET.id,
+    /** Стиль визуализации чтения, анализа и слежения за письмом на странице. */
+    val mentorVisionStyle: String = MentorVisionStyle.AURORA_SCAN.id,
 )
 
 /**
@@ -136,6 +139,7 @@ class SettingsRepo(private val context: Context) {
         sideCapsuleBias = sideCapsuleBias(),
         sideCapsuleShowLabels = sideCapsuleShowLabels(),
         mascotColor = mascotColor(),
+        mentorVisionStyle = mentorVisionStyle(),
     )
 
     /**
@@ -195,6 +199,9 @@ class SettingsRepo(private val context: Context) {
 
     fun mascotColor(): String = MascotColor.fromId(prefs.getString(K_MASCOT_COLOR, MascotColor.SUNSET.id)).id
     fun setMascotColor(color: MascotColor) = prefs.edit { putString(K_MASCOT_COLOR, color.id) }
+
+    fun mentorVisionStyle(): String = MentorVisionStyle.fromId(prefs.getString(K_VISION_STYLE, MentorVisionStyle.AURORA_SCAN.id)).id
+    fun setMentorVisionStyle(style: MentorVisionStyle) = prefs.edit { putString(K_VISION_STYLE, style.id) }
 
     /** Поток настроек: выдаёт текущее значение и каждое изменение. */
     fun flow(): Flow<AppSettings> = callbackFlow {
@@ -589,5 +596,6 @@ class SettingsRepo(private val context: Context) {
         private const val K_SIDE_CAPSULE_BIAS = "side_capsule_bias"
         private const val K_SIDE_CAPSULE_LABELS = "side_capsule_show_labels"
         private const val K_MASCOT_COLOR = "mascot_color"
+        private const val K_VISION_STYLE = "mentor_vision_style"
     }
 }

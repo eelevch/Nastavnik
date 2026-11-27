@@ -13,7 +13,13 @@ import app.nastavnik.BuildConfig
 import app.nastavnik.R
 import app.nastavnik.data.AppSettings
 import app.nastavnik.data.TelegramMetrics
+import app.nastavnik.ink.InkPage
+import app.nastavnik.ink.Paper
+import app.nastavnik.ink.Stroke
+import app.nastavnik.ink.TextBox
+import app.nastavnik.ink.Tool
 import app.nastavnik.theme.MascotColor
+import app.nastavnik.theme.MentorVisionStyle
 import app.nastavnik.theme.TabBarPosition
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Column
@@ -51,6 +57,7 @@ import app.nastavnik.study.StudyWidget
 import app.nastavnik.study.LessonQuiet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import app.nastavnik.overlay.BubbleService
 
 class MainActivity : ComponentActivity() {
@@ -61,6 +68,10 @@ class MainActivity : ComponentActivity() {
 
     /** Открытая тетрадь (для экрана [SCREEN_NOTEBOOK]). */
     private var notebookId by mutableLongStateOf(0L)
+
+    /** Режим демо-сцены на экране «Оформление» (только DEBUG). */
+    private var debugAppearanceDemo by mutableStateOf<String?>(null)
+    private var debugVisionDemoTick by mutableIntStateOf(0)
 
     /** Пока из «Поделиться» готовятся страницы — показываем, что идёт работа. */
     private var importing by mutableStateOf(false)
@@ -181,6 +192,7 @@ class MainActivity : ComponentActivity() {
                                 onBack = { go(SCREEN_NOTEBOOKS) },
                                 onCleanReady = { go(SCREEN_CLEAN) },
                                 onSettings = { go(SCREEN_SETTINGS) },
+                                debugDemoTick = debugVisionDemoTick,
                             )
                         } else {
                             NotebooksScreen(resumeTick, onBack = home, onOpen = openNotebook)
@@ -201,7 +213,7 @@ class MainActivity : ComponentActivity() {
                             resumeTick, onBack = home, openNotebook = openNotebook,
                             sharedFile = sharedHomework, onSharedUsed = { sharedHomework = null },
                         )
-                        SCREEN_APPEARANCE -> AppearanceScreen(onBack = { go(SCREEN_SETTINGS) })
+                        SCREEN_APPEARANCE -> AppearanceScreen(onBack = { go(SCREEN_SETTINGS) }, initialMascotDemoMode = debugAppearanceDemo)
                         SCREEN_HISTORY -> HistoryScreen(onBack = home, onCleanReady = { go(SCREEN_CLEAN) })
                         SCREEN_SEARCH -> SearchScreen(
                             onBack = home,
@@ -306,6 +318,21 @@ class MainActivity : ComponentActivity() {
             intent.getStringExtra("debug_mascot_color")?.let {
                 app.settings.setMascotColor(MascotColor.fromId(it))
             }
+            intent.getStringExtra("debug_vision_style")?.let {
+                app.settings.setMentorVisionStyle(MentorVisionStyle.fromId(it))
+            }
+            debugAppearanceDemo = intent.getStringExtra("debug_appearance_demo")
+            intent.getStringExtra("debug_snap")?.takeIf { it.isNotBlank() }?.let { snapName ->
+                val delayMs = intent.getLongExtra("debug_snap_delay_ms", 1800L)
+                scheduleDebugWindowSnapshot(snapName, delayMs)
+            }
+            intent.getStringExtra("debug_vision_demo")?.takeIf { it.isNotBlank() }?.let { mode ->
+                val nbId = ensureDebugVisionNotebook()
+                notebookId = nbId
+                NotebookVisionDemoStart.put(nbId, mode)
+                debugVisionDemoTick++
+                return SCREEN_NOTEBOOK
+            }
         }
         val s = intent.getStringExtra(EXTRA_SCREEN) ?: return null
         fromOverlay = intent.getBooleanExtra(EXTRA_FROM_OVERLAY, false)
@@ -398,6 +425,86 @@ class MainActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+    private fun ensureDebugVisionNotebook(): Long {
+        app.settings.setEditorTipsShown()
+        val store = app.notebooks.store
+        val existing = store.list().firstOrNull { it.title == "Матанализ · Пределы" }
+        val penBlue = 0xFF1F4FD1.toInt()
+        val inkDark = 0xFF16161A.toInt()
+        val page = InkPage(
+            id = existing?.pages?.firstOrNull() ?: store.newId(),
+            paper = Paper.GRID,
+            texts = mutableListOf(
+                TextBox(70f, 95f, 820f, "Задача: вычислить предел при x -> 0", 30f, inkDark),
+                TextBox(70f, 195f, 820f, "1) lim (sin 3x) / (x · cos x)", 32f, penBlue),
+                TextBox(70f, 305f, 820f, "2) sin 3x = 3x - (9/2)x³ + o(x³)", 32f, penBlue),
+                TextBox(70f, 415f, 820f, "3) lim (3x / (x · cos x)) = 3 / cos 0", 32f, penBlue),
+                TextBox(70f, 525f, 520f, "4) Ответ: 3", 34f, penBlue),
+            ),
+            strokes = mutableListOf(
+                Stroke(
+                    Tool.PEN,
+                    penBlue,
+                    3.6f,
+                    floatArrayOf(
+                        72f, 578f, 0.7f,
+                        150f, 576f, 0.8f,
+                        230f, 579f, 0.8f,
+                        305f, 575f, 0.7f,
+                    ),
+                ),
+            ),
+        )
+        return if (existing != null) {
+            store.savePage(existing.id, page)
+            existing.id
+        } else {
+            store.createWith("Матанализ · Пределы", listOf(page), subject = "Матанализ").id
+        }
+    }
+
+    private fun scheduleDebugWindowSnapshot(fileName: String, delayMs: Long) {
+        if (!BuildConfig.DEBUG) return
+        val safeName = fileName.substringAfterLast('/').ifBlank { "debug_snap.png" }
+        val dir = externalCacheDir ?: cacheDir
+        val outFile = java.io.File(dir, safeName)
+        val tmpFile = java.io.File(dir, "$safeName.tmp")
+        outFile.delete()
+        tmpFile.delete()
+        lifecycleScope.launch {
+            for (i in 0 until 60) {
+                val d = window?.decorView
+                if (d != null && d.width > 0 && d.height > 0) break
+                kotlinx.coroutines.delay(50L)
+            }
+            kotlinx.coroutines.delay(delayMs.coerceIn(200L, 15_000L))
+            val decor = window?.decorView ?: return@launch
+            if (decor.width <= 0 || decor.height <= 0) return@launch
+            val bmp = android.graphics.Bitmap.createBitmap(
+                decor.width,
+                decor.height,
+                android.graphics.Bitmap.Config.ARGB_8888,
+            )
+            bmp.eraseColor(android.graphics.Color.rgb(246, 247, 251))
+            try {
+                decor.draw(android.graphics.Canvas(bmp))
+                withContext(Dispatchers.IO) {
+                    val bytes = java.io.ByteArrayOutputStream(256 * 1024).use { bos ->
+                        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bos)
+                        bos.toByteArray()
+                    }
+                    java.io.FileOutputStream(tmpFile).use { fos ->
+                        fos.write(bytes)
+                        fos.fd.sync()
+                    }
+                    tmpFile.renameTo(outFile)
+                }
+            } finally {
+                bmp.recycle()
+            }
+        }
+    }
+
     companion object {
         const val EXTRA_SCREEN = "screen"
         const val SCREEN_HOME = "home"
@@ -454,4 +561,5 @@ internal fun appearanceOf(st: AppSettings) = Appearance(
     backdrop = runCatching { Backdrop.valueOf(st.backdrop) }.getOrDefault(Backdrop.PLAIN),
     textScale = st.textScale,
     mascotColor = MascotColor.fromId(st.mascotColor),
+    visionStyle = MentorVisionStyle.fromId(st.mentorVisionStyle),
 )
